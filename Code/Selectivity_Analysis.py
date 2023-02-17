@@ -6,7 +6,7 @@ Created on Thu Feb  9 14:33:39 2023
 @author: acxyle
 
  --- notice
-the function in this file is not real function, just devide for different use
+the function in this file is not real function, just divide for different use
  --- waiting to rewrite for code reuse
 
 """

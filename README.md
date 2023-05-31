@@ -1,5 +1,7 @@
 # Abstract
 
-[Update] Modified version 1.0 for Spikingjelly VGG
+[Update] May 30
 
-This repository contains the code and results of [Face Identity] Experiments
+This repository contains the code of [Face Identity] Experiments.
+
+Added code of representational similarity analysis (RSA)

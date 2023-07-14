@@ -41,6 +41,12 @@ class ANOVA_analyzer():
         self.num_classes = num_classes
         self.num_samples = num_samples
         
+        config_list = dest.split('/')[-2].split('_')[1:5]
+        self.model_structure = config_list[0]
+        self.neuron_type = config_list[1]
+        self.surrogate_func = config_list[2]
+        self.simulation_step = config_list[3]
+        
         # some tests to check the saved files are valid and matchable with self.layers and self.neurons
         if self.layers == None or self.neurons == None:
             raise RuntimeError('[Coderror] invalid layers and/or neurons')
@@ -55,7 +61,6 @@ class ANOVA_analyzer():
         
     # define ANOVE for multi-threads excution
     def one_way_ANOVA(self, feature, i):
-        
         neuron = feature[:, i]
         d = [neuron[i*self.num_samples: i*self.num_samples+self.num_samples] for i in range(self.num_classes)]
         p = stats.f_oneway(*d)[1]  # [0] for F-value, [1] for p-value
@@ -104,8 +109,64 @@ class ANOVA_analyzer():
         print('[Codinfo] Executing selectivity_neuron_ANOVA_plot...')
         print('{Codwarning] This function plots from signeuronIdx.csv')
         
-        # [notice] need to rewrite this input
-        model_name = 'Spiking Resnet18'
+        dest = os.path.join(self.dest, 'ANOVA/')
+        utils_.make_dir(dest)
+        
+        count_dict = {layer:0 for layer in self.layers}     # initializationFalse
+        
+        # list out all neuronIdx.csv files for test
+        for layer in self.layers:
+            for f in [p for p in os.listdir(self.dest) if 'neuronIdx' in p]:
+                if layer in f:     # [help] add extra judgement but allow more free name space
+                    sig_neuron_idx_list = self.dest + f
+                    sig_neuron_idx = np.loadtxt(sig_neuron_idx_list, delimiter=',')
+                    value = sig_neuron_idx.size
+                    count_dict[layer]=value
+                    #print(layer, value)
+              
+        ratio = [round(a / b * 100) for a, b in zip(list(count_dict.values()), self.neurons)]
+        utils_.pickle_dump(dest+'ratio.pkl', ratio)     # save the percentages for plot
+        
+        layers_color_list = color_column(self.layers)
+        
+        # 1. plot all calculations
+        self.plot_sigle_figure(self.layers, ratio, layers_color_list, dest, 'selective_unit_percent', math.floor(len(self.layers)/1.6), 10, f'{self.model_structure}')
+        
+        # 2. for imaginary neurons only ([question] why contains pool layers?) - this version is for ANN because 'act', SNN should be 'neuron'
+        ratio_neuron = []
+        layers_color_list_neuron = []
+        count_dict_neuron = {layer:count_dict[layer] for layer in list(count_dict.keys()) if 'neuron' in layer or 'pool' in layer or 'fc_3' in layer}
+        for idx,i in enumerate(count_dict.keys()):
+            if i in count_dict_neuron:
+                ratio_neuron.append(round(count_dict[i]/self.neurons[idx]*100))
+                layers_color_list_neuron.append(layers_color_list[idx])   
+        
+        self.plot_sigle_figure(list(count_dict_neuron.keys()), ratio_neuron, layers_color_list_neuron, dest, 'selective_unit_percent (dense)', 30, 10, f'{self.model_structure} (neuron)')
+        
+        print('[Codinfo] selective_neuron_percent.png has been saved into {}'.format(dest))
+        
+    def plot_sigle_figure(self, layers, ratio, layers_color_list, dest, save_path, length, width, label):
+        # [important] control the all font size
+        # [notice] the impact is constant unless reopen the terminal
+        plt.rcParams.update({'font.size': 22})
+
+        plt.clf()    
+        plt.figure(figsize=(length, width), dpi=100)
+        plt.plot(layers, ratio, color='red', linestyle='-', linewidth=2.5, alpha=1, label=label)
+        plt.bar(layers, ratio, color=layers_color_list, width=0.5)
+        plt.xticks(rotation='vertical')
+        plt.ylabel('percentage')
+        plt.title(f'selective neuron ratio for each layer (all calculation counted) - {self.model_structure}')
+        plt.legend()
+        plt.savefig(os.path.join(dest, save_path+'.png'), bbox_inches='tight')
+        plt.savefig(os.path.join(dest, save_path+'.eps'), bbox_inches='tight', format='eps')
+        plt.show()
+        plt.close()
+        
+    # [notice] this function amis to compare 2 different models performance, now need to manually input the data of the second model
+    def selectivity_neuron_ANOVA_plot_VS_baseline(self, baseline_model):
+        print('[Codinfo] Executing selectivity_neuron_ANOVA_plot...')
+        print('{Codwarning] This function plots from signeuronIdx.csv')
         
         dest = os.path.join(self.dest, 'ANOVA/')
         utils_.make_dir(dest)
@@ -123,70 +184,60 @@ class ANOVA_analyzer():
                     #print(layer, value)
               
         ratio = [round(a / b * 100) for a, b in zip(list(count_dict.values()), self.neurons)]
+        utils_.pickle_dump(dest+'ratio.pkl', ratio)
         
-        if not os.path.exists(dest+'ratio.pkl'):
-            with open(dest+'ratio.pkl', 'wb') as f:
-                pickle.dump(ratio, f, protocol=-1)
-            f.close()
-        
-# =============================================================================
-#         # --- load comparable ANN data
-#         with open('/media/acxyle/Data/ChromeDownload/Identity_VGG16bn_ReLU_CelebA2622_Neuron/ANOVA/ratio.pkl', 'rb') as f1:
-#             ratio_vgg16bn = pickle.load(f1)
-#         f1.close()
-#         # ---
-# =============================================================================
+        ratio_baseline, baseline_model_config = self.load_baseline_data(baseline_model)     # load the baseline model
         
         layers_color_list = color_column(self.layers)
         
-        # [important] control the all font size
-        # [notice] the impact is constant unless reopen the terminal
-        plt.rcParams.update({'font.size': 22})
-        
         # 1. for all calculation
-        plt.clf()    
-        plt.figure(figsize=(math.floor(len(self.layers)/1.6), 10), dpi=100)
-        plt.plot(self.layers, ratio, color='red', linestyle='-', linewidth=2.5, alpha=1, label='SpikingVGG16bn')
-        #plt.plot(self.layers, ratio_vgg16bn, color='blue', linestyle='-', linewidth=2.5, alpha=1, label='VGG16bn')
-        plt.bar(self.layers, ratio, color=layers_color_list, width=0.5)
-        #plt.bar(self.layers, ratio_vgg16bn, color=layers_color_list, width=0.5, alpha=0.25)
-        plt.xticks(rotation='vertical')
-        plt.ylabel('percentage')
-        plt.title(f'selective neuron ratio for each layer (all calculation counted) - {model_name} (vs VGG16bn)')
-        plt.legend()
-        #plt.savefig(os.path.join(dest, 'selective_neuron_percent.png'), bbox_inches='tight')
-        #plt.savefig(os.path.join(dest, 'selective_neuron_percent.eps'), bbox_inches='tight', format='eps')
-        plt.show()
-        plt.close()
+        self.plot_sigle_figure_VS(layers=self.layers, ratio=ratio, 
+                                  baseline_model_config=baseline_model_config, ratio_baseline=ratio_baseline, 
+                                  layers_color_list=layers_color_list, dest=dest, save_path='selective_unit_percent VS', 
+                                  length=math.floor(len(self.layers)/1.6), width=10, label=self.model_structure)
         
         # 2. for imaginary neurons only ([question] why contains pool layers?) - this version is for ANN because 'act', SNN should be 'neuron'
         ratio_neuron = []
-        ratio_neuron_vgg16bn = []
+        ratio_neuron_baseline = []
         layers_color_list_neuron = []
         count_dict_neuron = {layer:count_dict[layer] for layer in list(count_dict.keys()) if 'neuron' in layer or 'pool' in layer or 'fc_3' in layer}
         for idx,i in enumerate(count_dict.keys()):
             if i in count_dict_neuron:
                 ratio_neuron.append(round(count_dict[i]/self.neurons[idx]*100))
                 layers_color_list_neuron.append(layers_color_list[idx])   
-                # --- for comparison
-                #ratio_neuron_vgg16bn.append(ratio_vgg16bn[idx])
+                ratio_neuron_baseline.append(ratio_baseline[idx])
                 
+        self.plot_sigle_figure_VS(layers=list(count_dict_neuron.keys()), ratio=ratio_neuron, 
+                                  baseline_model_config=baseline_model_config, ratio_baseline=ratio_neuron_baseline, 
+                                  layers_color_list=layers_color_list_neuron, dest=dest, save_path='selective_unit_percent (dense) VS', 
+                                  length=30, width=10, label=self.model_structure+'_neuron')
+        
+        print('[Codinfo] selective_neuron_percent.png has been saved into {}'.format(dest))
+        
+    def plot_single_figure_VS(self, **kwargs):
+        plt.rcParams.update({'font.size': 22})
+    
         plt.clf()    
-        plt.figure(figsize=(30, 10), dpi=100)
-        plt.plot(list(count_dict_neuron.keys()), ratio_neuron, color='red', linestyle='-', linewidth=2.5, alpha=1, label='SpikingVGG16bn')
-        #plt.plot(list(count_dict_neuron.keys()), ratio_neuron_vgg16bn, color='blue', linestyle='-', linewidth=2.5, alpha=1, label='VGG16bn')
-        plt.bar(list(count_dict_neuron.keys()), ratio_neuron, color=layers_color_list_neuron, width=0.5)
-        #plt.bar(list(count_dict_neuron.keys()), ratio_neuron_vgg16bn, color=layers_color_list, width=0.5, alpha=0.25)
-        plt.xticks(rotation=45)
+        plt.figure(figsize=(kwargs['length'], kwargs['width']), dpi=100)
+        plt.plot(kwargs['layers'], kwargs['ratio'], color='red', linestyle='-', linewidth=2.5, alpha=1, label=kwargs['label'])
+        plt.bar(kwargs['layers'], kwargs['ratio'], color=kwargs['layers_color_list'], width=0.5)
+        
+        plt.plot(kwargs['layers'], kwargs['ratio_baseline'], color='blue', linestyle='-', linewidth=2.5, alpha=1, label=f'{kwargs["baseline_model_config"]}')
+        plt.bar(kwargs['layers'], kwargs['ratio_baseline'], color=kwargs['layers_color_list'], width=0.5, alpha=0.25)
+        
+        plt.xticks(rotation='vertical')
         plt.ylabel('percentage')
-        plt.title(f'selective neuron ratio for each layer - {model_name} (vs VGG16bn)')
+        plt.title(f'selective neuron ratio for each layer (all calculation counted) - {kwargs["label"]} (vs {kwargs["baseline_model_config"]})')
         plt.legend()
-        #plt.savefig(os.path.join(dest, 'selective_neuron_percent_neuron_only.png'), bbox_inches='tight')
-        #plt.savefig(os.path.join(dest, 'selective_neuron_percent_neuron_only.eps'), bbox_inches='tight', format='eps')
+        plt.savefig(os.path.join(kwargs['dest'], kwargs['save_path']+'.png'), bbox_inches='tight')
+        plt.savefig(os.path.join(kwargs['dest'], kwargs['save_path']+'.eps'), bbox_inches='tight', format='eps')
         plt.show()
         plt.close()
         
-        print('[Codinfo] selective_neuron_percent.png has been saved into {}'.format(dest))
+    def load_baseline_data(self, baseline_model):
+        ratio_baseline = utils_.pickle_load(f'/media/acxyle/Data/ChromeDownload/{baseline_model}/ANOVA/ratio.pkl')
+        baseline_model_config = baseline_model.split('_')[1:-2]
+        return ratio_baseline, '_'.join(baseline_model_config)
         
     def load_and_check_p_value(self, alpha, save=False, plot=False, verbose=False):
         print('[Codinfo] Executing load_and_check_p_value...')
@@ -316,21 +367,21 @@ def color_column(layers):
 
 if __name__ == "__main__":
     
-    spiking_model = spiking_resnet.__dict__['spiking_resnet18'](spiking_neuron=neuron.LIFNode, num_classes=50, surrogate_function=surrogate.ATan(), detach_reset=True, mode='feature')
-    functional.set_step_mode(spiking_model, step_mode='m') 
-    layers, neurons, shapes = utils_.generate_resnet_layers_list(spiking_model, 'spiking_resnet18')
+    spiking_model = spiking_vgg.__dict__['spiking_vgg16_bn'](spiking_neuron=neuron.LIFNode, num_classes=50, surrogate_function=surrogate.ATan(), detach_reset=True)
+    functional.set_step_mode(spiking_model, step_mode='m')
+    layers, neurons, shapes = utils_.generate_vgg_layers(spiking_model, 'spiking_vgg16_bn')
     
-    layers_ = [i for i in layers if 'neuron' in i or 'fc' in i or 'pool' in i]
+    layers_ = [i for i in layers if 'neuron' in i or 'fc3' in i or 'pool' in i]
     index_ = [layers.index(i) for i in layers_]
     neurons_ = [neurons[i] for i in index_]
     shapes_ = [shapes[i] for i in index_]
     layers = layers_
     neurons = neurons_
     
-    analyzer = ANOVA_analyzer(root='/media/acxyle/Data/ChromeDownload/Identity_SpikingResnet18_LIF_CelebA2622_Results/', 
-                              dest='/media/acxyle/Data/ChromeDownload/Identity_SpikingResnet18_LIF_CelebA2622_Neuron/',
+    analyzer = ANOVA_analyzer(root='/media/acxyle/Data/ChromeDownload/Identity_SpikingVGG16bn_LIF_ATan_T16_CelebA2622_Results/', 
+                              dest='/media/acxyle/Data/ChromeDownload/Identity_SpikingVGG16bn_LIF_ATan_T16_CelebA2622_Neuron/',
                               alpha=0.01, num_classes=50, num_samples=10, layers=layers, neurons=neurons)
     
     analyzer.selectivity_neuron_ANOVA()
-    #analyzer.selectivity_neuron_ANOVA_plot()
+    analyzer.selectivity_neuron_ANOVA_plot()
 

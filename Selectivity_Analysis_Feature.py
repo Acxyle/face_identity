@@ -30,6 +30,9 @@ from itertools import combinations
 
 from scipy.io import loadmat, savemat
 
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+
 import utils_
 
 class Selectiviy_Analysis_Feature():
@@ -67,8 +70,8 @@ class Selectiviy_Analysis_Feature():
             
     # test version for one layer
     def load_useful_data(self):
-        feature = utils_.pickle_load(os.path.join(self.root, layers[0]+'.pkl'))
         
+        feature = utils_.pickle_load(os.path.join(self.root, layers[0]+'.pkl'))
         #encode_class_dict = utils_.pickle_load(os.path.join(self.dest, 'SIMI/SIMI_cnt.pkl'))
         
         # lexicographic order
@@ -84,18 +87,22 @@ class Selectiviy_Analysis_Feature():
         self.StatsDir = os.path.join(self.dest, 'Feature')
         utils_.make_dir(self.StatsDir)
         
+        # =====
+        # [notice] p_values varies slightly because permutations here
+        # -----
         # [notice] in below code, this should use parallel operation because this is very slow
-        #self.generate_p_value(tSNE, self.sq, StatsDir, unit_to_analyze, feature)
-        p_file = loadmat('/home/acxyle/Downloads/osfstorage-archive-supp/Res/DensityStats/CelebA/VGG16/FC_6_Sq035.mat')  # <- this is the key of this function
-        p_values = p_file['p'].reshape(-1) 
-        KS = p_file['KS'].reshape(-1).astype(int)
-        Ksd = p_file['Ksd'].reshape(-1)[0]
+        p_values, KS, Ksd = self.generate_p_value(tSNE, feature, unit_to_analyze)
+
+        # -----
         
-        #Ks, Ksd = self.getKernelsize(tSNE[:,0], tSNE[:,1])
-        #_, _, _, _, p, _, _, _ = self.Cal_Perm_Density(tSNE, wData=feature[:,0], kSize=Ks, kSD=Ksd)
+        # [notice] if the p_value generated locally, then the KS and Ksd also need to be obtain from local functions
+        #p_file = loadmat('/home/acxyle/Downloads/osfstorage-archive-supp/Res/DensityStats/CelebA/VGG16/FC_6_Sq035.mat')  # <- this is the key of this function
+        #p_values = p_file['p'].reshape(-1) 
+        #KS = p_file['KS'].reshape(-1).astype(int)
+        #Ksd = p_file['Ksd'].reshape(-1)[0]
+        # -----
+        # =====
         
-        clusThre = 0.025
-        alpha = 0.01
         #isFDR = 0      # [notice] wait to explore how this works later
         
         # --- order correction
@@ -107,7 +114,7 @@ class Selectiviy_Analysis_Feature():
             encode_id[_] = correct_id
         # ---
     
-        feature_idx, sigP_clean, fmi_idx, InCludeFace, InCludeID, InCludePix, maskLevel, clusterSize = self.region_sel(p_values, tSNE, unit_to_analyze, encode_id, mi_idx, img_label, clusThre, alpha, KS, Ksd)
+        feature_idx, sigP_clean, fmi_idx, InCludeFace, InCludeID, InCludePix, maskLevel, clusterSize = self.region_sel(p_values, tSNE, unit_to_analyze, encode_id, mi_idx, img_label, KS, Ksd)
         
         #bionorP = 1 - binom.cdf(len(feature_idx), len(unit_to_analyze), 0.05)
         
@@ -682,7 +689,7 @@ class Selectiviy_Analysis_Feature():
                 for collection in contours.collections:
                     collection.set_linewidth(3)
                     
-    def region_sel(self, p, mappedX, CellToAnalyze, encode_id, mi_idx, img_label, clusThre, alpha, KS, Ksd):
+    def region_sel(self, p, mappedX, CellToAnalyze, encode_id, mi_idx, img_label, KS=[20,20], Ksd=2, clusThre=0.025, alpha=0.01):
         
         Z1, ZC1, x, y = self.Cal_Density(mappedX, None, KS, Ksd)
         
@@ -796,12 +803,10 @@ class Selectiviy_Analysis_Feature():
         meanPermZ = np.mean(permZ, axis=0)
         meanPermZC = np.mean(permZC, axis=0)
     
-        sigP = p < 0.001
-    
         return Z, ZC, meanPermZ, meanPermZC, p, permZ, permZC, x, y
 
     #FIXME
-    # [notice] obvisouly, this is basically the same upper part with self.getKernelSize(), just with different weight
+    # [notice] obvisouly, this is basically the same upper part with self.get_kernel_size(), just with different weight
     def Cal_Density(self, mappedX, FR=None, kSize=[20,20], kSD=2):
         
         if FR is None:
@@ -826,75 +831,92 @@ class Selectiviy_Analysis_Feature():
         ZC = convolve(Z, kernel, mode='constant')
 
         return Z, ZC, x, y
-
-    # MATLAB 5分钟 可以做完的事情， python 需要 7小时， 多线程/进程操作 is necesary
-    # 测试使用 MATLAB 生成的 p文件 进行 
-    def generate_p_value(self, tSNE, sq, StatsDir, unit_idx, feature):
+    
+    # =========================================================================
+    def generate_p_value(self, tSNE, feature, unit_idx):
  
         layer = 'FC_6'
         
-        mappedX = tSNE
-        
-        x1 = mappedX[:, 0]
-        y1 = mappedX[:, 1]
-        
-        KS, Ksd = self.getKernelsize(x1, y1, sq)
- 
-        file_path = os.path.join(StatsDir, f'{layer}_sq{sq}.pkl')
+        file_path = os.path.join(self.StatsDir, f'{layer}_sq{self.sq}.pkl')
         
         if os.path.exists(file_path):
             results = utils_.pickle_load(file_path)
             p = results['p']
+            KS = results['KS']
+            Ksd = results['Ksd']
            
         else:
-            CellToAnalyze = np.arange(feature.shape[1])
-            p = []
             
-            for ii in tqdm(range(len(CellToAnalyze))):
-                iCell = CellToAnalyze[ii]
-        
-                wData = feature[:, iCell]
-                wData[np.isnan(wData)] = 0
-        
-                _, _, _, _, p_tmp, _, _, _, _ = self.Cal_Perm_Density(mappedX, wData, 1000, KS, Ksd)
-                p.append(p_tmp)
+            KS, Ksd = self.get_kernel_size(tSNE[:, 0], tSNE[:, 1])
             
-            p = np.array(p)
-        
-            results = {'p': p, 'sq': sq, 'KS': KS, 'Ksd': Ksd, 'mappedX': mappedX, 'layer': layer}
+            # ----- parallel computing -----
+            p = [0]*len(unit_idx)
+            executor = ProcessPoolExecutor(max_workers=os.cpu_count())
+            job_pool = []
+            for i in tqdm(range(len(unit_idx)), desc='Submit'):
+                job = executor.submit(self.calculate_p_values_parallel, feature, i, tSNE, KS, Ksd)
+                job_pool.append(job)
+            for i in tqdm(range(len(unit_idx)), desc='Collect'):
+                p[i] = job_pool[i].result()
+            executor.shutdown()
+            # -----
             
+            # ----- sequential computing
+            #p = []
+            #for i in tqdm(range(len(unit_idx)), desc='Sequential'):
+            #    _, _, _, _, p_tmp, _, _, _, _ = self.Cal_Perm_Density(tSNE, feature[:, i], 1000, KS, Ksd)
+            #    p.append(p_tmp)
+            # -----
+                
+            results = {'p': p, 'sq': self.sq, 'KS': KS, 'Ksd': Ksd, 'tSNE': tSNE, 'layer': layer}
             utils_.pickle_dump(file_path, results)
-
+            
+        return p, KS, Ksd
         
-    def getKernelsize(self, x1, x2, sq=0.035):
+    def calculate_p_values_parallel(self, feature, i, tSNE, KS, Ksd):
+        _, _, _, _, p_tmp, _, _, _, _ = self.Cal_Perm_Density(tSNE, feature[:, i], 1000, KS, Ksd)
+        return p_tmp
+        
+    # =========================================================================
+        
+    def get_kernel_size(self, x, y):
         """
-        x1: first dimension of tSNE mappedX;
-        x2: second dimension of tSNE mappedX
-        sq: an empirical scale factor to decide the sigma of the gaussian filter. default to be 0.035, (close to sd = 4, used in previous expriments)
+            this function calculate the kernel_size and sigma for the following calculation on p values
+            
+            In fact, the function here is not the same one described in the paper. 
+            (1) The method here calculate Ksd and Ks based on 'the number of 
+            connected components', and use a scaling factor: self.sq=0.035 to 
+            decide the value of Ksd(sigma, which decides the speed of decrease)
+            -> Ksd(sigma) = sq*nComp, KS = 2*radius(3*sigma)+1
+            (2) The method described in paper is based on 'the size of feature map',
+            and use another scaling factor: ff1=0.2(in self.single_neuron_plot()) to
+            decide the kernel size -> KS = ff1*[ylim,xlim]
+            
+            x: first dimension of tSNE mappedX;
+            y: second dimension of tSNE mappedX
+            self.sq: an empirical scale factor to decide the sigma of the gaussian filter. default to be 0.035, (close to sd = 4, used in previous expriments)
         """
-        x1 = x1 - np.min(x1) + 1  
-        x2 = x2 - np.min(x2) + 1  
+        x = x - np.min(x)
+        y = y - np.min(y)
     
-        imgW = np.ceil(np.max(x1))
-        imgH = np.ceil(np.max(x2))  
+        imgW = int(np.ceil(np.max(x)))+1
+        imgH = int(np.ceil(np.max(y)))+1
     
-        Z = np.zeros((int(imgH), int(imgW)))  # the raw distribution 
+        Z = np.zeros((imgH, imgW))  # empty grid
         
-        # cal probability for each point
-        # [notice] here +1 because without consideration of weights, just times
-        for i in range(len(x1)):
-            x = int(np.round(x1[i]))
-            y = int(np.round(x2[i]))
-            if not np.isnan(y) and not np.isnan(x) and y <= imgH and x <= imgW:
-                Z[x-1, y-1] += 1
-    
-        s = generate_binary_structure(2,2)
-        labeled, nComp = label(Z, structure=s)  # determine the size of the 
-    
-        Ksd = nComp * sq  # determine the sigma
+        for i in range(len(x)):
+            Z[int(np.round(x[i])), int(np.round(y[i]))] += 1
+                
+            # [notice] for bio experiments
+            #if not np.isnan(y) and not np.isnan(x):
+            #    Z[x-1, y-1] += 1
+            
+        labeled, nComp = label(Z, structure=generate_binary_structure(2,2))  
+        Ksd = nComp * self.sq  # determine the sigma
         
-        # [question] why calculate like this?
-        Ksy = int(2 * 3 * (np.floor(Ksd)) + 1)  # determine kernel size using sigma
+        # decide the kernel size
+        # Ksy = int(2 * 3 * Ksd) + 1
+        Ksy = int(2 * 3 * (np.floor(Ksd)) + 1)  
         Ksx = int(np.floor(Ksy * Z.shape[0] / Z.shape[1]))
         
         Ks = [Ksy, Ksx]
@@ -904,10 +926,10 @@ class Selectiviy_Analysis_Feature():
     #FIXME
     def gausskernel(self, R, S):
         """
-        Creates a discretized N-dimensional Gaussian kernel.
-        R: kernel size (pixels in one side)
-        S: standard deviation
-        [note] in current use, the R is a 2-D vector and S is a scalar
+            Creates a discretized N-dimensional Gaussian kernel.
+            R: kernel size (pixels in one side)
+            S: standard deviation
+            [note] in current use, the R is a 2-D vector and S is a scalar
         """
     
         # Check Inputs

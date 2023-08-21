@@ -13,3 +13,7 @@ Updated the code from ANOVA to RSA model comparisons
 This repository contains the code of [Face Identity] Experiments.
 
 Added code of representational similarity analysis (RSA)
+
+[Update] Aug 15
+
+Added code for Feature Coding

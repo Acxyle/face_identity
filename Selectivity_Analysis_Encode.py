@@ -70,11 +70,15 @@ class Encode_feaquency_analyzer():
         self.simulation_step = config_list[3]
         
 
-    def generate_subplot_row_and_col(self, input):     # [Warning] 原版查看
+    def generate_subplot_row_and_col(self, input):     # [Warning] 
         col = 6
         row = math.floor(input/col) +1
         return row, col
-
+    
+    #FIXME 
+    # current version, the idx is  based on id_sensitive unit, not absolute idx
+    # the correction is a big project considering need to change all following functions
+    # this code now looks not good, need to rewrite
     def obtain_encode_class_dict(self, verbose=False, single_neuron_test=False):
 
         print('[Codinfo] Executing obtain_encode_class_dict...')
@@ -90,8 +94,8 @@ class Encode_feaquency_analyzer():
             save_folder = os.path.join(self.save_path, 'Selected_Neuron_Encoding_Performance/')
             utils_.make_dir(save_folder)
         
-        for layer in tqdm(self.layers):
-            for feature_path in self.feature_list:     # [a check] for each layer 
+        for layer in tqdm(self.layers):      # for each layer 
+            for feature_path in self.feature_list:     # [check] 
                 if layer == feature_path.split('/')[-1].split('.')[0]:
                     if verbose:
                         print('[Codinfo] 1. layer name: ', layer)
@@ -100,73 +104,75 @@ class Encode_feaquency_analyzer():
                         
                     for idx_path in self.idx_list:       
                         if layer == idx_path.split('/')[-1].split('-')[0]:     # select the correspondant neuron_idx file
+                            if verbose:
+                                print('[Codinfo] 2. idx file: ', idx_path.split('/')[-1])
+                            sensitive_unit_idx = np.loadtxt(idx_path, delimiter=',')      # [notice] only use the id_sensitive_unit
+                            #print('\n', sensitive_unit_idx)
+                            if sensitive_unit_idx.size == 0:
+                                self.SIMI_dict.update({layer: [{'neuron_amount': 0},{'selective_neuron_amount': 0},{'SI_idx': {}}, {'MI_idx': {}}]})
+                            elif sensitive_unit_idx.size != 0:
+                                if sensitive_unit_idx.size == 1:
+                                    sensitive_unit_idx = np.array([sensitive_unit_idx])
+                                sensitive_unit_idx = list(map(int, sensitive_unit_idx))    
+                                sensitive_units_feature = feature[:, sensitive_unit_idx]  # obtain sensitive_units_feature
+                                
+                                # [notice] from here, the  idx is based on id_sensitive unit
+                                _, sensitive_unit_idx = sensitive_units_feature.shape
                                 if verbose:
-                                    print('[Codinfo] 2. idx file: ', idx_path.split('/')[-1])
-                                sig_neuron_idx = np.loadtxt(idx_path, delimiter=',')
-                                #print('\n', sig_neuron_idx)
-                                if sig_neuron_idx.size == 0:
-                                    self.SIMI_dict.update({layer: [{'neuron_amount': 0},{'selective_neuron_amount': 0},{'SI_idx': {}}, {'MI_idx': {}}]})
-                                elif sig_neuron_idx.size != 0:
-                                    if sig_neuron_idx.size == 1:
-                                        sig_neuron_idx = np.array([sig_neuron_idx])
-                                    sig_neuron_idx = list(map(int, sig_neuron_idx))    
-                                    sig_neuron = feature[:, sig_neuron_idx]  # obtain sig_neuron
-                                    _, col = sig_neuron.shape
-                                    if verbose:
-                                        print('[Codinfo] 3. identity selective neuron calculate: ', col, 'sig_neuron in total')
-                                    SI_idx = {}     # SI idx: encoded classes - the location in the sig_neuron (sensitive unit)
-                                    MI_idx = {}     # MI idx: encoded classes - like above
-                                    # ===== loop for neurons of one layer
-                                    for i in range(col):  # for each neuron
-                                        neuron = sig_neuron[:, i]
-                                        global_mean = np.mean(neuron)
-                                        global_std = np.std(neuron)
-                                        threshold = global_mean + 2 * global_std
-                                        d = [neuron[i*self.num_samples: i*self.num_samples+self.num_samples] for i in range(self.num_classes)]
-                                        d = np.array(d)
-                                        local_mean = np.mean(d, axis=1)     # array of 50 values
-                                        
-                                        # [notice] need to re-check this process
-                                        encode_class = [i + 1 for i, mean in enumerate(local_mean) if mean > threshold]     # the list of what classes encoded by this neuron
-                                        if not encode_class == []:
-                                            if len(encode_class) == 1:
-                                                SI_idx.update({i:encode_class})
-                                            else:
-                                                MI_idx.update({i:encode_class})
-                                                
-                                    if verbose:
-                                        print('\n[Codinfo] layer: {}, {} neurons (SI: {}, MI: {}) pass the threshold (all neuron: {}, selective neuron: {}).'.format(
-                                        layer, len(list(SI_idx.keys()))+len(list(MI_idx.keys())), len(list(SI_idx.keys())), len(list(MI_idx.keys())), feature.shape[1], col))
-                                        
-                                    self.SIMI_dict.update({layer: [{'neuron_amount': feature.shape[1]},{'selective_neuron_amount': col},{'SI_idx': SI_idx}, {'MI_idx': MI_idx}]})
-                                    # =====
-                                    if single_neuron_test:
-                                        if col != 0:
-                                            check_neuron = random.choice(range(col))        # random select a neuron in one layer
-                                            if verbose:
-                                                print('[Codinfo] Now check', layer, ': #', check_neuron, '\n')
-                                            neuron_vector = sig_neuron[:, check_neuron]
-                                            ID_vector_list = [neuron_vector[i*self.num_samples: i*self.num_samples+self.num_samples] for i in range(self.num_classes)] # list for each ID [list 50]
-                                            ID_vector_list = np.array(ID_vector_list)
-                                            mean_list = np.mean(ID_vector_list, axis=1)   # 50 means
-                                            x = np.arange(self.num_classes) + 1   # add 1 from each element
+                                    print('[Codinfo] 3. identity selective neuron calculate: ', sensitive_unit_idx, 'sensitive_units_feature in total')
+                                SI_idx = {}     # SI idx: encoded classes - the location in the sensitive_units_feature (sensitive unit)
+                                MI_idx = {}     # MI idx: encoded classes - like above
+                                # ===== loop for neurons of one layer
+                                for i in range(sensitive_unit_idx):  # for each neuron
+                                    neuron = sensitive_units_feature[:, i]
+                                    global_mean = np.mean(neuron)
+                                    global_std = np.std(neuron)
+                                    threshold = global_mean + 2 * global_std
+                                    d = [neuron[i*self.num_samples: i*self.num_samples+self.num_samples] for i in range(self.num_classes)]
+                                    d = np.array(d)
+                                    local_mean = np.mean(d, axis=1)     # array of 50 values
+                                    
+                                    # [notice] need to re-check this process
+                                    encode_class = [i + 1 for i, mean in enumerate(local_mean) if mean > threshold]     # the list of what classes encoded by this neuron
+                                    if not encode_class == []:
+                                        if len(encode_class) == 1:
+                                            SI_idx.update({i:encode_class})
+                                        else:
+                                            MI_idx.update({i:encode_class})
+                                            
+                                if verbose:
+                                    print('\n[Codinfo] layer: {}, {} neurons (SI: {}, MI: {}) pass the threshold (all neuron: {}, selective neuron: {}).'.format(
+                                    layer, len(list(SI_idx.keys()))+len(list(MI_idx.keys())), len(list(SI_idx.keys())), len(list(MI_idx.keys())), feature.shape[1], sensitive_unit_idx))
+                                    
+                                self.SIMI_dict.update({layer: [{'neuron_amount': feature.shape[1]},{'selective_neuron_amount': sensitive_unit_idx},{'SI_idx': SI_idx}, {'MI_idx': MI_idx}]})
+                                # =====
+                                if single_neuron_test:
+                                    if sensitive_unit_idx != 0:
+                                        check_neuron = random.choice(range(sensitive_unit_idx))        # random select a neuron in one layer
+                                        if verbose:
+                                            print('[Codinfo] Now check', layer, ': #', check_neuron, '\n')
+                                        neuron_vector = sensitive_units_feature[:, check_neuron]
+                                        ID_vector_list = [neuron_vector[i*self.num_samples: i*self.num_samples+self.num_samples] for i in range(self.num_classes)] # list for each ID [list 50]
+                                        ID_vector_list = np.array(ID_vector_list)
+                                        mean_list = np.mean(ID_vector_list, axis=1)   # 50 means
+                                        x = np.arange(self.num_classes) + 1   # add 1 from each element
 
-                                            # === merged subplot
-                                            axs[cnt_row, cnt_col].bar(x, mean_list, width=0.5)      # subplot
-                                            axs[cnt_row, cnt_col].set_title(layer + ' # ' + str(check_neuron), fontsize=8)
-                                            cnt_col += 1     # if initial col == 1, this will throw error message while using old version generate_subplot_row_and_col
-                                            if cnt_col == self.subplot_col:
-                                                cnt_col = 0
-                                                cnt_row += 1  
-                                            # === independent fig
-                                            fig2, axes2 = plt.subplots(1)
-                                            axes2.bar(x, mean_list, width=0.5)
-                                            axes2.set_xticks(np.arange(0, self.num_classes+1, step=2))
-                                            axes2.set_xlabel('IDs', fontsize=8)
-                                            axes2.set_ylabel('local mean', fontsize=8)
-                                            axes2.set_title(layer + ' # ' + str(check_neuron))
-                                            fig2.savefig(save_folder+layer+' # '+str(check_neuron)+'_encoding_performance.png', bbox_inches='tight', dpi=100)
-                                            plt.close(fig2)
+                                        # === merged subplot
+                                        axs[cnt_row, cnt_col].bar(x, mean_list, width=0.5)      # subplot
+                                        axs[cnt_row, cnt_col].set_title(layer + ' # ' + str(check_neuron), fontsize=8)
+                                        cnt_col += 1     # if initial sensitive_unit_idx == 1, this will throw error message while using old version generate_subplot_row_and_col
+                                        if cnt_col == self.subplot_col:
+                                            cnt_col = 0
+                                            cnt_row += 1  
+                                        # === independent fig
+                                        fig2, axes2 = plt.subplots(1)
+                                        axes2.bar(x, mean_list, width=0.5)
+                                        axes2.set_xticks(np.arange(0, self.num_classes+1, step=2))
+                                        axes2.set_xlabel('IDs', fontsize=8)
+                                        axes2.set_ylabel('local mean', fontsize=8)
+                                        axes2.set_title(layer + ' # ' + str(check_neuron))
+                                        fig2.savefig(save_folder+layer+' # '+str(check_neuron)+'_encoding_performance.png', bbox_inches='tight', dpi=100)
+                                        plt.close(fig2)
                     if single_neuron_test:
                         for ax in axs.flat:
                             ax.label_outer()
@@ -181,6 +187,8 @@ class Encode_feaquency_analyzer():
         utils_.pickle_dump(os.path.join(self.save_path, 'ID_neuron_encode_class_dict.pkl'), self.SIMI_dict)      # save the relationship between layer (include SI and MI) and encoded classes
         print('[Codinfo] SIMI ID_neuron_encode_dict.pkl saved in {}'.format(self.save_path))
     
+    #FIXME
+    # looks need to find a better way to save the data make us to better understand the encode_id, si_idx, mi_idx, just like the MATLAB version
     def reload_and_revocer_encode_class_dict(self, save_path=None):
         print('[Codinfo] Executing reload_and_recover_encode_class_dict...')
         if save_path == None:

@@ -121,6 +121,8 @@ class Selectiviy_Analysis_Feature():
         
         for idx, layer in enumerate(self.layers): 
             
+            print(f'[Codinfo] Executing feature analysis of layer [{layer}]')
+            
             num_units = self.units[idx]
             
             self.layer_folder = os.path.join(self.Save_folder, f'{layer}')
@@ -151,7 +153,7 @@ class Selectiviy_Analysis_Feature():
         
         # ====== single_feature_unit_feature_coding analysis
         #FIXME, the units selection should be improved, implecate the intersection rule to si_unit either
-        #self.feature_coding_plot(si_idx, mi_idx, feature_idx, fmi_idx, feature, tSNE, x, y, img_label, qualified_p_masks, layer)
+        self.feature_coding_plot(si_idx, mi_idx, feature_idx, fmi_idx, feature, tSNE, x, y, img_label, qualified_p_masks, layer)
         # ======
         
         # ====== figures of population level
@@ -170,7 +172,7 @@ class Selectiviy_Analysis_Feature():
         feature_cluster_sizes, overlapped_pixel_map = self.population_feature_size(target_cluster_types[0], target_unit_types, unit_types_dict, si_idx, mi_idx, fmi_idx, list_pixels, empty_feature_map)
         
         # --- 1. size
-        self.plot_sizes_boxplot(feature_cluster_sizes, None, layer)
+        #self.plot_sizes_boxplot(feature_cluster_sizes, None, layer)
         
         # --- 2. distance
         groups = [fmi_idx, np.setdiff1d(mi_idx, fmi_idx)]
@@ -179,10 +181,10 @@ class Selectiviy_Analysis_Feature():
         groups_stats, group_stats = self.calculate_distance_ttest(groups, distance_stats['median'])  # groups_stats: group pairs; group_stats: single group stats
         
         # [notice] use one function to contain all plots for distance
-        self.plot_distance_figures(groups, distance_stats, group_stats,  layer)
+        #self.plot_distance_figures(groups, distance_stats, group_stats,  layer)
         
         # --- 3. overlapped area
-        #self.plot_overlapped_receptive_field(target_unit_types, tSNE, x, y, feature_cluster_sizes, overlapped_pixel_map, layer)
+        self.plot_overlapped_receptive_field(target_unit_types, tSNE, x, y, feature_cluster_sizes, overlapped_pixel_map, layer)
         
     def plot_distance_figures(self, groups, distance_stats, stats, layer):
         
@@ -397,7 +399,7 @@ class Selectiviy_Analysis_Feature():
     
     def unit_types(self, si_idx, mi_idx, fmi_idx, feature_idx, feature):
         
-        non_id_selective_idx = np.setdiff1d(np.arange(4096), np.union1d(mi_idx, si_idx))
+        non_id_selective_idx = np.setdiff1d(np.arange(feature.shape[1]), np.union1d(mi_idx, si_idx))
         
         mi_nonf_idx = np.setdiff1d(mi_idx, fmi_idx)
         
@@ -405,7 +407,7 @@ class Selectiviy_Analysis_Feature():
         si_non_feature_idx = np.setdiff1d(si_idx, feature_idx)
         
         non_id_feature_idx = np.intersect1d(feature_idx, non_id_selective_idx)
-        non_id_non_feature_idx = np.setdiff1d(np.arange(4096), np.unique(np.concatenate([si_idx, mi_idx, feature_idx])))
+        non_id_non_feature_idx = np.setdiff1d(np.arange(feature.shape[1]), np.unique(np.concatenate([si_idx, mi_idx, feature_idx])))
         non_id_non_feature_idx = [idx for idx in non_id_non_feature_idx if not np.sum(feature[:, idx]) == 0 and np.sum(np.mean(feature[:,idx].reshape(-1,10), axis=1)!=0)>1]
         
         unit_types_dict = {
@@ -464,13 +466,13 @@ class Selectiviy_Analysis_Feature():
             #FIXME
             #self.plot_scatter(unit_to_plot, feature_idx, feature, x2, y2, colors, img_label, qualified_p_masks)
             
-            self.plot_region_based_coding(unit_to_plot, feature_idx, feature, colors, x, y, img_label, qualified_p_masks, save_folder, layer)
+            self.plot_region_based_coding(plot_type, unit_to_plot, feature_idx, feature, colors, x, y, img_label, qualified_p_masks, save_folder, layer)
         
-    def plot_region_based_coding(self, unit_to_plot, feature_idx, feature, colors, x, y, img_label, qualified_p_masks, save_folder, layer=None):
+    def plot_region_based_coding(self, plot_type, unit_to_plot, feature_idx, feature, colors, x, y, img_label, qualified_p_masks, save_folder, layer=None):
         
         logging.getLogger('matplotlib').setLevel(logging.ERROR)
         
-        for unit in tqdm(unit_to_plot):
+        for unit in tqdm(unit_to_plot, desc=f'{plot_type}'):
             
             #sigInd = np.where(feature_idx == unit)[0]  
             
@@ -738,7 +740,7 @@ class Selectiviy_Analysis_Feature():
         
         # ===
         #FIXME
-        # --- 1. Thread/ProcessPool     - why very slow?
+        # --- 1. Thread/ProcessPool     - why very slow? 竞性条件?序列等待?
         #executor = ProcessPoolExecutor(max_workers=os.cpu_count())
         #job_pool = []
         #for unit in tqdm(target_units, desc='Submit'):     
@@ -749,7 +751,7 @@ class Selectiviy_Analysis_Feature():
         #executor.shutdown()
         
         # --- 2. Sequential
-        for unit in tqdm(target_units, desc='Sequential region selection'):
+        for unit in tqdm(target_units, desc='region selection'):
             self.feature_region_selection_single_unit(p, x, y, unit, img_label, encode_id, mi_idx, alpha, mask, cluster_size_threshold, preliminary_p_masks, qualified_p_masks, featured_img, featured_id, feature_idx, fmi_idx, list_pixels)
         
         # ===
@@ -821,7 +823,9 @@ class Selectiviy_Analysis_Feature():
         """
             this function is the parallel executor of calculate_perm_density_p_value() to obtain p values for all units
         """
- 
+        
+        print(f'[Codinfo] Executing p_value generation of layer [{layer}]')
+    
         file_path = os.path.join(self.layer_folder, f'{layer}_sq{self.sq}.pkl')
         
         if os.path.exists(file_path):
@@ -843,10 +847,10 @@ class Selectiviy_Analysis_Feature():
             p = [[]]*len(unit_idx)
             executor = ProcessPoolExecutor(max_workers=os.cpu_count())
             job_pool = []
-            for i in tqdm(range(len(unit_idx)), desc='Submit'):
+            for i in tqdm(range(len(unit_idx)), desc=f'[{layer}] submit'):
                 job = executor.submit(self.calculate_p_values_parallel, i, tSNE, x, y, feature, empty_map, 1000, gaussian_kernel)
                 job_pool.append(job)
-            for i in tqdm(range(len(unit_idx)), desc='Collect'):
+            for i in tqdm(range(len(unit_idx)), desc=f'[{layer}] collect'):
                 p[i] = job_pool[i].result()
             executor.shutdown()
             # -----
@@ -1046,22 +1050,19 @@ if __name__ == '__main__':
     #            layers=layers, units=units, taskInstruction='CelebA')
     #selectivity_feature_analyzer.feature_analysis()
     
-    neuron_ = neuron.LIFNode
-    neuron_name = 'LIF'
-    T = 16
-    
+    #neuron_ = neuron.LIFNode
     #spiking_model = spiking_vgg.__dict__['spiking_vgg16_bn'](spiking_neuron=neuron_, num_classes=50, surrogate_function=surrogate.ATan(), detach_reset=True)
     #functional.set_step_mode(spiking_model, step_mode='m')
     #layers, neurons, shapes = utils_.generate_vgg_layers(spiking_model, 'spiking_vgg16_bn')
     
-    layers = ['AdptiveAvgP', 'neuron_1', 'neuron_2']
-    neurons  = [25088,  4096, 4096]
+    layers = ['L4_B1_neuron01', 'L4_B2_neuron02', 'avgpool', 'fc']
+    neurons  = [25088, 25088, 512, 50]
 
     root_dir = '/media/acxyle/Data/ChromeDownload/'
 
     selectivity_feature_analyzer = Selectiviy_Analysis_Feature(
-                root=os.path.join(root_dir, f'Identity_SpikingVGG16bn_{neuron_name}_ATan_T{T}_CelebA2622_Results/'), 
-                dest=os.path.join(root_dir, f'Identity_SpikingVGG16bn_{neuron_name}_ATan_T{T}_CelebA2622_Neuron/'), 
+                root=os.path.join(root_dir, 'Identity_SpikingResnet18_LIF_CelebA2622_Results/'), 
+                dest=os.path.join(root_dir, 'Identity_SpikingResnet18_LIF_CelebA2622_Neuron/'), 
                 layers=layers, units=neurons, taskInstruction='CelebA')
     
     selectivity_feature_analyzer.feature_analysis()

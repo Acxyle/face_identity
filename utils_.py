@@ -150,6 +150,14 @@ def findMinY(x, ax):
     
     return Y     # [question] should return ax
 
+def lexicographic_order(num_classes):
+    id_order = np.arange(1,1+num_classes).astype(str)
+    id_order_idx = np.argsort(id_order)
+    id_order_lexical = id_order[id_order_idx].astype(int)
+    
+    return id_order_lexical
+
+# -----
 def pickle_dump(file_path, file):
     if not os.path.exists(file_path):
         with open(file_path, 'wb') as f:

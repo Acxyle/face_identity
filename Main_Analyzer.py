@@ -26,7 +26,7 @@ from spikingjelly.activation_based import surrogate, neuron, functional
 import Selective_Neuron_ANOVA
 import Selectivity_Analysis_Encode
 import Selectivity_Analysis_SIMI
-import Selectivity_Analysis_Add
+import Selectivity_Analysis_DR_and_RSA
 import Selectivity_Analysis_Correlation
 
 import SNNRAT_Resnet  # [notice] Vanilla SNN from SNNRAT
@@ -34,13 +34,13 @@ import vgg, resnet
 import utils_
 
 
-parser = argparse.ArgumentParser(description="Selectivity Analyzer Ver 2.1", add_help=True)
-parser.add_argument("--num_classes", type=int, default=50, help="{Codelp] set the number of classes")
+parser = argparse.ArgumentParser(description="Selectivity Analyzer Ver 2.2", add_help=True)
+parser.add_argument("--num_classes", type=int, default=50, help="[Codelp] set the number of classes")
 parser.add_argument("--num_samples", type=int, default=10, help="[Codelp] set the sample number of each class")
 parser.add_argument("--alpha", type=float, default=0.01, help='[Codelp] assign the alpha value for ANOVA')
-parser.add_argument("--root_dir", type=str, default="/media/acxyle/Data/ChromeDownload/", help="[Codelp] root directory for features and neurons")
-parser.add_argument("--feature_folder" ,type=str, default='Identity_SpikingVGG16bn_LIF_ATan_T16_CelebA2622_Results/', help="[Codelp] folder for features")
-parser.add_argument("--model", type=str, default='spiking_vgg16_bn')
+parser.add_argument("--root_dir", type=str, default="/home/acxyle-workstation/Downloads/", help="[Codelp] root directory for features and neurons")
+parser.add_argument("--feature_folder" ,type=str, default='Identity_SpikingVGG16bn_LIF_CelebA2622_Results/', help="[Codelp] folder for features")
+parser.add_argument("--model", type=str, default='vgg16_bn')     # branch trigger
 # [warning] 此 model 并不执行 train 等操作，只是一个名称（或者val一轮）以获取 layers 和 neurons，如果只获取 layers，则不会进行任何计算
 parser.add_argument("--neuron", type=str, default='LIF')
 # [warning] 因此这个 neuron 也没有任何意义，目前的考虑是可以在后续将 featuremap 放进此代码后生效
@@ -49,7 +49,7 @@ parser.add_argument("--include_ANOVA", type=bool, default=True)
 
 args = parser.parse_args()
 
-output_folder = '_'.join([*args.feature_folder.split('_')[:-1], 'Neuron/'])
+output_folder = '_'.join([*args.feature_folder.split('_')[:-1], 'Neuron_test/'])
 
 #FIXME
 # waiting to rewrite
@@ -171,7 +171,7 @@ def Main_Analyzer(args):
     SIMI_Analyzer.single_neuron_boxplot()
     
     # --- 4.
-    selectivity_additional_analyzer = Selectivity_Analysis_Add.Selectiviy_Analysis_Additional(feature_root, idx_root, num_samples=num_samples, num_classes=num_classes, layers=layers, neurons=neurons, status=False,
+    selectivity_additional_analyzer = Selectivity_Analysis_DR_and_RSA.Selectiviy_Analysis_DR_and_RSA(feature_root, idx_root, num_samples=num_samples, num_classes=num_classes, layers=layers, neurons=neurons, status=False,
                                                                                               #data_name = ''
                                                                                               data_name = 'CelebA'
                                                                                               )
@@ -182,15 +182,15 @@ def Main_Analyzer(args):
     
     # --- 5.  -> [notice] models comparison refer to Selectivity_Analysis_Correlation_plot.py
     #FIXME
-    #corr_root = os.path.join(idx_root, 'Correlation/')
+    corr_root = os.path.join(idx_root, 'Correlation/')
     
-    #selectivity_correlation_monkey_analyzer = Selectivity_Analysis_Correlation.Selectiviy_Analysis_Correlation_Monkey(corr_root=corr_root, layers=layers)
-    #selectivity_correlation_monkey_analyzer.monkey_neuron_analysis()
+    selectivity_correlation_monkey_analyzer = Selectivity_Analysis_Correlation.Selectiviy_Analysis_Correlation_Monkey(corr_root=corr_root, layers=layers)
+    selectivity_correlation_monkey_analyzer.monkey_neuron_analysis()
     
-    #selectivity_correlation_human_analyzer = Selectivity_Analysis_Correlation.Selectiviy_Analysis_Correlation_Human(corr_root=corr_root, layers=layers)
-    ##selectivity_correlation_human_analyzer.human_neuron_get_firing_rate()
-    #selectivity_correlation_human_analyzer.human_neuron_analysis(used_ID='top50')
-    #selectivity_correlation_human_analyzer.human_neuron_analysis(used_ID='top10')
+    selectivity_correlation_human_analyzer = Selectivity_Analysis_Correlation.Selectiviy_Analysis_Correlation_Human(corr_root=corr_root, layers=layers)
+    #selectivity_correlation_human_analyzer.human_neuron_get_firing_rate()
+    selectivity_correlation_human_analyzer.human_neuron_analysis(used_ID='top50')
+    selectivity_correlation_human_analyzer.human_neuron_analysis(used_ID='top10')
     
     # --- 6. feature coding (optional)
     # [update: May 30, 2023] [notice] working...

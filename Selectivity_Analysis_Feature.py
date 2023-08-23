@@ -55,12 +55,13 @@ class Selectiviy_Analysis_Feature():
         self.num_samples = num_samples
         self.num_classes = num_classes
         
-        self.Save_folder = os.path.join(self.dest, 'Feature')
-        utils_.make_dir(self.Save_folder)
+        self.save_folder = os.path.join(self.dest, 'Feature')
+        utils_.make_dir(self.save_folder)
         
         # --- local variables
         self.taskInstruction = taskInstruction
         
+        # --- not in use
         if self.taskInstruction == 'ImageNet':
             self.nSD = 1.8
             self.sq = 0.021
@@ -68,28 +69,33 @@ class Selectiviy_Analysis_Feature():
         elif self.taskInstruction == 'CoCo':
             self.nSD = 1.5
             self.maskFactor = 0.3
+        # ---    
         elif self.taskInstruction == 'CelebA':
             self.nSD = 4
             self.sq = 0.035
             self.maskFactor = 0.1
+        
+        colorppol = plt.get_cmap('tab20c', 60)
+        self.colors = [colorppol(ii) for ii in range(50)]
             
-    #FIXME
     # test version for one layer
     def data_preparation(self, layer, SM_selective_idx):
          
         feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
         tSNE = loadmat(os.path.join(self.dest, f'TSNE/Results/tSNE_{layer}_all.mat'))[f'{layer}_all']
         
+        x = tSNE[:, 0] - np.min(tSNE[:, 0])
+        y = tSNE[:, 1] - np.min(tSNE[:, 1])
+        
         self.population_folder = os.path.join(self.layer_folder, 'Population_Level')
         utils_.make_dir(self.population_folder)
+        self.single_unit_performance_folder = os.path.join(self.layer_folder, 'Single_unit')
+        utils_.make_dir(self.single_unit_performance_folder)
         
-        # lexicographic order
+        # -----
+        # lexicographic order, the encode_id should be re-build from sensitive_unit_idx and SIMI_dict
         #encode_id = loadmat(os.path.join(self.dest, f'encode_mat/{layer}_encode.mat'))['encodeID'].reshape(-1)
-        
-        #FIXME change the method later, now use it for temporal
-        # the encode_id should be re-build from sensitive_unit_idx and SIMI_dict
-        
-        # --- test
+
         sensitive_unit_idx = np.loadtxt(os.path.join(self.dest, f'{layer}-neuronIdx.csv'), delimiter=',')
         sensitive_unit_idx = list(map(int, sensitive_unit_idx)) 
         
@@ -100,7 +106,7 @@ class Selectiviy_Analysis_Feature():
         
         si_idx = np.array([i for i in range(len(encode_id)) if encode_id[i].size == 1])
         mi_idx = np.array([i for i in range(len(encode_id)) if encode_id[i].size > 1])
-        # ---
+        # -----
         
         #  --- label correction
         id_label = self.lexicographic_order()
@@ -112,81 +118,228 @@ class Selectiviy_Analysis_Feature():
             
         #isFDR = 0      # [notice] wait to explore how this works later
         
-        return feature, tSNE, encode_id, si_idx, mi_idx, id_label, img_label
+        return feature, tSNE, x, y, encode_id, si_idx, mi_idx, id_label, img_label
 
 
     def feature_analysis(self):
         
         encode_class_dict = utils_.pickle_load(os.path.join(self.dest, 'Frequency/ID_neuron_encode_class_dict.pkl'))
         
-        for idx, layer in enumerate(self.layers): 
+        for idx, layer in enumerate(self.layers):     # for each layer
             
             print(f'[Codinfo] Executing feature analysis of layer [{layer}]')
             
             num_units = self.units[idx]
             
-            self.layer_folder = os.path.join(self.Save_folder, f'{layer}')
+            self.layer_folder = os.path.join(self.save_folder, f'{layer}')
             utils_.make_dir(self.layer_folder)
             
             SM =  encode_class_dict[layer]
             SM_selective_idx = {**SM[2]['SI_idx'], **SM[3]['MI_idx']}
             SM_selective_idx = dict(sorted(SM_selective_idx.items()))
             
-            feature, tSNE, encode_id, si_idx, mi_idx, id_label, img_label = self.data_preparation(layer, SM_selective_idx)
+            feature, tSNE, x, y, encode_id, si_idx, mi_idx, id_label, img_label = self.data_preparation(layer, SM_selective_idx)
+            
+            self.feature_embedding_demonstration(tSNE, x, y, img_label, layer, feature)
+            
             self.feature_analysis_single_layer(tSNE, feature, np.arange(num_units), encode_id, si_idx, mi_idx, img_label, layer)
         
         print('[Codinfo] Completed')
         
-    def feature_analysis_single_layer(self, tSNE, feature, unit_to_analyze, encode_id, si_idx, mi_idx, img_label, layer):    
+    def feature_embedding_demonstration(self, tSNE, x, y, img_label, layer, feature):
         
-        # first time consuming calculation
-        p_values, kernel_size, kernel_sigma = self.generate_p_values(tSNE, feature, unit_to_analyze, layer)
+        logging.getLogger('matplotlib').setLevel(logging.ERROR)
+        
+        colors = self.colors
+        
+        kernel_size, kernel_sigma = self.get_kernel_size(tSNE)
+        gaussian_kernel =  self.gausskernel(kernel_size, kernel_sigma)
+        
+        # --- plot gaussian_kernel
+        fig, ax = plt.subplots(figsize=(10,10))
+        
+        ax.imshow(gaussian_kernel, origin='lower')
+        plt.savefig(os.path.join(self.layer_folder, 'gaussian_kernel.png'), bbox_inches='tight')
+        plt.savefig(os.path.join(self.layer_folder, 'gaussian_kernel.eps'), format='eps', bbox_inches='tight')
+        plt.close()
+        print(f'[Codinfo] gaussian_kernel shape: {gaussian_kernel.shape}')
+        print(f"[Codinfo] Please check [{os.path.join(self.layer_folder, 'gaussian_kernel.png')}] for visualization")
+        # ---
+        
+        # tSNE density
+        density_map, convolved_density_map = self.calculate_density_map(tSNE, x, y, kernel=gaussian_kernel)
+        
+        # --- plot embedding demonstration (without weights)
+        fig, ax = plt.subplots(3, 3, figsize=(30,30))
+        self.feature_embedding_demonstration_plot(fig, ax, x, y, colors, img_label, layer, density_map=density_map, convolved_density_map=convolved_density_map, mark='without weights')
+        
+        # --- plot embedding demonstration (with weights)
+        fig, ax = plt.subplots(3, 3, figsize=(30,30))
+        unit_to_plot = [np.random.choice(np.arange(feature.shape[1]))]
+        
+        self.feature_embedding_demonstration_plot(fig, ax, x, y, colors, img_label, layer, unit_to_plot, feature, density_map, convolved_density_map, mark='with weights')
+        
+        print('6')
+        
+    def feature_embedding_demonstration_plot(self, fig, ax, x, y, colors, img_label, layer, unit_to_plot=None, feature=None, density_map=None, convolved_density_map=None, mark=None):
+        
+        self.plot_scatter(ax[0,0], x, y, colors, img_label, unit_to_plot=unit_to_plot, feature=feature, grid=False), ax[0,0].set_title('weighted TSNE')
+        
+        self.plot_scatter(ax[0,1], x, y, colors, img_label, unit_to_plot=unit_to_plot, feature=feature), ax[0,1].set_title('with grid')
+        self.plot_scatter(ax[1,1], x, y, colors, img_label, unit_to_plot=unit_to_plot, feature=feature)
+        self.plot_scatter(ax[2,1], x, y, colors, img_label, unit_to_plot=unit_to_plot, feature=feature)
+        
+        self.plot_scatter(ax[0,2], x, y, colors, img_label, unit_to_plot=unit_to_plot, feature=feature, flag='grid'), ax[0,2].set_title('rounded position')
+        self.plot_scatter(ax[1,2], x, y, colors, img_label, unit_to_plot=unit_to_plot, feature=feature, flag='grid')
+        self.plot_scatter(ax[2,2], x, y, colors, img_label, unit_to_plot=unit_to_plot, feature=feature, flag='grid')
+        
+        ax[1,0].imshow(density_map, origin='lower'), ax[1,0].set_title('density for all img')
+        ax[1,1].imshow(density_map, origin='lower')
+        ax[1,2].imshow(density_map, origin='lower')
+        
+        ax[2,0].imshow(convolved_density_map, origin='lower'), ax[2,0].set_title('convoled density')
+        ax[2,1].imshow(convolved_density_map, origin='lower')
+        ax[2,2].imshow(convolved_density_map, origin='lower')
+        
+        if unit_to_plot is not None:
+            fig.suptitle(f'Feature Embedding Demonstration [{layer} - unit: {unit_to_plot[0]}]', fontsize=16, fontweight='bold', y=0.9)
+        else:
+            fig.suptitle(f'Feature Embedding Demonstration [{layer}]', fontsize=16, fontweight='bold', y=0.9)
+        
+        plt.savefig(os.path.join(self.layer_folder, f'feature_embedding_demonstration ({mark}).png'), bbox_inches='tight')
+        plt.savefig(os.path.join(self.layer_folder, f'feature_embedding_demonstration ({mark}).eps'), format='eps', bbox_inches='tight')
+        plt.close()
+        
+        
+    def feature_analysis_single_layer(self, tSNE, x, y, feature, unit_to_analyze, encode_id, si_idx, mi_idx, img_label, layer):  
+        
+        # unde construction
+        self.feature_embedding_demonstration(tSNE, x, y)
+        
+        p_values, kernel_size, kernel_sigma = self.generate_p_values(tSNE, feature, unit_to_analyze, layer)     # [warning] intensive computing
         
         gaussian_kernel = self.gausskernel(kernel_size, kernel_sigma)
         
-        x = tSNE[:, 0] - np.min(tSNE[:, 0])
-        y = tSNE[:, 1] - np.min(tSNE[:, 1])
-        
         fmi_idx, feature_idx, featured_img, featured_id, qualified_p_masks, preliminary_p_masks, list_pixels = self.feature_region_selection(p_values, tSNE, x, y, unit_to_analyze, encode_id, mi_idx, img_label, gaussian_kernel)
-
+        
         #bionorP = 1 - binom.cdf(len(feature_idx), len(unit_to_analyze), 0.05)
         
         # ====== single_feature_unit_feature_coding analysis
-        #FIXME, the units selection should be improved, implecate the intersection rule to si_unit either
+        #FIXME, the units selection should be improved, implicate the intersection rule to si_unit either
         self.feature_coding_plot(si_idx, mi_idx, feature_idx, fmi_idx, feature, tSNE, x, y, img_label, qualified_p_masks, layer)
         # ======
         
-        # ====== figures of population level
-        # [notice] this step used nothing from self.feature_region_selection()
-        # [idea] maybe those 2 functions can be merged as one?
-        # [idea] the make all calculation can receive any input rather than special type of units/units
-        
+        # ====== population level analysis
         unit_types_dict = self.unit_types(si_idx, mi_idx, fmi_idx, feature_idx, feature)
         
         # -----
         target_cluster_types = ['max', 'all']
-        # [notice] for mi_nonf unit, that is possible to have no cluster, ALL si_nonf and non_id_nonf
-        target_unit_types = ['fmi_idx', 'mi_nonf_idx', 'si_idx']
+        target_unit_types = ['fmi_idx', 'mi_nonf_idx', 'si_idx']     # [notice] for mi_nonf unit, that is possible to have no cluster, ALL si_nonf and non_id_nonf
+        
         empty_feature_map = np.zeros(qualified_p_masks[0].shape)
         
         feature_cluster_sizes, overlapped_pixel_map = self.population_feature_size(target_cluster_types[0], target_unit_types, unit_types_dict, si_idx, mi_idx, fmi_idx, list_pixels, empty_feature_map)
         
         # --- 1. size
-        #self.plot_sizes_boxplot(feature_cluster_sizes, None, layer)
+        self.plot_sizes_boxplot(feature_cluster_sizes, None, layer)
         
         # --- 2. distance
-        groups = [fmi_idx, np.setdiff1d(mi_idx, fmi_idx)]
-        
-        distance_stats = self.calculate_distance(tSNE, encode_id, img_label, unit_to_analyze)  # this function can receive any units as the input, and one units generate one value
-        groups_stats, group_stats = self.calculate_distance_ttest(groups, distance_stats['median'])  # groups_stats: group pairs; group_stats: single group stats
-        
-        # [notice] use one function to contain all plots for distance
-        #self.plot_distance_figures(groups, distance_stats, group_stats,  layer)
+        self.plot_distances(tSNE, encode_id, img_label, unit_to_analyze, unit_types_dict, layer)
         
         # --- 3. overlapped area
         self.plot_overlapped_receptive_field(target_unit_types, tSNE, x, y, feature_cluster_sizes, overlapped_pixel_map, layer)
+    
+    #FIXME
+    def plot_distances(self, tSNE, encode_id, img_label, unit_to_analyze, unit_types_dict, layer):
+        groups = ['fmi_idx', 'non_id_selective_idx']
         
-    def plot_distance_figures(self, groups, distance_stats, stats, layer):
+        distance_stats = self.calculate_distance(tSNE, encode_id, img_label, unit_to_analyze)  # this function can receive any units as the input, and one units generate one value
+        groups_stats, group_stats = self.calculate_distance_ttest(groups, unit_types_dict, distance_stats['median'])  # groups_stats: group pairs; group_stats: single group stats
+        
+        # [notice] use one function to contain all plots for distance
+        self.plot_distance_figures(groups, unit_types_dict, distance_stats, group_stats,  layer)
+        
+    def calculate_distance(self, tSNE, encode_id, img_label, target_units):      # try to make a figure to illustrate this?
+        """
+            the function tries to validate the distances of id_selective units in the reducted feature space
+        """
+        max_distance = pdist([[np.min(tSNE[:, 0]), np.min(tSNE[:, 1])], [np.max(tSNE[:, 0]), np.max(tSNE[:, 1])]], 'euclidean')     # normalization factor
+
+        list_distance = []
+        distance_stats = {}
+        
+        for unit in target_units:
+            encoded_id = encode_id[unit]     # obtain the emcoded ID
+            
+            if encoded_id.size != 0:     # check if this is a valid encoded unit/unit_typeron
+                encoded_img = np.hstack([np.where(img_label==encoded_id[i])[0] for i in range(len(encoded_id))])
+                #encoded_img = [idx for idx, val in enumerate(img_label) if val in encoded_id]   # obtain the idx of images
+                
+                point_wise_pairs = list(combinations(encoded_img, 2))
+                
+                tmp_distance = []
+                for i in point_wise_pairs:
+                    distance = pdist([tSNE[i[0]], tSNE[i[1]]], 'euclidean')
+                    tmp_distance.append(distance)
+                
+                tmp_distance = np.array(tmp_distance)
+                list_distance.append(tmp_distance)
+                
+            else:
+                list_distance.append(np.array([0]))
+        
+        distance_stats['distances'] = np.array(list_distance, dtype='object')
+        distance_stats['mean'] = np.array([np.mean(i)/max_distance for i in list_distance]).reshape(-1)
+        distance_stats['std'] = np.array([np.std(i)/max_distance for i in list_distance]).reshape(-1)
+        distance_stats['median'] = np.array([np.median(i)/max_distance for i in list_distance]).reshape(-1)
+
+        return distance_stats
+    
+    def calculate_distance_ttest(self, groups, unit_types_dict, distance_stats):
+        """
+            this function now receive any length of types of units and any types of input values, return a list contains all ttest_stats and ttest_pvalues
+            
+            groups: list of unit idx of different types of units
+            distance_stats: list of values of different types of units
+        """
+        
+        groups = [unit_types_dict[group] for group in groups]
+        
+        groups_stats = {}
+        group_stats = {}
+        
+        ttest_stats_list = []
+        ttest_pvalue_list = []
+        
+        group_pairs = list(combinations(np.arange(len(groups)), 2))
+        
+        for _ in group_pairs:
+ 
+            group_a = distance_stats[groups[_[0]]]
+            group_b = distance_stats[groups[_[1]]]
+
+            ttest_stats, ttest_p = ttest_ind(group_a, group_b)
+            
+            ttest_stats_list.append(ttest_stats)
+            ttest_pvalue_list.append(ttest_p)
+    
+        stats_mean = [np.mean(distance_stats[group]) for group in groups]
+        stats_std = [np.std(distance_stats[group]) for group in groups]
+        stats_sem = [np.std(distance_stats[group])/np.sqrt(len(group)-1) for group in groups]
+        
+        groups_stats['pairs'] = group_pairs
+        groups_stats['stats'] = np.array(ttest_stats_list)
+        groups_stats['pvalue'] = np.array(ttest_pvalue_list)
+        
+        group_stats['mean'] = stats_mean
+        group_stats['std'] = stats_std
+        group_stats['sem'] = stats_sem
+
+        return groups_stats, group_stats    
+    
+    def plot_distance_figures(self, groups, unit_types_dict, distance_stats, stats, layer):
+        
+        groups = [unit_types_dict[group] for group in groups]
         
         save_folder = os.path.join(self.population_folder, 'Distance')
         utils_.make_dir(save_folder)
@@ -199,6 +352,58 @@ class Selectiviy_Analysis_Feature():
         self.plot_distance_box(groups, distance_stats['median'], ax, save_folder, layer)
         plt.close()
     
+    def plot_distance_bar(self, groups, group_stats, ax, save_folder, layer=None):
+        
+        stats_mean = group_stats['mean']
+        stats_std = group_stats['std']
+        
+        # Plotting bars
+        b1 = ax.bar(1, stats_mean[0], color=[217/255, 83/255, 25/255], width=0.5)
+        b2 = ax.bar(2, stats_mean[1], color=[0, 114/255, 189/255], width=0.5)
+        
+        # Adding error bars
+        ax.errorbar(1, stats_mean[0], yerr=stats_std[0], fmt='.', capsize=8, linewidth=2, color='black')
+        ax.errorbar(2, stats_mean[1], yerr=stats_std[1], fmt='.', capsize=8, linewidth=2, color='black')
+        
+        # Formatting plot
+        ax.legend([b1, b2], ['Feature MI', 'non Feature MI'], frameon=False, loc='upper left')
+        ax.set_xticks([1, 2], ['FeatureMI', 'Non-feature MI'])
+        ax.set_ylabel('Normalized Distance')
+        ax.set_title(f'{layer}')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.tick_params(axis='both', which='major', labelsize=10)
+        
+        name = 'fmi_vs_nonfmi'
+        plt.savefig(save_folder + f'/{layer}_{name}_barplot.png', bbox_inches='tight')
+        plt.savefig(save_folder + f'/{layer}_{name}_barplot.eps', format='eps', bbox_inches='tight')
+        #plt.show()
+
+
+    def plot_distance_box(self, groups, distances, ax, save_folder, layer=None):
+        
+        group_values = [distances[group] for group in groups]
+        
+        flierprops = dict(marker='.', markerfacecolor='red', markersize=1, linestyle='none', markeredgecolor='red')
+        ax.boxplot(group_values, notch=True, flierprops=flierprops)
+        
+        # Formatting plot
+        ax.set_xticks([1, 2], ['Feature MI', 'Non-feature MI'])
+        ax.set_xlabel(f'{layer}')
+        ax.set_ylabel('Normalized Distance')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.tick_params(axis='both', which='major', labelsize=12)
+        
+        _, ttest_p = ttest_ind(group_values[0], group_values[1])
+        utils_.sigstar([[1,2]], [ttest_p], ax)
+        
+        name = 'fmi_vs_nonfmi'
+        plt.savefig(save_folder + f'/{layer}_{name}_boxplot.png', bbox_inches='tight')
+        plt.savefig(save_folder + f'/{layer}_{name}_boxplot.eps', format='eps', bbox_inches='tight')
+        #plt.show()
+    
+    #FIXME
     def plot_overlapped_receptive_field(self, target_unit_types, tSNE, x, y, feature_cluster_sizes, overlapped_pixel_map, layer=None):
         
         save_folder = os.path.join(self.population_folder, 'Overlapped_receptive_field')
@@ -267,136 +472,6 @@ class Selectiviy_Analysis_Feature():
         plt.savefig(save_folder + f'/{layer}.eps', format='eps', bbox_inches='tight')
         plt.close()
     
-    def plot_distance_bar(self, groups, group_stats, ax, save_folder, layer=None):
-        
-        stats_mean = group_stats['mean']
-        stats_std = group_stats['std']
-        
-        # Plotting bars
-        b1 = ax.bar(1, stats_mean[0], color=[217/255, 83/255, 25/255], width=0.5)
-        b2 = ax.bar(2, stats_mean[1], color=[0, 114/255, 189/255], width=0.5)
-        
-        # Adding error bars
-        ax.errorbar(1, stats_mean[0], yerr=stats_std[0], fmt='.', capsize=8, linewidth=2, color='black')
-        ax.errorbar(2, stats_mean[1], yerr=stats_std[1], fmt='.', capsize=8, linewidth=2, color='black')
-        
-        # Formatting plot
-        ax.legend([b1, b2], ['Feature MI', 'non Feature MI'], frameon=False, loc='upper left')
-        ax.set_xticks([1, 2], ['FeatureMI', 'Non-feature MI'])
-        ax.set_ylabel('Normalized Distance')
-        ax.set_title(f'{layer}')
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.tick_params(axis='both', which='major', labelsize=10)
-        
-        name = 'fmi_vs_nonfmi'
-        plt.savefig(save_folder + f'/{layer}_{name}_barplot.png', bbox_inches='tight')
-        plt.savefig(save_folder + f'/{layer}_{name}_barplot.eps', format='eps', bbox_inches='tight')
-        #plt.show()
-
-
-    def plot_distance_box(self, groups, distances, ax, save_folder, layer=None):
-        
-        group_values = [distances[group] for group in groups]
-        
-        flierprops = dict(marker='.', markerfacecolor='red', markersize=1, linestyle='none', markeredgecolor='red')
-        ax.boxplot(group_values, notch=True, flierprops=flierprops)
-        
-        # Formatting plot
-        ax.set_xticks([1, 2], ['Feature MI', 'Non-feature MI'])
-        ax.set_xlabel(f'{layer}')
-        ax.set_ylabel('Normalized Distance')
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.tick_params(axis='both', which='major', labelsize=12)
-        
-        _, ttest_p = ttest_ind(group_values[0], group_values[1])
-        utils_.sigstar([[1,2]], [ttest_p], ax)
-        
-        name = 'fmi_vs_nonfmi'
-        plt.savefig(save_folder + f'/{layer}_{name}_boxplot.png', bbox_inches='tight')
-        plt.savefig(save_folder + f'/{layer}_{name}_boxplot.eps', format='eps', bbox_inches='tight')
-        #plt.show()
-        
-    #FIXME
-    # [notice] this function should like the sigstar to receive any legth of input
-    # [notice] one option is build a relationship between groups and distance_stats
-    def calculate_distance_ttest(self, groups, distance_stats):
-        """
-            this function now receive any length of types of units and any types of input values, return a list contains all ttest_stats and ttest_pvalues
-            
-            groups: list of unit idx of different types of units
-            distance_stats: list of values of different types of units
-        """
-        
-        groups_stats = {}
-        group_stats = {}
-        
-        ttest_stats_list = []
-        ttest_pvalue_list = []
-        
-        group_pairs = list(combinations(np.arange(len(groups)), 2))
-        
-        for _ in group_pairs:
- 
-            group_a = distance_stats[groups[_[0]]]
-            group_b = distance_stats[groups[_[1]]]
-
-            ttest_stats, ttest_p = ttest_ind(group_a, group_b)
-            
-            ttest_stats_list.append(ttest_stats)
-            ttest_pvalue_list.append(ttest_p)
-    
-        stats_mean = [np.mean(distance_stats[group]) for group in groups]
-        stats_std = [np.std(distance_stats[group]) for group in groups]
-        stats_sem = [np.std(distance_stats[group])/np.sqrt(len(group)-1) for group in groups]
-        
-        groups_stats['pairs'] = group_pairs
-        groups_stats['stats'] = np.array(ttest_stats_list)
-        groups_stats['pvalue'] = np.array(ttest_pvalue_list)
-        
-        group_stats['mean'] = stats_mean
-        group_stats['std'] = stats_std
-        group_stats['sem'] = stats_sem
-
-        return groups_stats, group_stats
-    
-    def calculate_distance(self, tSNE, encode_id, img_label, target_units):      # try to make a figure to illustrate this?
-        """
-            这里最奇怪的问题，为什么不用 featured 而用 encoded
-        """
-        max_distance = pdist([[np.min(tSNE[:, 0]), np.min(tSNE[:, 1])], [np.max(tSNE[:, 0]), np.max(tSNE[:, 1])]], 'euclidean')     # normalization factor
-
-        list_distance = []
-        distance_stats = {}
-        
-        for unit in target_units:
-            encoded_id = encode_id[unit]     # obtain the emcoded ID   [question] why not featured ID?
-            
-            if encoded_id.size != 0:     # check if this is a valid encoded unit/unit_typeron
-                encoded_img = np.hstack([np.where(img_label==encoded_id[i])[0] for i in range(len(encoded_id))])
-                #encoded_img = [idx for idx, val in enumerate(img_label) if val in encoded_id]   # obtain the idx of images
-                
-                point_wise_pairs = list(combinations(encoded_img, 2))
-                
-                tmp_distance = []
-                for i in point_wise_pairs:
-                    distance = pdist([tSNE[i[0]], tSNE[i[1]]], 'euclidean')
-                    tmp_distance.append(distance)
-                
-                tmp_distance = np.array(tmp_distance)
-                list_distance.append(tmp_distance)
-                
-            else:
-                list_distance.append(np.array([0]))
-        
-        distance_stats['distances'] = np.array(list_distance, dtype='object')
-        distance_stats['mean'] = np.array([np.mean(i)/max_distance for i in list_distance]).reshape(-1)
-        distance_stats['std'] = np.array([np.std(i)/max_distance for i in list_distance]).reshape(-1)
-        distance_stats['median'] = np.array([np.median(i)/max_distance for i in list_distance]).reshape(-1)
-
-        return distance_stats
-    
     def unit_types(self, si_idx, mi_idx, fmi_idx, feature_idx, feature):
         
         non_id_selective_idx = np.setdiff1d(np.arange(feature.shape[1]), np.union1d(mi_idx, si_idx))
@@ -431,34 +506,23 @@ class Selectiviy_Analysis_Feature():
         unit_types_dict = self.unit_types(si_idx, mi_idx, fmi_idx, feature_idx, feature)
         
         # colors
-        colorppol = plt.get_cmap('tab20c', 60)
-        colors = [colorppol(ii) for ii in range(50)]
+        colors = self.colors
        
-        # Another kernel size and kernel sigma?
-        #ff1 = 0.2
-        #Ksd1 = 4
-        #KS1 = [round((max(y1) - min(y1)) * ff1), round((max(x1) - min(x1)) * ff1)]
-
-        #density_map, convolved_density_map = self.calculate_density_map(tSNE, x, y, FR=None, kernel=None)
-        
         # Select cells to plot based on plot_type
-        # === test
-        
-        k = 10
         plot_types_dict = {
-            'fmi_idx': unit_types_dict['fmi_idx'][::k],
-            'mi_nonf_idx': unit_types_dict['mi_nonf_idx'][::k],
-            'si_feature_idx': unit_types_dict['si_feature_idx'][::k],
-            'si_non_feature_idx': unit_types_dict['si_non_feature_idx'][::k],
-            'non_id_feature': unit_types_dict['non_id_feature_idx'][::k],
-            'non_id_non_feature': unit_types_dict['non_id_non_feature_idx'][::k],
+            'fmi_idx': self.plot_unit_selection('fmi_idx', unit_types_dict),
+            'mi_nonf_idx': self.plot_unit_selection('mi_nonf_idx', unit_types_dict),
+            'si_feature_idx': self.plot_unit_selection('si_feature_idx', unit_types_dict),
+            'si_non_feature_idx': self.plot_unit_selection('si_non_feature_idx', unit_types_dict),
+            'non_id_feature_idx': self.plot_unit_selection('non_id_feature_idx', unit_types_dict),
+            'non_id_non_feature_idx': self.plot_unit_selection('non_id_non_feature_idx', unit_types_dict),
         }
         
         plot_type_keys = list(plot_types_dict.keys())
         
         for plot_type in plot_type_keys:
             
-            save_folder = os.path.join(self.layer_folder, plot_type)
+            save_folder = os.path.join(self.single_unit_performance_folder, plot_type)
             utils_.make_dir(save_folder)
             
             unit_to_plot = plot_types_dict.get(plot_type)
@@ -468,6 +532,34 @@ class Selectiviy_Analysis_Feature():
             
             self.plot_region_based_coding(plot_type, unit_to_plot, feature_idx, feature, colors, x, y, img_label, qualified_p_masks, save_folder, layer)
         
+    def plot_unit_selection(self, plot_type, unit_types_dict, all_units=False):
+        """
+            this function decides how many units be plotted,
+            if the qualified number is less than 20, then all units will be demonstrated,
+            if the qualified number is greater than 20 but less than 100, then select 20 units with (approximate) equal intervals,
+            if the qualified number is greater than 100, then select 30 units with (approximate) equal intervals
+            all_units=False, in case of want to see performances of all units of certain type
+        """
+        candidate_units = unit_types_dict[plot_type]
+        n_units = len(candidate_units)
+        
+        if all_units == False:
+            plot_num_1 = 20
+            plot_num_2 = 30
+            
+            if n_units < 21:
+                plot_units = candidate_units
+            elif n_units < 101:
+                interval = (n_units-1)/(plot_num_1-1)
+                plot_units = candidate_units[[round(_*interval) for _ in range(plot_num_1)]]
+            else:
+                interval = (n_units-1)/(plot_num_2-1)
+                plot_units = candidate_units[[round(_*interval) for _ in range(plot_num_2)]]
+        else:
+            plot_units = candidate_units
+        
+        return plot_units
+    
     def plot_region_based_coding(self, plot_type, unit_to_plot, feature_idx, feature, colors, x, y, img_label, qualified_p_masks, save_folder, layer=None):
         
         logging.getLogger('matplotlib').setLevel(logging.ERROR)
@@ -559,6 +651,7 @@ class Selectiviy_Analysis_Feature():
             for _ in range(len(x)):     # for each point
                 if sig_pixel[round(y[_]-1), round(x[_]-1)] == 1:
                     featured_img_idx.append(_)
+                    
             featured_id_idx = np.unique(img_label[featured_img_idx])
             not_featured_id_idx = np.setdiff1d(np.arange(50)+1, featured_id_idx)
             
@@ -637,34 +730,113 @@ class Selectiviy_Analysis_Feature():
         
     def ksdensity(self, data, bw=None, weights=None):
         if weights is not None and np.sum(weights) != 0 and len(np.where(weights!=0)[0])!=1:
-            ksdensity = gaussian_kde(data, bw_method=bw, weights=weights)
+            ksdensity = gaussian_kde(data, bw_method=bw, weights=weights)     # [notice] weights can not be negative, so fc_3 must use softmax
         else:
             ksdensity = gaussian_kde(data, bw_method=bw, weights=None)
         return ksdensity
     
-    def plot_scatter(self, ax, unit_to_plot, feature_idx, feature, x, y, colors, img_label, sig_pixel_clean):
+    # --- under construction
+    # lecagy
+    def plot_scatter(self, ax, x, y, colors, img_label, unit_to_plot=None, feature_idx=None, feature=None, qualified_p_masks=None, grid=True, flag=None):
+        """
+            This function plot the DR scatter of single unit,
+            [notice] this function only receive one ax to plot one unit, if more than one unit, then they will all be ploted on the same canvas
         
-        for celltoplot_idx in unit_to_plot:
-            iCell = celltoplot_idx
-        
-            # Find if the cell is in feature_idx
-            #sigInd = np.where(feature_idx == iCell)[0]
-        
-            FR = feature[:, iCell].astype(float)
-        
-            size_weight = FR / max(FR)
-            sizes = np.ones(500) * 15 * (1 + 20 * size_weight)
-            handles = []
-        
-            for gg in range(1, 51):  # Python's range starts at 0, so adjust alabeled_pordingly
-                current_scatter = ax.scatter(x[img_label == gg], y[img_label == gg], s=sizes[img_label == gg], color=colors[gg-1], alpha=0.7)
-                handles.append(current_scatter)
+        """
+        if unit_to_plot is not None:
             
-            if iCell in feature_idx:  # or if len(sigInd) > 0:
-                contours = ax.contour(sig_pixel_clean[iCell], [1], colors='c')
-                for collection in contours.collections:
-                    collection.set_linewidth(3)
+            for unit in unit_to_plot:
+                
+                if np.all(feature) != None:
+                    FR = feature[:, unit].astype(float)
+                else:
+                    FR = np.ones(int(self.num_samples*self.num_classes))
+            
+                size_weight = FR / max(FR)     # normalized for each unit
+                sizes = np.ones(500) * 15 * (1 + 20 * size_weight)
+                handles = []
+                
+                if flag == None:
+                    for id_ in range(1, 51):  # Python's range starts at 0, so adjust alabeled_pordingly
+                        current_scatter = ax.scatter(x[img_label == id_], y[img_label == id_], s=sizes[img_label == id_], color=colors[id_-1], alpha=0.7)
+                        handles.append(current_scatter)
+                elif flag == 'grid':
+                    for id_ in range(1, 51):  # Python's range starts at 0, so adjust alabeled_pordingly
+                        current_scatter = ax.scatter(np.round(x[img_label == id_]-1), np.round(y[img_label == id_]-1), s=sizes[img_label == id_], color=colors[id_-1], alpha=0.7)
+                        handles.append(current_scatter)
+                
+                ax.set_xlim([0, np.max(x)])
+                ax.set_ylim([0, np.max(y)])
+
+                if np.max(x) > 50 or np.min(x) > 50:
                     
+                    ax.set_xticks(np.arange(int(np.max(x))), minor=True)
+                    ax.set_yticks(np.arange(int(np.max(y))), minor=True)
+
+                    if grid is True:
+                        ax.grid(which='minor', linestyle='-', linewidth=0.2)
+
+                    ax.set_xticks(np.arange(1,np.max(x),10))
+                    ax.set_yticks(np.arange(1,np.max(y),10))
+        
+                    ax.grid(which='major', visible=False)
+        
+                    ax.tick_params(which='both', direction='in', length=4)
+                    ax.tick_params(which='minor', size=0)
+                
+                else:
+                    
+                    ax.set_xticks(np.arange(int(np.ceil(np.max(x)))))
+                    ax.set_yticks(np.arange(int(np.ceil(np.max(y)))))
+                    if grid is True:
+                        ax.grid(linestyle='-', linewidth=0.2)
+                
+                if qualified_p_masks != None and feature_idx != None and unit in feature_idx:
+                    contours = ax.contour(qualified_p_masks[unit], [1], colors='c')
+                    for collection in contours.collections:
+                        collection.set_linewidth(3)
+
+        else:     # without unit_to_plot and feature, just plot the TSNE
+            
+            handles = []
+            if flag == None:
+                for id_ in range(1, 51):  
+                    current_scatter = ax.scatter(x[img_label == id_], y[img_label == id_], s=10, color=colors[id_-1], alpha=0.7)
+                    handles.append(current_scatter)
+            elif flag == 'grid':
+                for id_ in range(1, 51):  
+                    current_scatter = ax.scatter(np.round(x[img_label == id_]-1), np.round(y[img_label == id_]-1), s=10, color=colors[id_-1], alpha=0.7)
+                    handles.append(current_scatter)
+            else:
+                raise RuntimeError('[Coderror] invalid flag for plot_scatter')
+            
+            ax.set_xlim([0, np.max(x)])
+            ax.set_ylim([0, np.max(y)])
+
+            if np.max(x) > 50 or np.min(x) > 50:
+                
+                ax.set_xticks(np.arange(int(np.max(x))), minor=True)
+                ax.set_yticks(np.arange(int(np.max(y))), minor=True)
+
+                if grid is True:
+                    ax.grid(which='minor', linestyle='-', linewidth=0.2)
+
+                ax.set_xticks(np.arange(1,np.max(x),10))
+                ax.set_yticks(np.arange(1,np.max(y),10))
+    
+                ax.grid(which='major', visible=False)
+    
+                ax.tick_params(which='both', direction='in', length=4)
+                ax.tick_params(which='minor', size=0)
+            
+            else:
+                
+                ax.set_xticks(np.arange(int(np.ceil(np.max(x)))))
+                ax.set_yticks(np.arange(int(np.ceil(np.max(y)))))
+                if grid is True:
+                    ax.grid(linestyle='-', linewidth=0.2)
+            
+        #print('6')
     # -----
     
     def population_feature_size(self, target_cluster_type, target_unit_types, unit_types_dict, si_idx, mi_idx, fmi_idx, list_pixels, mask):
@@ -821,7 +993,7 @@ class Selectiviy_Analysis_Feature():
     
     def generate_p_values(self, tSNE, feature, unit_idx, layer=None):
         """
-            this function is the parallel executor of calculate_perm_density_p_value() to obtain p values for all units
+            this function obtains p values for all units
         """
         
         print(f'[Codinfo] Executing p_value generation of layer [{layer}]')
@@ -848,7 +1020,7 @@ class Selectiviy_Analysis_Feature():
             executor = ProcessPoolExecutor(max_workers=os.cpu_count())
             job_pool = []
             for i in tqdm(range(len(unit_idx)), desc=f'[{layer}] submit'):
-                job = executor.submit(self.calculate_p_values_parallel, i, tSNE, x, y, feature, empty_map, 1000, gaussian_kernel)
+                job = executor.submit(self.calculate_p_values, i, tSNE, x, y, feature, empty_map, 1000, gaussian_kernel)
                 job_pool.append(job)
             for i in tqdm(range(len(unit_idx)), desc=f'[{layer}] collect'):
                 p[i] = job_pool[i].result()
@@ -868,7 +1040,7 @@ class Selectiviy_Analysis_Feature():
             
         return p, kernel_size, kernel_sigma
         
-    def calculate_p_values_parallel(self, i, tSNE, x, y, feature, empty_map, perm=None, kernel=None):
+    def calculate_p_values(self, i, tSNE, x, y, feature, empty_map, perm=None, kernel=None):
         FR = feature[:, i]
         p_tmp, *_ = self.calculate_perm_density_p_value(tSNE, x, y, FR, empty_map, perm, kernel)
         return p_tmp
@@ -929,7 +1101,9 @@ class Selectiviy_Analysis_Feature():
         
         return p, np.array(perm_density_maps), np.array(perm_convolved_density_maps)
     
+    # === under construction
     #FIXME
+    # what's the meaning of this section?
     def calculate_perm_density_map_stats(self, perm_density_maps, perm_convolved_density_maps):
         meanum_permZ = np.mean(perm_density_maps, axis=0)
         meanum_permZC = np.mean(perm_convolved_density_maps, axis=0)
@@ -954,13 +1128,14 @@ class Selectiviy_Analysis_Feature():
             decide the value of kernel_sigma(sigma, which decides the speed of decrease)
             -> kernel_sigma(sigma) = sq*num_component, KS = 2*radius(3*sigma)+1
             (2) The method described in paper is based on 'the size of feature map',
-            and use another scaling factor: ff1=0.2(in self.feature_coding_plot()) to
-            decide the kernel size -> KS = ff1*[ylim,xlim]
+            and use another scaling factor: ff_scaling_factor=0.2(in self.feature_coding_plot()) to
+            decide the kernel size -> KS = ff_scaling_factor*[ylim,xlim]
             
             x: first dimension of tSNE tSNE;
             y: second dimension of tSNE tSNE
             self.sq: an empirical scale factor to decide the sigma of the gaussian filter. default to be 0.035, (close to sd = 4, used in previous expriments)
         """
+        # --- method 1
         x = tSNE[:, 0] - np.min(tSNE[:, 0])
         y = tSNE[:, 1] - np.min(tSNE[:, 1])
         
@@ -975,11 +1150,16 @@ class Selectiviy_Analysis_Feature():
         kernel_size_x = int(np.floor(kernel_size_y * density_map.shape[1] / density_map.shape[0]))
         
         kernel_size = [kernel_size_y, kernel_size_x]
+        
+        # --- method 2
+        #ff_scaling_factor = 0.2
+        #kernel_sigma = 4
+        #kernel_size = [round((max(y) - min(y)) * ff_scaling_factor), round((max(x) - min(x)) * ff_scaling_factor)]
     
         return kernel_size, kernel_sigma
     
     #FIXME
-    # [notice] now a severe problem is the function calculate every time in each density calculation, remove it from those function
+    # [note] this function is only valid for current 2D kernel, higher dimension needs more experiments
     def gausskernel(self, R, S):
         """
             Creates a discretized N-dimensional Gaussian kernel.
@@ -1023,7 +1203,6 @@ class Selectiviy_Analysis_Feature():
             gauss = np.exp(-grid**2 / (2 * S[k]**2))
             gauss = gauss / np.sum(gauss)  # normalization
     
-            # [note] this function is only valid for current 2D kernel, higher dimension needs more experiments
             if (k == 0):
                 kernel = gauss
             else:
@@ -1040,8 +1219,6 @@ class Selectiviy_Analysis_Feature():
 if __name__ == '__main__':
     
     #layers = ['Pool_5', 'Conv_5_3']
-    #FIXME
-    # make sure the function  of units here, as a check,  not only an input
     #units = [25088, 100352]
     #root_dir = '/media/acxyle/Data/ChromeDownload/'
     #selectivity_feature_analyzer = Selectiviy_Analysis_Feature(
@@ -1055,8 +1232,8 @@ if __name__ == '__main__':
     #functional.set_step_mode(spiking_model, step_mode='m')
     #layers, neurons, shapes = utils_.generate_vgg_layers(spiking_model, 'spiking_vgg16_bn')
     
-    layers = ['L4_B1_neuron01', 'L4_B2_neuron02', 'avgpool', 'fc']
-    neurons  = [25088, 25088, 512, 50]
+    layers = ['L4_B1_neuron01']
+    neurons  = [25088]
 
     root_dir = '/media/acxyle/Data/ChromeDownload/'
 

@@ -91,7 +91,7 @@ class Selectiviy_Analysis_DR_and_RSA():
             
             feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
             
-            _, mask_id, mask_non_id = self.generate_masks(self.dest, layer, feature.shape[1])
+            mask_id, mask_non_id = self.generate_masks(self.dest, layer, feature.shape[1])
             mask_id_list.append(len(mask_id))
             mask_non_id_list.append(len(mask_non_id))
             

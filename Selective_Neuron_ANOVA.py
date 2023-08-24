@@ -12,11 +12,14 @@ Created on Thu Feb  9 12:53:33 2023
 import os
 import math
 import pickle
+import warnings
 import numpy as np
 from tqdm import tqdm
 import scipy.stats as stats
 import matplotlib.pyplot as plt
+
 import concurrent.futures
+from joblib import Parallel, delayed
 
 import spiking_vgg, spiking_resnet, sew_resnet
 from spikingjelly.activation_based import surrogate, neuron, functional
@@ -83,11 +86,19 @@ class ANOVA_analyzer():
                 raise AssertionError('[Coderror] feature.shape[0] ({}) != self.num_classes*self.num_samples ({},{}) or feature.shape[1] ({}) != self.neurons[idx_l] ({})'.format(
                     feature.shape[0], self.num_classes, self.num_samples, feature.shape[1], self.neurons[idx_l]))
             
-            # [notice] this can bring 5 times faster but looks too naive for 'real' parallel computation
-            with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
-                for i in tqdm(range(feature.shape[1]), desc=f'No.{idx_l}'):        # for each neuron
-                    p = executor.submit(self.one_way_ANOVA, feature, i)
-                    pl[i] = p.result()
+            # ----- parallel computing by concurrent.futures.Thread/Process
+# =============================================================================
+#             executor = concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count())
+#             job_pool = []
+#             for i in tqdm(range(feature.shape[1]), desc=f'[{layer}] ANOVA Submit'):
+#                 job = executor.submit(self.one_way_ANOVA, feature, i)
+#                 job_pool.append(job)
+#             for i in tqdm(range(feature.shape[1]), desc=f'[{layer}] ANOVA Collect'):
+#                 pl[i] = job_pool[i].result()
+#             executor.shutdown()
+# =============================================================================
+            # ----- parallel computing by joblib
+            pl = Parallel(n_jobs=os.cpu_count())(delayed(self.one_way_ANOVA)(feature, i) for i in tqdm(range(feature.shape[1]), desc=f'[{layer}] ANOVA'))
             
             if not os.path.exists(os.path.join(self.dest, layer+'-pvalue.csv')):
                 np.savetxt(os.path.join(self.dest, layer+'-pvalue.csv'), pl)
@@ -130,7 +141,7 @@ class ANOVA_analyzer():
         layers_color_list = color_column(self.layers)
         
         # 1. plot all calculations
-        self.plot_sigle_figure(self.layers, ratio, layers_color_list, dest, 'selective_unit_percent', math.floor(len(self.layers)/1.6), 10, f'{self.model_structure}')
+        self.plot_single_figure(self.layers, ratio, layers_color_list, dest, 'selective_unit_percent', math.floor(len(self.layers)/1.6), 10, f'{self.model_structure}')
         
         # 2. for imaginary neurons only ([question] why contains pool layers?) - this version is for ANN because 'act', SNN should be 'neuron'
         ratio_neuron = []
@@ -141,27 +152,29 @@ class ANOVA_analyzer():
                 ratio_neuron.append(round(count_dict[i]/self.neurons[idx]*100))
                 layers_color_list_neuron.append(layers_color_list[idx])   
         
-        self.plot_sigle_figure(list(count_dict_neuron.keys()), ratio_neuron, layers_color_list_neuron, dest, 'selective_unit_percent (dense)', 30, 10, f'{self.model_structure} (neuron)')
+        self.plot_single_figure(list(count_dict_neuron.keys()), ratio_neuron, layers_color_list_neuron, dest, 'selective_unit_percent (dense)', 30, 10, f'{self.model_structure} (neuron)')
         
         print('[Codinfo] selective_neuron_percent.png has been saved into {}'.format(dest))
         
-    def plot_sigle_figure(self, layers, ratio, layers_color_list, dest, save_path, length, width, label):
+    def plot_single_figure(self, layers, ratio, layers_color_list, dest, mark, length, width, label):
         # [important] control the all font size
         # [notice] the impact is constant unless reopen the terminal
         plt.rcParams.update({'font.size': 22})
-
-        plt.clf()    
-        plt.figure(figsize=(length, width), dpi=100)
-        plt.plot(layers, ratio, color='red', linestyle='-', linewidth=2.5, alpha=1, label=label)
-        plt.bar(layers, ratio, color=layers_color_list, width=0.5)
-        plt.xticks(rotation='vertical')
-        plt.ylabel('percentage')
-        plt.title(f'selective neuron ratio for each layer (all calculation counted) - {self.model_structure}')
-        plt.legend()
-        plt.savefig(os.path.join(dest, save_path+'.png'), bbox_inches='tight')
-        plt.savefig(os.path.join(dest, save_path+'.eps'), bbox_inches='tight', format='eps')
-        plt.show()
-        plt.close()
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore')
+            plt.clf()    
+            plt.figure(figsize=(length, width), dpi=100)
+            plt.plot(layers, ratio, color='red', linestyle='-', linewidth=2.5, alpha=1, label=label)
+            plt.bar(layers, ratio, color=layers_color_list, width=0.5)
+            plt.xticks(rotation='vertical')
+            plt.ylabel('percentage')
+            plt.title(f'selective neuron ratio for each layer ({mark}) - {self.model_structure}')
+            plt.legend()
+            plt.savefig(os.path.join(dest, mark+'.png'), bbox_inches='tight')
+            plt.savefig(os.path.join(dest, mark+'.eps'), bbox_inches='tight', format='eps')
+            #plt.show()
+            plt.close()
         
     # [notice] this function amis to compare 2 different models performance, now need to manually input the data of the second model
     def selectivity_neuron_ANOVA_plot_VS_baseline(self, baseline_model):
@@ -191,7 +204,7 @@ class ANOVA_analyzer():
         layers_color_list = color_column(self.layers)
         
         # 1. for all calculation
-        self.plot_sigle_figure_VS(layers=self.layers, ratio=ratio, 
+        self.plot_single_figure_VS(layers=self.layers, ratio=ratio, 
                                   baseline_model_config=baseline_model_config, ratio_baseline=ratio_baseline, 
                                   layers_color_list=layers_color_list, dest=dest, save_path='selective_unit_percent VS', 
                                   length=math.floor(len(self.layers)/1.6), width=10, label=self.model_structure)
@@ -207,7 +220,7 @@ class ANOVA_analyzer():
                 layers_color_list_neuron.append(layers_color_list[idx])   
                 ratio_neuron_baseline.append(ratio_baseline[idx])
                 
-        self.plot_sigle_figure_VS(layers=list(count_dict_neuron.keys()), ratio=ratio_neuron, 
+        self.plot_single_figure_VS(layers=list(count_dict_neuron.keys()), ratio=ratio_neuron, 
                                   baseline_model_config=baseline_model_config, ratio_baseline=ratio_neuron_baseline, 
                                   layers_color_list=layers_color_list_neuron, dest=dest, save_path='selective_unit_percent (dense) VS', 
                                   length=30, width=10, label=self.model_structure+'_neuron')

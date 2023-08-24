@@ -5,9 +5,6 @@ Created on Wed Apr 12 18:47:12 2023
 
 @author: acxyle
 
-[Key note]
-    1.based on the matlab code, rewrite them to python version
-    
 [notice]
     all function with variable 'inds' and writing style like 'AaaBbbCcc' are not modified yet
     
@@ -41,19 +38,7 @@ import utils_
 
 
 class Selectiviy_Analysis_Correlation_Monkey():
-    '''
-    [rewrite from Matlab]
-    1. remove unnecessary variables, use functional structure with efficient code reuse, avoid fill-in type
-    2. seprate the calculation and plotting, improve the clarity
-    3. add proper controlable parameters for external call
-    
-    [notice]
-    the most obvious difference between Monkey and Human section is, I have original spikes of human data but 
-    merely sorted FR and PSTH for monkey. Thus it is necessary to find a proper way to process the spikes to 
-    FR and PSTH. 
-    
-    '''
-    
+
     def __init__(self, 
                  # from Dr Cao
                  #corr_root='/home/yangzerui/[work]_face_identity/Neuron_Data/osfstorage-archive-supp/FeatureCM/',
@@ -63,6 +48,11 @@ class Selectiviy_Analysis_Correlation_Monkey():
                  bio_neuron_root='/home/acxyle/Downloads/osfstorage-archive-supp/Res/IT_FR_CA_Range70-180.mat',     # from Dr Cao
                  label_path = '/home/acxyle/Downloads/osfstorage-archive-supp/Label.mat',     # <- label of biological experiments
                  layers=None, neurons=None):
+        """
+            corr_root: NN correlation matrix
+            bio_neuron_root: Monkey PSTH
+            label_path: label order for biological experiments
+        """
         
         if layers == None:
             raise RuntimeError('[Coderror] please assign proper layers and neurons')
@@ -81,23 +71,25 @@ class Selectiviy_Analysis_Correlation_Monkey():
         self.save_root = '/'.join(['', *corr_root.split('/')[1:-2], 'RSA_monkey/'])
         utils_.make_dir(self.save_root)
         
-        #monkey_neuron_data_mat_info = sio.whosmat(bio_neuron_root)
+        #monkey_neuron_data_mat_info = sio.whosmat(bio_neuron_root)     #  [('label', (500, 1), 'double')]
         
         self.label = sio.loadmat(label_path)['label']
         
         monkey_neuron_data = sio.loadmat(bio_neuron_root)
         monkey_dict_keys = [i for i in monkey_neuron_data.keys() if '__' not in i]
-        monkey_dict = {i:monkey_neuron_data[i] for i in monkey_dict_keys}  # rebuild the dict to store monkey IT MUA data
+        monkey_dict = {_:monkey_neuron_data[_] for _ in monkey_dict_keys}  # rebuild the dict to store monkey IT MUA data
         
-        self.FR = monkey_dict['FR']
+        self.FR = monkey_dict['FR']     # (3, 27911, 53)     # [comment] no method from FR to PSTH, I susspect (1) clean from 27911 to 26500 (2) operation to the first dim [question] what the first dim?
         
-        self.meanPSTH = monkey_dict['meanPSTH']     # (500,49,53), disordered
-        self.meanPSTHID = monkey_dict['meanPSTHID']     # (50,49,53)
+        self.meanPSTH = monkey_dict['meanPSTH']     # (500,49,53), [disordered img idx, time steps, channels], normalized value
+        self.meanPSTHID = monkey_dict['meanPSTHID']     # (50,49,53), [id idx, time steps, channels], normalized value
         
+        # -----
         self.meanFR = monkey_dict['meanFR']     # (53,500)
         self.meanBase = monkey_dict['meanBase']     # (53,500)
         self.meanGray = monkey_dict['meanGray']     # (1,53)
-        self.meanVis = monkey_dict['meanVis']     # (53,500)
+        #self.meanVis = monkey_dict['meanVis']     # (53,500)
+        # -----
         
         self.psthTime = monkey_dict['psthTime'].reshape(-1)     # (49,)
         
@@ -105,68 +97,99 @@ class Selectiviy_Analysis_Correlation_Monkey():
         
         #self.plot_sample_response()
         uDMN, uDMNPerm, uDMN_T, uDMN_TPerm = self.monkey_neuron_spikes_process()     # <- every time those 4 values are the same, so can be saved
+        
         rFNID, rFNID_T, rFNIDPerm, pFN_FDR, sig_T = self.representational_similarity_analysis(uDMN, uDMNPerm, uDMN_T, uDMN_TPerm)
         self.plot_temporal_correlation(rFNID_T, sig_T)
         self.plot_pairwise_distance_correlation(rFNIDPerm, rFNID, pFN_FDR)
         #self.plot_correlation_example(uDMN, rFNID)
         
     def monkey_neuron_spikes_process(self, time_bin=10, nPerm=1000):
-        # get PSTH timetime_bin
-        if time_bin == 10:
-            t1 = np.where(self.psthTime == -50)[0][0]
-            t2 = np.where(self.psthTime == 200)[0][0]
-            usePSTH = self.meanPSTH[:, t1:t2+1, :]     # (50,26,53) (ID,time,neuron)
-        else:
-            usePSTH = np.zeros((self.meanPSTH.shape[0], 26, self.meanPSTH.shape[2]))     # (50,26,53) (ID,time,neuron)
-            nn = 0
-            for tt in range(-50, 201, 10): 
-                nn += 1
-                t1 = np.where(self.psthTime == tt-time_bin/2)[0][0]
-                t2 = np.where(self.psthTime == tt+time_bin/2)[0][0]
-                usePSTH[:, nn-1, :] = np.mean(self.meanPSTH[:, t1:t2+1, :], axis=1)    
-
-        # construct neural Distance Matrix using IT data by ID
-        # [notice] those 2 are important variables in the 1st stage
-        self.IDPSTH = []
-        self.IDFR = []
-        
-        for id_ in range(1, 51):  
-            id_img_idx = np.where(self.label == id_)[0] # -> 10 img idx of 1 ID
-            self.IDFR.append(np.nanmean(self.meanFR[:, id_img_idx], axis=1)/self.meanGray)  # [question] what the 'meanGray' is?
-            division_factor = np.nanmean(self.meanBase, axis=1)
-            IDPSTH_seg = []
-            for tt in range(usePSTH.shape[1]):
-                IDPSTH_seg.append(np.nanmean(usePSTH[id_img_idx, tt, :], axis=0)/division_factor) # -> 50*26*53 
-            IDPSTH_seg = np.array(IDPSTH_seg)
-            self.IDPSTH.append(IDPSTH_seg)
+        """
+            this function returns the correlation matrix and triangle from monkey neural responses.
             
-        self.IDPSTH = np.array(self.IDPSTH)     # -> (50,26,53)
-        self.IDFR = np.squeeze(np.array(self.IDFR))     # -> (50,53)
+            - Input
+                psthTime: 49 time steps for PSTH from -100 ms to 380 ms
+                meanPSTH: [500, 49, 53], [img, time steps, channels]
+                label: label for 500 imgs
+                
+            - Output
+                uDMN:
+                uDMNPerm:
+                uDMN_T:
+                uDMN_TPerm:
+        """
+        file_path = os.path.join(self.save_root, 'monkey_spikes_corr.pkl')
         
-        # for static meanFR
-        uDMN = self.Square2Tri(np.corrcoef(self.IDFR))  # -> (1225,)
-        uDMNPerm = []
-        for _ in range(nPerm):
-            N = np.random.permutation(self.IDFR.shape[0])
-            uDMNPerm.append(self.Square2Tri(np.corrcoef(self.IDFR[N, :])))
-        uDMNPerm = np.array(uDMNPerm)  # -> (1000,1225)
-
-        # for temporal
-        uDMN_T = []
-        uDMN_TPerm = []
-        for tt in range(self.IDPSTH.shape[1]):   # for each time bin
-            tmpData = self.IDPSTH[:,tt,:]  # 50*53
-            uDMN_T.append(self.Square2Tri(np.corrcoef(tmpData)))
-            tmp_2 = []
+        if os.path.exists(file_path):
+            
+            results = utils_.pickle_load(file_path)
+            
+            uDMN = results['uDMN']
+            uDMNPerm = results['uDMNPerm']
+            uDMN_T = results['uDMN_T']
+            uDMN_TPerm = results['uDMN_TPrem']
+            
+        else:
+            # get PSTH time_bin
+            if time_bin == 10:
+                usePSTH = self.meanPSTH[:, np.where((-50<=self.psthTime) & (self.psthTime<=200))[0], :]
+                
+            else:
+                usePSTH = np.zeros((self.meanPSTH.shape[0], 26, self.meanPSTH.shape[2]))     # (500,26,53) (ID,time,neuron)
+                
+                for idx, tt in enumerate(range(-50, 201, 10)): 
+                    usePSTH[:, idx, :] = np.mean(self.meanPSTH[:, np.where(((tt-time_bin/2)<=self.psthTime) & (self.psthTime<=(tt+time_bin/2)))[0], :], axis=1)
+    
+            # construct neural Distance Matrix using IT data by ID
+            # [notice] those 2 are important variables in the 1st stage
+            self.IDPSTH = []
+            self.IDFR = []
+            
+            for id_ in range(1, 51):  
+                id_img_idx = np.where(self.label == id_)[0] # -> 10 img idx of 1 ID
+                self.IDFR.append(np.nanmean(self.meanFR[:, id_img_idx], axis=1)/self.meanGray)  # [question] what the 'meanGray' is?
+                division_factor = np.nanmean(self.meanBase, axis=1)
+                IDPSTH_seg = []
+                for tt in range(usePSTH.shape[1]):
+                    IDPSTH_seg.append(np.nanmean(usePSTH[id_img_idx, tt, :], axis=0)/division_factor) # -> 50*26*53 
+                IDPSTH_seg = np.array(IDPSTH_seg)
+                self.IDPSTH.append(IDPSTH_seg)
+                
+            self.IDPSTH = np.array(self.IDPSTH)     # -> (50,26,53)
+            self.IDFR = np.squeeze(np.array(self.IDFR))     # -> (50,53)
+            
+            # for static meanFR
+            uDMN = self.Square2Tri(np.corrcoef(self.IDFR))  # -> (1225,)
+            uDMNPerm = []
             for _ in range(nPerm):
                 N = np.random.permutation(self.IDFR.shape[0])
-                tmpData1 = tmpData[N,:]  # 50*53
-                tmp_2.append(self.Square2Tri(np.corrcoef(tmpData1)))
-            tmp_2 = np.array(tmp_2)
-            uDMN_TPerm.append(tmp_2)
-        uDMN_TPerm = np.array(uDMN_TPerm)     # -> (26,1000,1225)
-        uDMN_T = np.array(uDMN_T)     # -> (26,1225)
+                uDMNPerm.append(self.Square2Tri(np.corrcoef(self.IDFR[N, :])))
+            uDMNPerm = np.array(uDMNPerm)  # -> (1000,1225)
+    
+            # for temporal
+            uDMN_T = []
+            uDMN_TPerm = []
+            for tt in range(self.IDPSTH.shape[1]):   # for each time bin
+                tmpData = self.IDPSTH[:,tt,:]  # 50*53
+                uDMN_T.append(self.Square2Tri(np.corrcoef(tmpData)))
+                tmp_2 = []
+                for _ in range(nPerm):
+                    N = np.random.permutation(self.IDFR.shape[0])
+                    tmpData1 = tmpData[N,:]  # 50*53
+                    tmp_2.append(self.Square2Tri(np.corrcoef(tmpData1)))
+                tmp_2 = np.array(tmp_2)
+                uDMN_TPerm.append(tmp_2)
+            uDMN_TPerm = np.array(uDMN_TPerm)     # -> (26,1000,1225)
+            uDMN_T = np.array(uDMN_T)     # -> (26,1225)
         
+            results = {
+                'uDMN':uDMN,
+                'uDMNPerm':uDMNPerm,
+                'uDMN_T':uDMN_T,
+                'uDMN_TPerm':uDMN_TPerm
+                }
+            utils_.pickl_dump(file_path, results)
+            
         return uDMN, uDMNPerm, uDMN_T, uDMN_TPerm
         
     def representational_similarity_analysis(self, uDMN, uDMNPerm, uDMN_T, uDMN_TPerm, nPerm=1000):

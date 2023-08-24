@@ -11,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import random
+import logging
 
 import spiking_vgg, spiking_resnet, sew_resnet
 from spikingjelly.activation_based import surrogate, neuron, functional
@@ -249,6 +250,8 @@ class Selectivity_Analysis_SIMI():
         plt.close()
     
     def plot_single_decoding(self, ax, layer_list, all_acc_dict,ID_acc_dict, nonID_acc_dict, SIMI_acc_dict, SI_acc_dict, MI_acc_dict, vertical=False, title='Decoding'):
+        
+        logging.getLogger('matplotlib').setLevel(logging.ERROR)
         
         x = layer_list
         y_a = [all_acc_dict[k] for k in layer_list]
@@ -617,7 +620,11 @@ class Selectivity_Analysis_SIMI():
         #plt.annotate(r'%.3f' % (min_val_loss), xy=(index_min_val_loss, min_val_loss), xycoords='data', xytext=(-100, +100), textcoords='offset points', fontsize=16, arrowprops=dict(arrowstyle="->", color="blue", connectionstyle="arc3,rad=.2", alpha = 0.25))
     
     def single_neuron_boxplot(self):  
+        
+        logging.getLogger('matplotlib').setLevel(logging.ERROR)
+        
         print('[Codinfo] Excuting single_neuron_boxplot...')
+        
         save_path = self.dest+'Sigle_neuron_selectivity/'
         utils_.make_dir(save_path)
         

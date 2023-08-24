@@ -55,10 +55,17 @@ class Selectivity_Analysis_SIMI():
         # [notice] auto obtain config
         #FIXME
         config_list = dest.split('/')[-2].split('_')[1:6]
-        self.model_structure = '_'.join([*config_list[:2]])
-        self.neuron_type = config_list[2]
-        self.surrogate_func = config_list[3]
-        self.simulation_step = config_list[4]
+        if len(config_list)==5:
+            self.model_structure = '_'.join([*config_list[:2]])
+            self.neuron_type = config_list[2]
+            self.surrogate_func = config_list[3]
+            self.simulation_step = config_list[4]
+        elif len(config_list)==4:
+            self.model_structure = config_list[0]
+            self.neuron_type = config_list[1]
+            self.surrogate_func = None
+            self.simulation_step = None
+            
         
     def load_ID_neuron_encode_class_dict(self):
         self.ID_neuron_encode_class_dict = utils_.pickle_load(os.path.join(self.dest, 'Frequency/ID_neuron_encode_class_dict.pkl'))

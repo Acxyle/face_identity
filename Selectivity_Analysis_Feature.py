@@ -142,8 +142,8 @@ class Selectiviy_Analysis_Feature():
             
             self.feature_embedding_demonstration(tSNE, x, y, img_label, layer, feature)
             
-            self.feature_analysis_single_layer(tSNE, feature, np.arange(num_units), encode_id, si_idx, mi_idx, img_label, layer)
-        
+            self.feature_analysis_single_layer(tSNE, x, y, feature, np.arange(num_units), encode_id, si_idx, mi_idx, img_label, layer)
+                                               
         print('[Codinfo] Completed')
         
     def feature_embedding_demonstration(self, tSNE, x, y, img_label, layer, feature):
@@ -179,7 +179,6 @@ class Selectiviy_Analysis_Feature():
         
         self.feature_embedding_demonstration_plot(fig, ax, x, y, colors, img_label, layer, unit_to_plot, feature, density_map, convolved_density_map, mark='with weights')
         
-        print('6')
         
     def feature_embedding_demonstration_plot(self, fig, ax, x, y, colors, img_label, layer, unit_to_plot=None, feature=None, density_map=None, convolved_density_map=None, mark=None):
         
@@ -212,9 +211,6 @@ class Selectiviy_Analysis_Feature():
         
         
     def feature_analysis_single_layer(self, tSNE, x, y, feature, unit_to_analyze, encode_id, si_idx, mi_idx, img_label, layer):  
-        
-        # unde construction
-        self.feature_embedding_demonstration(tSNE, x, y)
         
         p_values, kernel_size, kernel_sigma = self.generate_p_values(tSNE, feature, unit_to_analyze, layer)     # [warning] intensive computing
         
@@ -1232,14 +1228,14 @@ if __name__ == '__main__':
     #functional.set_step_mode(spiking_model, step_mode='m')
     #layers, neurons, shapes = utils_.generate_vgg_layers(spiking_model, 'spiking_vgg16_bn')
     
-    layers = ['L4_B1_neuron01']
-    neurons  = [25088]
+    layers = ['L5_B3_neuron', 'L5_maxpool', 'neuron_1', 'neuron_2']
+    neurons  = [100352, 25088, 4096, 4096]
 
     root_dir = '/media/acxyle/Data/ChromeDownload/'
 
     selectivity_feature_analyzer = Selectiviy_Analysis_Feature(
-                root=os.path.join(root_dir, 'Identity_SpikingResnet18_LIF_CelebA2622_Results/'), 
-                dest=os.path.join(root_dir, 'Identity_SpikingResnet18_LIF_CelebA2622_Neuron/'), 
+                root=os.path.join(root_dir, 'Identity_VGG16bn_ReLU_CelebA2622_Results/'), 
+                dest=os.path.join(root_dir, 'Identity_VGG16bn_ReLU_CelebA2622_Neuron/'), 
                 layers=layers, units=neurons, taskInstruction='CelebA')
     
     selectivity_feature_analyzer.feature_analysis()

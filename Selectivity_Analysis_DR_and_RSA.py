@@ -401,7 +401,7 @@ class Selectiviy_Analysis_DR_and_RSA():
     def selectivity_analysis_correlation(self):
         
         print('[Codinfo] Executing selectivity_analysis_correlation...')
-        dest = self.dest+'Correlation/'
+        dest = os.path.join(self.dest,'Correlation/')
         utils_.make_dir(dest)
         
         save_folder_id, cor_meaenFR_dict, cor_meanFR_id_selective_dict, cor_meanFR_non_id_selective_dict = self.correlation_state(dest, 'ID/')
@@ -440,9 +440,9 @@ class Selectiviy_Analysis_DR_and_RSA():
     
     def correlation_save(self, cor_name, cor_dict, cor_sensitive_name, cor_sensitive_dict, cor_nonsensitive_name, cor_nonsensitive_dict, dest):
         
-        savemat(os.path.join(dest, f'/correlation_matrix_{cor_name}.mat'), cor_dict)
-        savemat(os.path.join(dest, f'/correlation_matrix_{cor_sensitive_name}.mat'), cor_sensitive_dict)
-        savemat(os.path.join(dest, f'/correlation_matrix_{cor_nonsensitive_name}.mat'), cor_nonsensitive_dict)
+        savemat(os.path.join(dest, f'correlation_matrix_{cor_name}.mat'), cor_dict)
+        savemat(os.path.join(dest, f'correlation_matrix_{cor_sensitive_name}.mat'), cor_sensitive_dict)
+        savemat(os.path.join(dest, f'correlation_matrix_{cor_nonsensitive_name}.mat'), cor_nonsensitive_dict)
         
         #utils_.pickle_dump(os.path.join(dest, f'/correlation_matrix_{cor_name}.pkl'), cor_dict)
         #utils_.pickle_dump(os.path.join(dest, f'/correlation_matrix_{cor_sensitive_name}.pkl'), cor_sensitive_dict)
@@ -466,11 +466,17 @@ class Selectiviy_Analysis_DR_and_RSA():
    
     def correlation_calculate_single(self, matrix, layer, mask_id, mask_non_id):
         """
-            this function calculates the correlation coefficient, no extra setting
+            this function calculates the correlation coefficient,
+            
+            if np.std(ont_unit_feature) = 0, it will cause corrcoef as nan.
         """
         cor_all = np.corrcoef(matrix)
         cor_id = np.corrcoef(matrix[:, mask_id])
-        cor_nonID = np.corrcoef(matrix[:, mask_non_id])
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore')
+            cor_nonID = np.corrcoef(matrix[:, mask_non_id])
+            cor_nonID[np.isnan(cor_nonID)]=0
         
         return cor_all, cor_id, cor_nonID
         

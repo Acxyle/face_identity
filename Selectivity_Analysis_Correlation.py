@@ -27,6 +27,7 @@ from matplotlib import colors
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from collections import Counter
+from joblib import Parallel, delayed
 
 import spiking_vgg, spiking_resnet, sew_resnet
 from spikingjelly.activation_based import surrogate, neuron, functional
@@ -35,6 +36,8 @@ from scipy.spatial.distance import pdist, squareform
 from scipy.stats import pearsonr, spearmanr, kendalltau
 from scipy.sparse import issparse
 from statsmodels.stats.multitest import multipletests
+
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 
 import vgg, resnet
 import utils_
@@ -56,6 +59,7 @@ class Selectiviy_Analysis_Correlation_Monkey():
             raise RuntimeError('[Coderror] please assign proper layers')
             
         self.layers = layers
+        self.neurons = neurons
         self.ts = np.arange(-50,201,10)     # target time steps
             
         self.correlation_matrix = sio.loadmat(os.path.join(corr_root,'correlation_matrix_id_all.mat'))
@@ -90,15 +94,27 @@ class Selectiviy_Analysis_Correlation_Monkey():
         
     def monkey_neuron_analysis(self):
         
+        print('[Codinfo] Excuting monkey neuron analysis...')
+        
         #self.plot_sample_response()
-        uDMN, uDMNPerm, uDMN_T, uDMN_TPerm = self.monkey_neuron_spikes_process()     # <- every time those 4 values are the same, so can be saved
         
-        rFNID, rFNID_T, rFNIDPerm, pFN_FDR, sig_T = self.representational_similarity_analysis(uDMN, uDMNPerm, uDMN_T, uDMN_TPerm)
+        self.monkey_neuron_spikes_process()     # <- every time those 4 values are the same, so can be saved
         
-        self.plot_temporal_correlation(rFNID_T, sig_T)
+        rID, rID_Perm, rID_T, pID_FDR, sig_T = self.representational_similarity_analysis()
         
-        self.plot_pairwise_distance_correlation(rFNIDPerm, rFNID, pFN_FDR)
-        
+        idx, layer_n, _ = utils_.imaginary_neurons_vgg(self.layers, self.neurons)
+        rID_n = rID[idx]
+        rID_Perm_n = rID_Perm[idx,:]
+        pID_FDR_n = pID_FDR[idx]
+        rID_T_n = rID_T[idx]
+        sig_T_n = [sig_T[_] for _ in idx]
+
+        self.plot_static_correlation(self.layers, rID, rID_Perm, pID_FDR, 0.05, 'all')
+        self.plot_static_correlation(layer_n, rID_n, rID_Perm_n, pID_FDR_n, 0.05, 'neuron')
+         
+        self.plot_temporal_correlation(self.layers, rID_T, sig_T, 'all')
+        self.plot_temporal_correlation(layer_n, rID_T_n, sig_T_n, 'neuron')
+       
         #self.plot_correlation_example(uDMN, rFNID)
         
     def monkey_neuron_spikes_process(self, time_bin=10, nPerm=1000):
@@ -111,21 +127,24 @@ class Selectiviy_Analysis_Correlation_Monkey():
                 label: label for 500 imgs
                 
             - Output
-                uDMN:
-                uDMNPerm:
-                uDMN_T:
-                uDMN_TPerm:
+                uDMN: condense form of tranformed DSM
+                uDMNPerm: condense form of transformed DSM with extra dimension of permutation
+                uDMN_T: condense form of transformed DSM with temporal dimension
+                uDMN_TPerm: condense form of transformed DSM with temporal dimension and permutation dimension
         """
+        
+        print('[Codinfo] Calculating monkey neuron stats...')
+        
         file_path = os.path.join(self.save_root, 'monkey_spikes_corr.pkl')
         
         if os.path.exists(file_path):
             
             results = utils_.pickle_load(file_path)
             
-            uDMN = results['uDMN']
-            uDMNPerm = results['uDMNPerm']
-            uDMN_T = results['uDMN_T']
-            uDMN_TPerm = results['uDMN_TPerm']
+            self.uDMN = results['uDMN']
+            self.uDMNPerm = results['uDMNPerm']
+            self.uDMN_T = results['uDMN_T']
+            self.uDMN_TPerm = results['uDMN_TPerm']
             
             self.IDPSTH = results['sIDPSTH']
             self.IDFR = results['sIDFR']
@@ -140,9 +159,7 @@ class Selectiviy_Analysis_Correlation_Monkey():
                     usePSTH[:, idx, :] = np.mean(self.meanPSTH[:, np.where(((tt-time_bin/2)<=self.psthTime) & (self.psthTime<=(tt+time_bin/2)))[0], :], axis=1)
             
             usePSTHID = np.array([np.mean(usePSTH[np.where(self.label==_)[0],:,:], axis=0) for _ in  range(1, 1+len(np.unique(self.label)))])
-            # -----
             
-            # construct neural Distance Matrix using IT data by ID
             # [notice] meanGray != np.mean(meanBase, axis=1)
             self.IDFR = np.array([np.mean(self.meanFR[:,np.where(self.label==_)[0]], axis=1)/self.meanGray for _ in range(1,51)])
             
@@ -150,138 +167,93 @@ class Selectiviy_Analysis_Correlation_Monkey():
             #self.IDPSTH = np.array([np.array([usePSTHID[i,j,:]/self.meanGray for j in range(usePSTH.shape[1])]) for i in range(50)])
             
             # for static meanFR
-            DSM = (1 - np.corrcoef(self.IDFR))/2
-            uDMN = self.Square2Tri(DSM)  # -> (1225,)
-            
-            uDMNPerm = []
-            for _ in range(nPerm):
-                N = np.random.permutation(self.IDFR.shape[0])
-                DSMP = (1 - np.corrcoef(self.IDFR[N,:]))/2
-                uDMNPerm.append(self.Square2Tri(DSMP))
-            uDMNPerm = np.array(uDMNPerm)  # -> (1000,1225)
+            self.uDMN = self.Square2Tri((1 - np.corrcoef(self.IDFR))/2)  # -> (1225,)
+            self.uDMNPerm = np.array([self.Square2Tri((1-np.corrcoef(self.IDFR[np.random.permutation(self.IDFR.shape[0]),:]))/2) for _ in range(nPerm)])      # (1000,1225)
     
-            # for temporal
-            uDMN_T = []
-            uDMN_TPerm = []
-            for tt in range(self.IDPSTH.shape[1]):   # for each time bin
-                tmpData = self.IDPSTH[:,tt,:]  # 50*53
-                uDMN_T.append(self.Square2Tri((1-np.corrcoef(tmpData))/2))
-                
-                tmp_2 = []
-                for _ in range(nPerm):
-                    N = np.random.permutation(self.IDFR.shape[0])
-                    tmp_2.append(self.Square2Tri((1-np.corrcoef(tmpData[N,:]))/2))
-                tmp_2 = np.array(tmp_2)
-                uDMN_TPerm.append(tmp_2)
-            uDMN_TPerm = np.array(uDMN_TPerm)     # -> (26,1000,1225)
-            uDMN_T = np.array(uDMN_T)     # -> (26,1225)
-            
-            # -----
+            # for temporal PSTH
+            self.uDMN_T = np.array([self.Square2Tri((1-np.corrcoef(self.IDPSTH[:,_,:]))/2) for _ in range(self.IDPSTH.shape[1])])
+            self.uDMN_TPerm = np.array([np.array([self.Square2Tri((1-np.corrcoef(self.IDPSTH[np.random.permutation(self.IDFR.shape[0]), t,:]))/2) for _ in range(nPerm)]) for t in range(self.IDPSTH.shape[1])])
+
             results = {
-                'uDMN':uDMN,
-                'uDMNPerm':uDMNPerm,
-                'uDMN_T':uDMN_T,
-                'uDMN_TPerm':uDMN_TPerm,
-                'sIDFR':self.IDFR,
-                'sIDPSTH':self.IDPSTH
+                'uDMN': self.uDMN,
+                'uDMNPerm': self.uDMNPerm,
+                'uDMN_T': self.uDMN_T,
+                'uDMN_TPerm': self.uDMN_TPerm,
+                'sIDFR': self.IDFR,
+                'sIDPSTH': self.IDPSTH
                 }
-            utils_.pickle_dump(file_path, results)
             
-        return uDMN, uDMNPerm, uDMN_T, uDMN_TPerm
+            utils_.pickle_dump(file_path, results)
         
-    def representational_similarity_analysis(self, uDMN, uDMNPerm, uDMN_T, uDMN_TPerm, nPerm=1000):
+    def rsa_computation_layer(self, layer, nPerm=1000):    
+
+        DMIDF = self.Square2Tri((1-self.correlation_matrix[layer])/2)     # (1225,)
+        
+        # ----- static
+        r_seg = spearmanr(self.uDMN, DMIDF, nan_policy='raise').statistic
+        r_perm_seg = np.array([spearmanr(self.uDMNPerm[_,:], DMIDF, nan_policy='raise').statistic for _ in range(nPerm)])     # (1000,)
+        p_seg = np.mean(r_perm_seg > r_seg)
+    
+        # ----- temporal
+        time_steps = self.IDPSTH.shape[1]
+        r_T_seg = np.zeros(time_steps)
+        r_T_perm_seg = np.zeros((time_steps, nPerm))
+        p_T_seg = np.zeros(time_steps)
+        
+        Parallel(n_jobs=int(os.cpu_count()/2))(delayed(self.rsa_computation_layer_dynamic)(DMIDF, t, r_T_seg, r_T_perm_seg, p_T_seg) for t in range(time_steps))
+            
+        results = [r_seg, r_perm_seg, p_seg, r_T_seg, r_T_perm_seg, p_T_seg]    
+        
+        return results
+    
+    def rsa_computation_layer_dynamic(self, DMIDF, t, r_T_seg, r_T_perm_seg, p_T_seg, nPerm=1000):
+        
+        r = spearmanr(self.uDMN_T[t,:], DMIDF, nan_policy='raise').statistic
+        r_T_seg[t] = r
+        
+        r_perm = np.array([spearmanr(self.uDMN_TPerm[t, i_, :], DMIDF, nan_policy='raise').statistic for i_ in range(nPerm)])      # (1000,)
+        r_T_perm_seg[t,:] = r_perm
+        
+        p_T_seg[t] = np.mean(r_perm > r)
+        
+    def representational_similarity_analysis(self, alpha=0.05, nPerm=1000):
+
+        print('[Codinfo] Calculating RSA (1) corr scores and (2) permutation p_values...')
         
         save_path = os.path.join(self.save_root, 'RSA_results.pkl')
         
         if os.path.exists(save_path):
-            [rFNID, rFNID_T, rFNIDPerm, pFN_FDR, sig_T] = utils_.pickle_load(save_path)
+            [rID, rID_Perm, pID, rID_T, rID_T_Perm, pID_T, pID_FDR, sig_T] = utils_.pickle_load(save_path)
+            
         else:
-            # initialize variables
+            
+            results = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(self.rsa_computation_layer)(layer) for layer in tqdm(self.layers, desc='RSA monkey'))
+            rID, rID_Perm, pID, rID_T, rID_T_Perm, pID_T = [np.array(_) for _ in list(zip(*results))]
+            
+            pID_FDR = multipletests(pID, alpha=alpha, method='fdr_bh')[1]     # FDR (flase discovery rate) correction
+            
             nLayers = len(self.layers)
-            nTimeBins = self.IDPSTH.shape[1]
-    
-            rFNID = []     # Spearman's rank correlation coefficients of neuron_responses and 21 ANN_featuremaps
-            pFN = []     # percentage of how many r_values from permutation exceeds the 21 stable r_values 
-    
-            rFNID_T = []     # r_values of neuron_responses and 21 ANN_featuremaps in 26 time points
-            pFN_T = []     # percentages of how many r_values from permutation exceeds the 21 stable r_value in 26 time points
             
-            rFNIDPerm = []     # r_values of neuron_responses and 21 ANN_featuremaps in 1000 permutations
-            rFNIDPerm_T = []     # r_values of neuron_responses and 21 ANN_featuremaps in 26 time points and 1000 permutations
-            
-            # ----- some of the variable may can be initialized by the init section of this class?
-            for ll in tqdm(range(nLayers)):
-                layer = self.layers[ll]
-                '''
-                    [notice] the neuron used here is all
-                '''
-                DMIDF = self.Square2Tri((1-self.correlation_matrix[layer])/2)
-                
-                # [important] neuron and feature
-                r_, _ = spearmanr(uDMN, DMIDF, axis=1)
-                rFNID.append(r_)
-            
-                rFNIDPerm_seg = []
-                for ii in range(nPerm):
-                    r, _ = spearmanr(uDMNPerm[ii,:], DMIDF, axis=1, nan_policy='omit')
-                    rFNIDPerm_seg.append(r)
-                rFNIDPerm_seg = np.array(rFNIDPerm_seg)     # (1000,)
-                rFNIDPerm.append(rFNIDPerm_seg)
-                    
-                pFN.append((rFNIDPerm_seg > r_).mean())     # [notice] this is equal to sum(1s)/1000
-            
-                # for temporal info
-                pFN_T_seg = []
-                rFNID_T_seg = []
-                rFNIDPerm_T_seg = []
-                for tt in range(nTimeBins):     # (26,)
-                    r, _ = spearmanr(uDMN_T[tt,:], DMIDF, axis=1, nan_policy='omit')   # rho value <- (1225,) (1225,)
-                    rFNID_T_seg.append(r)
-                    rFNIDPerm_T_compare = np.array([spearmanr(uDMN_TPerm[tt, ii, :], DMIDF, nan_policy='omit')[0] for ii in range(nPerm)])
-                    rFNIDPerm_T_seg.append(rFNIDPerm_T_compare)
-                    
-                    pFN_T_seg.append((rFNIDPerm_T_compare > r).mean())
-                    
-                rFNID_T_seg = np.array(rFNID_T_seg)
-                rFNID_T.append(rFNID_T_seg)
-                
-                rFNIDPerm_T_seg = np.array(rFNIDPerm_T_seg)
-                rFNIDPerm_T.append(rFNIDPerm_T_seg)
-                
-                pFN_T_seg = np.array(pFN_T_seg)
-                pFN_T.append(pFN_T_seg)
-            
-            rFNID = np.array(rFNID)     #-> (21,)
-            pFN = np.array(pFN)     # -> (21,)
-            
-            rFNID_T = np.array(rFNID_T)     # -> (21,26)
-            pFN_T = np.array(pFN_T)     # -> (21,26)
-            
-            rFNIDPerm = np.array(rFNIDPerm)     # -> (21,1000)
-            rFNIDPerm_T = np.array(rFNIDPerm_T)     # -> (21,26,1000)
-    
-            # FDR (flase discovery rate) correction
-            pFN_FDR = multipletests(pFN, alpha=0.05, method='fdr_bh')[1]
-            
-            pFNID_T_FDR = np.zeros((nLayers, nTimeBins))
+            pID_T_FDR = np.zeros((nLayers, self.IDPSTH.shape[1]))
             
             sig_T_FDR = [[] for _ in range(nLayers)]
             sig_T = [[] for _ in range(nLayers)]
             
             for ll in range(nLayers):
-                pFNID_T_FDR[ll, :] = multipletests(pFN_T[ll, :], alpha=0.05, method='fdr_bh')[1]
+                pID_T_FDR[ll, :] = multipletests(pID_T[ll, :], alpha=alpha, method='fdr_bh')[1]
                 
-                sig_T_FDR[ll] = np.flatnonzero(pFNID_T_FDR[ll, :] < 0.05)     # [notice] this is not included in monkey experiment, but in human experiment
-                sig_T[ll] = np.flatnonzero(pFN_T[ll, :] < 0.05 / 26)     # Bonferroni correction
+                sig_T_FDR[ll] = np.flatnonzero(pID_T_FDR[ll, :] < alpha)     # [notice] this is not included in monkey experiment, but in human experiment
+                
+                sig_T[ll] = np.flatnonzero(pID_T[ll, :] < (alpha/self.IDPSTH.shape[1]))     # Bonferroni correction
             
-            utils_.pickle_dump(save_path, [rFNID, rFNID_T, rFNIDPerm, pFN_FDR, sig_T])
+            utils_.pickle_dump(save_path, [rID, rID_Perm, pID, rID_T, rID_T_Perm, pID_T, pID_FDR, sig_T])
         
-        return rFNID, rFNID_T, rFNIDPerm, pFN_FDR, sig_T
+        return rID, rID_Perm, rID_T, pID_FDR, sig_T
     
+    #FIXME
     def plot_sample_response(self):
         '''
-        [comment]
-        looks no significant differences? but perhaps this section has other usages?
+            looks no significant differences? but perhaps this section has other usages?
         '''
         # normed
         norm_factor = np.nanmean(self.meanBase, axis=1)     # (1,53)
@@ -318,74 +290,75 @@ class Selectiviy_Analysis_Correlation_Monkey():
         #plt.show()
         plt.close()
     
-    def plot_temporal_correlation(self, rFNID_T, sig_T):     # variable: sig_T can be 'sig_T' or 'sig_T_FDR' (former is Bonferroni, better)
+    def plot_static_correlation(self, layers, rID, rID_Perm, pID_FDR, alpha=0.05, title=None):
         
+        print('[Codinfo] Executing static plotting...')
+        
+        logging.getLogger('matplotlib').setLevel(logging.ERROR)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore')
+
+            rID_Perm_Mean = np.mean(rID_Perm, axis=1)  # -> (num_layers,)
+            rID_Perm_SD = np.std(rID_Perm, axis=1)  # -> (num_layers,)
+
+            fig, ax = plt.subplots(figsize=(len(rID)/5*np.array([1, 0.75])))
+            ax.plot(rID, 'ko-', markersize=5, linewidth=1)     # hollow circle
+    
+            sig_idx = np.where(pID_FDR<=alpha)[0]
+            sig_rID = rID[sig_idx]
+            
+            ax.plot(sig_idx, sig_rID, 'ko', markersize=5, markerfacecolor='k')     # solid circle
+            ax.set_ylabel("Spearman's $\\rho$")
+            ax.set_xticks(range(len(rID)))
+            ax.set_xticklabels(layers, rotation=90, ha='center')
+            ax.set_xlim([0, len(rID)-1])
+            ax.set_ylim([-0.1,1.2*np.max(rID)])
+            ax.yaxis.grid(True, linestyle='--', alpha=0.5)
+            ax.set_title(f'Static dynamics of correlation [{title}]')
+    
+            # Plot shaded error bars
+            ax.plot(range(len(rID)), rID_Perm_Mean, color='blue')
+            ax.fill_between(range(len(rID)), rID_Perm_Mean-rID_Perm_SD, rID_Perm_Mean+rID_Perm_SD, color='gray', alpha=0.3)
+            
+            plt.tight_layout(pad=1)
+            plt.savefig(self.save_root+f'RSA_static_corr_{title}.eps', format='eps')   
+            plt.savefig(self.save_root+f'RSA_static_corr_{title}.png', bbox_inches='tight')
+            #plt.show()
+            plt.close()
+    
+    def plot_temporal_correlation(self, layers, rID_T, sig_T, title=None):     # variable: sig_T can be 'sig_T' or 'sig_T_FDR' (former is Bonferroni)
+        
+        print('[Codinfo] Executing temporal plotting')
+    
         logging.getLogger('matplotlib').setLevel(logging.ERROR)    
     
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore')
             
-            plt.figure(figsize=(np.array(rFNID_T.T.shape)/5))
-            plt.imshow(rFNID_T, aspect='auto', extent=[self.ts.min()-5, self.ts.max()+5, -0.5, rFNID_T.shape[0]-0.5])
-            plt.colorbar()
-            plt.yticks(np.arange(rFNID_T.shape[0]), list(reversed(self.layers)), fontsize=10)
-            plt.xlabel('Time (ms)')
-            plt.xticks(fontsize=12)
-            plt.title('Temporal dynamics of correlation')
+            fig, ax = plt.subplots(figsize=(np.array(rID_T.T.shape)/5))
+            cax = ax.imshow(rID_T, aspect='auto', extent=[self.ts.min()-5, self.ts.max()+5, -0.5, rID_T.shape[0]-0.5])
+            cbar = fig.colorbar(cax, ax=ax)
+            ax.set_yticks(np.arange(rID_T.shape[0]), list(reversed(layers)), fontsize=10)
+            ax.set_xlabel('Time (ms)')
+            ax.tick_params(axis='x', labelsize=12)
+            ax.set_title(f'Temporal dynamics of correlation [{title}]')
     
-            # significant correlation (Bonferroni correction)
-            for ll in range(rFNID_T.shape[0]):
-                if np.any(sig_T[ll]):
-                    plt.plot(self.ts[sig_T[ll]], [ll]*len(sig_T[ll]), 'r*')
+            for _ in range(rID_T.shape[0]):     # significant correlation (Bonferroni correction)
+                if np.any(sig_T[_]):
+                    ax.plot(self.ts[sig_T[_]], [_]*len(sig_T[_]), 'r*')
              
             plt.tight_layout(pad=1)
         
-            plt.savefig(self.save_root+'RSA_neuron_temporal.eps', format='eps')     
-            plt.savefig(self.save_root+'RSA_neuron_temporal.png', bbox_inches='tight')
+            plt.savefig(self.save_root+f'RSA_dynamic_corr_{title}.eps', format='eps')     
+            plt.savefig(self.save_root+f'RSA_dynamic_corr_{title}.png', bbox_inches='tight')
             #plt.show()
             plt.close()
                 
-    def plot_pairwise_distance_correlation(self, rFNIDPerm, rFNID, pFN_FDR):
-        
-        logging.getLogger('matplotlib').setLevel(logging.ERROR)
-        
-        with warnings.catch_warnings():
-            warnings.simplefilter(action='ignore')
-            
-            # Compute rPermID_Mean and rPermID_SD from rFNIDPerm
-            rPermID_Mean = np.mean(rFNIDPerm, axis=1)  # -> (21,)
-            rPermID_SD = np.std(rFNIDPerm, axis=1)  # -> (21,)
-    
-            # Plot rFNID with black hollow circles
-            fig, ax = plt.subplots(figsize=(len(rFNID)/5*np.array([1, 0.75])))
-            ax.plot(rFNID, 'ko-', markersize=5, linewidth=1)
-    
-            # Highlight significant correlations in black filled circles
-            sig_indices = np.where(pFN_FDR <= 0.05)[0]
-            sig_rFNID = rFNID[pFN_FDR <= 0.05]
-            ax.plot(sig_indices, sig_rFNID, 'ko', markersize=5, markerfacecolor='k')
-    
-            ax.set_ylabel("Spearman's $\\rho$")
-            ax.set_xticks(range(len(rFNID)))
-            ax.set_xticklabels(self.layers, rotation=90, ha='center')
-            ax.set_xlim([0, len(rFNID)-1])
-            ax.set_ylim([-0.1,1.2*np.max(rFNID)])
-            ax.yaxis.grid(True, linestyle='--', alpha=0.5)
-            ax.set_title("Static dynamics of correlation")
-    
-            # Plot shaded error bars
-            plt.plot(range(len(rFNID)), rPermID_Mean, color='blue')
-            plt.fill_between(range(len(rFNID)), rPermID_Mean-rPermID_SD, rPermID_Mean+rPermID_SD, color='gray', alpha=0.3)
-            
-            plt.tight_layout(pad=1)
-            plt.savefig(self.save_root+'RSA_neuron_corr.eps', format='eps')   
-            plt.savefig(self.save_root+'RSA_neuron_corr.png', bbox_inches='tight')
-            #plt.show()
-            plt.close()
-        
-    def plot_correlation_example(self, uDMN, rFNID):
+    #FIXME
+    def plot_correlation_example(self, uDMN, rID):
         # plot correlation for sample layer
-        max_idx, max_r = max(enumerate(rFNID), key=lambda x: x[1])  # find the layer with strongest correlation
+        max_idx, max_r = max(enumerate(rID), key=lambda x: x[1])  # find the layer with strongest correlation
         layer = self.layers[max_idx]   
         DMIDF = self.Square2Tri((1-self.correlation_matrix[layer])/2)
         
@@ -417,7 +390,7 @@ class Selectiviy_Analysis_Correlation_Monkey():
         V = Square2Tri(M)
         return V
     
-    # [comment] this fuction seems not very necessary in this code, because default python can do this operation better than matlab
+    # [comment] this fuction seems not very necessary in this code, because python can do this operation better than matlab
     def plotCorr(self, A, B, c='blue', isPlot=None, corrType='Pearson'):
         if corrType == 'Pearson':  # no tested
             corr_func = pearsonr
@@ -452,6 +425,7 @@ class Selectiviy_Analysis_Correlation_Monkey():
         return r, p, titleMsg
 
 
+# =============================================================================
 class Selectiviy_Analysis_Correlation_Human():
 
     def __init__(self,
@@ -545,7 +519,7 @@ class Selectiviy_Analysis_Correlation_Human():
         
     def human_neuron_RSA_analysis_SelMet(self, DM_IDN, DM_IDN_Perm, DM_IDN_T, DM_IDN_T_Perm, sorted_ID, used_ID, SelMet):
         print(f'[Codinfo] Loading Correlations of {SelMet} artificial units and calculating similarities...')
-        rFNID, rFNID_T, rPermID, pFNID_FDR, pFNID_T_FDR, sigFN_T, sigFDR_T = self.human_neuron_RSA_sub_ID(DM_IDN, DM_IDN_Perm, DM_IDN_T, DM_IDN_T_Perm, sorted_ID, used_ID, SelMet)
+        rFNID, rFNID_T, rPermID, pFNID_FDR, pID_T_FDR, sigFN_T, sigFDR_T = self.human_neuron_RSA_sub_ID(DM_IDN, DM_IDN_Perm, DM_IDN_T, DM_IDN_T_Perm, sorted_ID, used_ID, SelMet)
         self.human_neuron_RSA_sub_ID_plot(rFNID, rPermID, pFNID_FDR, SelMet, used_ID)
         self.human_neuron_RSA_temporal_plot(rFNID_T, sigFN_T, sigFDR_T, SelMet, used_ID)
         
@@ -707,24 +681,24 @@ class Selectiviy_Analysis_Correlation_Human():
         
         sigFN_T = []
         sigFDR_T = []
-        pFNID_T_FDR = []
+        pID_T_FDR = []
         
         for ll in range(len(self.layers)):
-            pFNID_T_FDR_seg = multipletests(pFNID_T[ll, :], alpha=0.05, method='fdr_bh')[1]
-            pFNID_T_FDR.append(pFNID_T_FDR_seg)
-            sigFDR_T.append(np.where(pFNID_T_FDR_seg < 0.05)[0])
+            pID_T_FDR_seg = multipletests(pFNID_T[ll, :], alpha=0.05, method='fdr_bh')[1]
+            pID_T_FDR.append(pID_T_FDR_seg)
+            sigFDR_T.append(np.where(pID_T_FDR_seg < 0.05)[0])
             sigFN_T.append(np.where(pFNID_T[ll, :] < (0.05/pFNID_T.shape[1]))[0])
         
-        pFNID_T_FDR = np.array(pFNID_T_FDR, dtype=object)
+        pID_T_FDR = np.array(pID_T_FDR, dtype=object)
         sigFN_T = np.array(sigFN_T, dtype=object)
         sigFDR_T = np.array(sigFDR_T)
         
         # [notice] save data
         with open(self.save_root + f'saved_params_{SelMet}_{used_ID}.pkl', 'wb') as f:
-            pickle.dump([rFNID, rFNID_T, rPermID, pFNID_FDR, pFNID_T_FDR, sigFN_T, sigFDR_T], f, protocol=-1)
+            pickle.dump([rFNID, rFNID_T, rPermID, pFNID_FDR, pID_T_FDR, sigFN_T, sigFDR_T], f, protocol=-1)
         f.close()
         
-        return rFNID, rFNID_T, rPermID, pFNID_FDR, pFNID_T_FDR, sigFN_T, sigFDR_T
+        return rFNID, rFNID_T, rPermID, pFNID_FDR, pID_T_FDR, sigFN_T, sigFDR_T
 
     def human_neuron_RSA_sub_ID_plot(self, rFNID, rPermID, pFNID_FDR, SelMet, used_ID):
         
@@ -1296,7 +1270,7 @@ class Selectiviy_Analysis_Correlation_Human():
                 data = pickle.load(f)
             f.close()
             
-            [rFNID, rFNID_T, rPermID, pFNID_FDR, pFNID_T_FDR, sigFN_T, sigFDR_T] = data
+            [rFNID, rFNID_T, rPermID, pFNID_FDR, pID_T_FDR, sigFN_T, sigFDR_T] = data
             
             [SelMet, used_ID] = document[i].split('.')[0].split('_')[2:]
             
@@ -1328,7 +1302,7 @@ class Selectiviy_Analysis_Correlation_Human():
             with open(os.path.join(path, document[i]), 'rb') as f:
                 data = pickle.load(f)
             f.close()
-            [rFNID, rFNID_T, rPermID, pFNID_FDR, pFNID_T_FDR, sigFN_T, sigFDR_T] = data
+            [rFNID, rFNID_T, rPermID, pFNID_FDR, pID_T_FDR, sigFN_T, sigFDR_T] = data
             
             rPermIDMean = np.mean(rPermID, axis=1)
             rPermIDSD = np.std(rPermID, axis=1)
@@ -1347,7 +1321,7 @@ class Selectiviy_Analysis_Correlation_Human():
                 data = pickle.load(f)
             f.close()
             
-            [rFNID, rFNID_T, rPermID, pFNID_FDR, pFNID_T_FDR, sigFN_T, sigFDR_T] = data
+            [rFNID, rFNID_T, rPermID, pFNID_FDR, pID_T_FDR, sigFN_T, sigFDR_T] = data
             
             [SelMet, used_ID] = document[i].split('.')[0].split('_')[2:]
             
@@ -1488,7 +1462,7 @@ if __name__ == "__main__":
     # for monkey experiments
     test = Selectiviy_Analysis_Correlation_Monkey(
         corr_root=os.path.join(root_dir, 'Identity_VGG16bn_ReLU_CelebA2622_Neuron/', 'Correlation/'), 
-        layers=layers)
+        layers=layers, neurons=neurons)
     test.monkey_neuron_analysis()
     
 # =============================================================================

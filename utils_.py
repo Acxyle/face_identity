@@ -24,7 +24,9 @@ from sklearn.model_selection import train_test_split
 
 # ------ sigstar functions
 def sigstar(groups, stats, ax, nosort=False):
-    
+    """
+        local python rewrite for matlab code [sigstar]: https://github.com/raacampbell/sigstar/tree/master
+    """
     if stats is None or len(stats) == 0:
         stats = [0.05] * len(groups)
         
@@ -485,7 +487,6 @@ def SVM_classification(matrix, label):
     '''
     clf = svm.SVC()     # .SVC() .LinearSVC() .NuSVC() ... 
     
-    
     if matrix_train.shape[1] == 0:
       acc = 0.
     else:
@@ -515,6 +516,21 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
+def imaginary_neurons_vgg(layers, neurons):
+    layers_ = [i for i in layers if 'neuron' in i or 'pool' in i or 'fc_3' in i]
+    idx = [layers.index(i) for i in layers_]
+    neurons_ = [neurons[i] for i in idx]
+    layers = layers_
+    neurons = neurons_
+    return idx, layers, neurons
+
+def imaginary_neurons_resnet(layers, neurons):
+    layers_ = [i for i in layers if 'neuron' in i or 'pool' in i or 'fc' in i]
+    idx = [layers.index(i) for i in layers_]
+    neurons_ = [neurons[i] for i in idx]
+    layers = layers_
+    neurons = neurons_
+    return idx, layers, neurons
 
 # [warning] waiting to write
 # 不一样的地方就是 Vanilla SNN 不需要提供五维的输入，这导致这段代码看起来意义不明

@@ -240,9 +240,8 @@ class Selectiviy_Analysis_Correlation_Monkey():
             sig_T = [[] for _ in range(nLayers)]
             
             for ll in range(nLayers):
-                pID_T_FDR[ll, :] = multipletests(pID_T[ll, :], alpha=alpha, method='fdr_bh')[1]
-                
-                sig_T_FDR[ll] = np.flatnonzero(pID_T_FDR[ll, :] < alpha)     # [notice] this is not included in monkey experiment, but in human experiment
+                pID_T_FDR[ll, :] = multipletests(pID_T[ll, :], alpha=alpha, method='fdr_bh')[1]      # FDR
+                sig_T_FDR[ll] = np.flatnonzero(pID_T_FDR[ll, :] < alpha)
                 
                 sig_T[ll] = np.flatnonzero(pID_T[ll, :] < (alpha/self.IDPSTH.shape[1]))     # Bonferroni correction
             
@@ -390,7 +389,8 @@ class Selectiviy_Analysis_Correlation_Monkey():
         V = Square2Tri(M)
         return V
     
-    # [comment] this fuction seems not very necessary in this code, because python can do this operation better than matlab
+    #FIXME
+    # [comment] this fuction seems not very necessary because python packages can do this better than matlab
     def plotCorr(self, A, B, c='blue', isPlot=None, corrType='Pearson'):
         if corrType == 'Pearson':  # no tested
             corr_func = pearsonr
@@ -426,13 +426,14 @@ class Selectiviy_Analysis_Correlation_Monkey():
 
 
 # =============================================================================
+#FIXME
 class Selectiviy_Analysis_Correlation_Human():
 
     def __init__(self,
                  # from Dr. Cao
                  #corr_root = 'FeatureCM/'
                  # local model
-                 corr_root='/media/acxyle/Data/ChromeDownload/Identity_SpikingVGG16bn_LIF_CelebA9326_Neuron/Correlation/',
+                 corr_root='/Identity_SpikingVGG16bn_LIF_CelebA9326_Neuron/Correlation/',
                  
                  root_process='/home/acxyle/Downloads/osfstorage-archive-supp/',  # <- contains the processed Bio data (eg. PSTH) calculated from Matlab
                  root_data='/home/acxyle/Downloads/osfstorage-archive/',  # <- contains the raw Bio data from resources, only used for [human_neuron_get_firing_rate], expand it to PSTH

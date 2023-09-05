@@ -225,7 +225,7 @@ class ANOVA_analyzer():
                 
         self.plot_single_figure_VS(layers=neuron_layer, ratio=ratio_neuron, 
                                   baseline_model_config=baseline_model_structure, ratio_baseline=ratio_neuron_baseline, 
-                                  layers_color_list=layers_color_list_neuron, dest=dest, save_path='selective_unit_percent (neuron) comparison', 
+                                  layers_color_list=layers_color_list_neuron, dest=dest, save_path='selective unit percent comparison neuron', 
                                   length=math.floor(len(neuron_layer)/1.6), width=10, config=self.model_structure)
         
         print('[Codinfo] selective_neuron_percent.png has been saved into {}'.format(dest))

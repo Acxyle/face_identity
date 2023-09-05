@@ -30,27 +30,29 @@ import utils_
 
 class ANOVA_analyzer():
     def __init__(self, 
-                 root='/media/acxyle/Data/ChromeDownload/Identity_Spikingjelly_VGG_Results/',
-                 dest='/media/acxyle/Data/ChromeDownload/Identity_Spikingjelly_VGG19bn_Neuron/',
+                 root='/Features/',
+                 dest='/Analysis/',
                  alpha=0.01, num_classes=50, num_samples=10, layers=None, neurons=None):
+        
+        utils_.make_dir(dest)
+        self.dest = os.path.join(dest, 'ANOVA')
+        utils_.make_dir(self.dest)
+        self.folder_p_values = os.path.join(self.dest, 'ANOVA_stats/')
+        utils_.make_dir(self.folder_p_values)
+        self.folder_idces = os.path.join(self.dest, 'ANOVA_idces/')
+        utils_.make_dir(self.folder_idces)
+        
         self.root = root
         
         self.layers = layers
         self.neurons = neurons
         
-        self.dest = dest
-        utils_.make_dir(self.dest)
-        
         self.alpha = alpha
         self.num_classes = num_classes
         self.num_samples = num_samples
         
-        config_list = dest.split('/')[-2].split('_')[1:5]
-        self.model_structure = config_list[0]
-        self.neuron_type = config_list[1]
-        self.surrogate_func = config_list[2]
-        self.simulation_step = config_list[3]
-        
+        self.model_structure = 'VGG16_pretrained'
+
         # some tests to check the saved files are valid and matchable with self.layers and self.neurons
         if self.layers == None or self.neurons == None:
             raise RuntimeError('[Coderror] invalid layers and/or neurons')
@@ -66,8 +68,7 @@ class ANOVA_analyzer():
     def selectivity_neuron_ANOVA(self, verbose=False):
         print('[Codinfo] Executing selectivity_neuron_ANOVA...')
 
-        # === for each layer
-        for idx_l, layer in enumerate(self.layers):     
+        for idx_l, layer in enumerate(self.layers):     # for each layer
             neuron_idx = []
             with open(os.path.join(self.root, layer+'.pkl'), 'rb') as pkl:
                 feature = pickle.load(pkl)
@@ -79,20 +80,11 @@ class ANOVA_analyzer():
                 raise AssertionError('[Coderror] feature.shape[0] ({}) != self.num_classes*self.num_samples ({},{}) or feature.shape[1] ({}) != self.neurons[idx_l] ({})'.format(
                     feature.shape[0], self.num_classes, self.num_samples, feature.shape[1], self.neurons[idx_l]))
             
-            # ----- parallel computing by concurrent.futures.Thread/Process
-            #executor = concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count())
-            #job_pool = []
-            #for i in tqdm(range(feature.shape[1]), desc=f'[{layer}] ANOVA Submit'):
-            #    job = executor.submit(self.one_way_ANOVA, feature, i)
-            #    job_pool.append(job)
-            #for i in tqdm(range(feature.shape[1]), desc=f'[{layer}] ANOVA Collect'):
-            #    pl[i] = job_pool[i].result()
-            #executor.shutdown()
             # ----- parallel computing by joblib
             pl = Parallel(n_jobs=os.cpu_count())(delayed(self.one_way_ANOVA)(feature, i) for i in tqdm(range(feature.shape[1]), desc=f'[{layer}] ANOVA'))
             
-            if not os.path.exists(os.path.join(self.dest, layer+'-pvalue.csv')):
-                np.savetxt(os.path.join(self.dest, layer+'-pvalue.csv'), pl)
+            if not os.path.exists(os.path.join(self.folder_p_values, layer+'-pvalue.csv')):
+                np.savetxt(os.path.join(self.folder_p_values, layer+'-pvalue.csv'), pl)
             
             sig_neuron_idx = [idx for idx, p in enumerate(pl) if p < self.alpha]     # p_value_idx_list for neurons that satisfy the threshold
               
@@ -101,77 +93,92 @@ class ANOVA_analyzer():
                   
             neuron_idx.append(sig_neuron_idx)
             neuron_idx = np.array(neuron_idx)
-            if not os.path.exists(os.path.join(self.dest, layer+'-neuronIdx.csv')):
-                np.savetxt(os.path.join(self.dest, layer+'-neuronIdx.csv'), neuron_idx, delimiter=',')
+            if not os.path.exists(os.path.join(self.folder_idces, layer+'-neuronIdx.csv')):
+                np.savetxt(os.path.join(self.folder_idces, layer+'-neuronIdx.csv'), neuron_idx, delimiter=',')
         
         print('[Codinfo] Selectivity_Neuron_ANOVA Calculation Done.')
         print('[Codinfo] pvalue.csv and neuron_idx.pkl files have been saved in {}'.format(self.dest))
         
     # define ANOVE for multi-threads excution
     def one_way_ANOVA(self, feature, i):
-        neuron = feature[:, i]
-        d = [neuron[i*self.num_samples: i*self.num_samples+self.num_samples] for i in range(self.num_classes)]
-        p = stats.f_oneway(*d)[1]  # [0] for F-value, [1] for p-value
-        
+        """
+            if all units have responses 0, so will have 50 groups each has 10 0 values, this will cause 'nan' F_value and 'nan' p_value
+            [following question] how to deal with the unit with nan statistic values?
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore')
+            
+            neuron_ = feature[:, i]
+            d = [neuron_[i*self.num_samples: i*self.num_samples+self.num_samples] for i in range(self.num_classes)]
+            p = stats.f_oneway(*d)[1]  # [0] for F-value, [1] for p-value
+
         return p
     
     def selectivity_neuron_ANOVA_plot(self):      # this plot rely on both Local initialization and the Saved .csv files
         print('[Codinfo] Executing selectivity_neuron_ANOVA_plot...')
         print('{Codwarning] This function plots from signeuronIdx.csv')
         
-        dest = os.path.join(self.dest, 'ANOVA/')
-        utils_.make_dir(dest)
+        fig_folder = os.path.join(self.dest, 'Figures/')
+        utils_.make_dir(fig_folder)
         
-        count_dict = {layer:0 for layer in self.layers}     # initializationFalse
-        
-        # list out all neuronIdx.csv files for test
-        for layer in self.layers:
-            for f in [p for p in os.listdir(self.dest) if 'neuronIdx' in p]:
-                if layer in f:     # [help] add extra judgement but allow more free name space
-                    sig_neuron_idx_list = self.dest + f
-                    sig_neuron_idx = np.loadtxt(sig_neuron_idx_list, delimiter=',')
-                    value = sig_neuron_idx.size
-                    count_dict[layer]=value
-                    #print(layer, value)
-              
-        ratio = [round(a / b * 100) for a, b in zip(list(count_dict.values()), self.neurons)]
-        utils_.pickle_dump(dest+'ratio.pkl', ratio)     # save the percentages for plot
+        ratio_path = os.path.join(fig_folder, 'ratio.pkl')
+        if os.path.exists(ratio_path):
+            ratio = utils_.pickle_load(ratio_path)
+        else:
+            count_dict = {layer:0 for layer in self.layers}     # initializationFalse
+            
+            # list out all neuronIdx.csv files for test
+            for layer in self.layers:
+                for f in [p for p in os.listdir(self.folder_idces) if 'neuronIdx' in p]:
+                    if layer in f:     # [help] add extra judgement but allow more free name space
+                        sig_neuron_idx_list = self.folder_idces + f
+                        sig_neuron_idx = np.loadtxt(sig_neuron_idx_list, delimiter=',')
+                        value = sig_neuron_idx.size
+                        count_dict[layer]=value
+                        #print(layer, value)
+                  
+            ratio = [round(a / b * 100) for a, b in zip(list(count_dict.values()), self.neurons)]  # ratio = unit_passed_ANOVA/all_unit
+            utils_.pickle_dump(ratio_path, ratio)     # save the percentages for other plot
         
         layers_color_list = color_column(self.layers)
         
         # 1. plot all calculations
-        self.plot_single_figure(self.layers, ratio, layers_color_list, dest, 'selective_unit_percent', math.floor(len(self.layers)/1.6), 10, f'{self.model_structure}')
+        self.plot_single_figure(layers=self.layers, ratio=ratio, layers_color_list=layers_color_list, 
+                                dest=fig_folder, title='sensitive unit ratio', length=math.floor(len(self.layers)/1.6), width=10, 
+                                model_structure=f'{self.model_structure}')
         
-        # 2. for imaginary neurons only ([question] why contains pool layers?) - this version is for ANN because 'act', SNN should be 'neuron'
-        ratio_neuron = []
-        layers_color_list_neuron = []
-        count_dict_neuron = {layer:count_dict[layer] for layer in list(count_dict.keys()) if 'neuron' in layer or 'pool' in layer or 'fc_3' in layer}
-        for idx,i in enumerate(count_dict.keys()):
-            if i in count_dict_neuron:
-                ratio_neuron.append(round(count_dict[i]/self.neurons[idx]*100))
-                layers_color_list_neuron.append(layers_color_list[idx])   
+        # 2. for imaginary neurons only ([question] why contains pool layers?) - this version is for ANN because 'act', SNN should be 'neuron'     
+        neuron_layer = [[idx, layer] for idx, layer in enumerate(self.layers) if 'neuron' in layer or 'pool' in layer or 'fc_3' in layer]
+        neuron_layer_idx = [_[0] for _ in neuron_layer]
+        neuron_layer = [_[1] for _ in neuron_layer]
         
-        self.plot_single_figure(list(count_dict_neuron.keys()), ratio_neuron, layers_color_list_neuron, dest, 'selective_unit_percent (dense)', 30, 10, f'{self.model_structure} (neuron)')
+        ratio_neuron = [ratio[_] for _ in neuron_layer_idx]
+        layers_color_list_neuron = [layers_color_list[_] for _ in neuron_layer_idx]
+                
+        self.plot_single_figure(layers=neuron_layer, ratio=ratio_neuron, layers_color_list=layers_color_list_neuron, 
+                                dest=fig_folder, title='sensitive unit ratio neuron', length=math.floor(len(neuron_layer)/1.6), width=10, 
+                                model_structure=f'{self.model_structure}')
+                                
+        print('[Codinfo] selective_neuron_percent.png has been saved into {}'.format(fig_folder))
         
-        print('[Codinfo] selective_neuron_percent.png has been saved into {}'.format(dest))
+    def plot_single_figure(self, **kwargs):
         
-    def plot_single_figure(self, layers, ratio, layers_color_list, dest, mark, length, width, label):
-        # [important] control the all font size
-        # [notice] the impact is constant unless reopen the terminal
-        plt.rcParams.update({'font.size': 22})
+        plt.rcParams.update({'font.size': 22})     # control the all font size
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
+        logging.getLogger('matplotlib').setLevel(logging.ERROR)
         
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore')
-            plt.clf()    
-            plt.figure(figsize=(length, width), dpi=100)
-            plt.plot(layers, ratio, color='red', linestyle='-', linewidth=2.5, alpha=1, label=label)
-            plt.bar(layers, ratio, color=layers_color_list, width=0.5)
-            plt.xticks(rotation='vertical')
-            plt.ylabel('percentage')
-            plt.title(f'selective neuron ratio for each layer ({mark}) - {self.model_structure}')
-            plt.legend()
-            plt.savefig(os.path.join(dest, mark+'.png'), bbox_inches='tight')
-            plt.savefig(os.path.join(dest, mark+'.eps'), bbox_inches='tight', format='eps')
+            fig, ax = plt.subplots(figsize=(kwargs['length'], kwargs['width']), dpi=100)  
+            ax.plot(kwargs['layers'], kwargs['ratio'], color='red', linestyle='-', linewidth=2.5, alpha=1, label=kwargs['model_structure'])
+            ax.bar(kwargs['layers'], kwargs['ratio'], color=kwargs['layers_color_list'], width=0.5)
+            ax.set_xticklabels(labels=kwargs['layers'], rotation='vertical')
+            ax.set_ylabel('percentage (%)')
+            ax.set_title(f'{kwargs["title"]} - {self.model_structure}')
+            ax.legend()
+            fig.savefig(os.path.join(kwargs['dest'], kwargs['title']+'.png'), bbox_inches='tight')
+            fig.savefig(os.path.join(kwargs['dest'], kwargs['title']+'.eps'), bbox_inches='tight', format='eps')
             #plt.show()
             plt.close()
         
@@ -238,22 +245,21 @@ class ANOVA_analyzer():
         logging.getLogger('matplotlib').setLevel(logging.ERROR)
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore')
-    
-            plt.clf()    
-            plt.figure(figsize=(kwargs['length'], kwargs['width']), dpi=100)
-            plt.plot(kwargs['layers'], kwargs['ratio'], color='red', linestyle='-', linewidth=2.5, alpha=1, label=kwargs['config'])
-            plt.bar(kwargs['layers'], kwargs['ratio'], color=kwargs['layers_color_list'], width=0.5)
+       
+            fig, ax = plt.subplots(figsize=(kwargs['length'], kwargs['width']), dpi=100)
+            ax.plot(kwargs['layers'], kwargs['ratio'], color='red', linestyle='-', linewidth=2.5, alpha=1, label=kwargs['config'])
+            ax.bar(kwargs['layers'], kwargs['ratio'], color=kwargs['layers_color_list'], width=0.5)
             
-            plt.plot(kwargs['layers'], kwargs['ratio_baseline'], color='blue', linestyle='-', linewidth=2.5, alpha=1, label=f'{kwargs["baseline_model_config"]}')
-            plt.bar(kwargs['layers'], kwargs['ratio_baseline'], color=kwargs['layers_color_list'], width=0.5, alpha=0.25)
+            ax.plot(kwargs['layers'], kwargs['ratio_baseline'], color='blue', linestyle='-', linewidth=2.5, alpha=1, label=f'{kwargs["baseline_model_config"]}')
+            ax.bar(kwargs['layers'], kwargs['ratio_baseline'], color=kwargs['layers_color_list'], width=0.5, alpha=0.25)
             
-            plt.xticks(rotation='vertical')
-            plt.ylabel('percentage')
-            plt.title(f'{kwargs["save_path"]}')
-            plt.legend()
-            plt.savefig(os.path.join(kwargs['dest'], kwargs['save_path']+'.png'), bbox_inches='tight')
-            plt.savefig(os.path.join(kwargs['dest'], kwargs['save_path']+'.eps'), bbox_inches='tight', format='eps')     # no transparency
-            plt.savefig(os.path.join(kwargs['dest'], kwargs['save_path']+'.svg'), bbox_inches='tight', format='svg', transparent=True)
+            ax.set_xticks(rotation='vertical')
+            ax.set_ylabel('percentage (%)')
+            ax.set_title(f'{kwargs["save_path"]}')
+            ax.legend()
+            fig.savefig(os.path.join(kwargs['dest'], kwargs['save_path']+'.png'), bbox_inches='tight')
+            fig.savefig(os.path.join(kwargs['dest'], kwargs['save_path']+'.eps'), bbox_inches='tight', format='eps')     # no transparency
+            fig.savefig(os.path.join(kwargs['dest'], kwargs['save_path']+'.svg'), bbox_inches='tight', format='svg', transparent=True)
             #plt.show()
             plt.close()
         
@@ -390,9 +396,8 @@ def color_column(layers):
 
 if __name__ == "__main__":
     
-    spiking_model = spiking_vgg.__dict__['spiking_vgg16_bn'](spiking_neuron=neuron.LIFNode, num_classes=50, surrogate_function=surrogate.ATan(), detach_reset=True)
-    functional.set_step_mode(spiking_model, step_mode='m')
-    layers, neurons, shapes = utils_.generate_vgg_layers(spiking_model, 'spiking_vgg16_bn')
+    model_ = vgg.__dict__['vgg16'](num_classes=50)
+    layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, 'vgg16')
     
 # =============================================================================
 #     layers_ = [i for i in layers if 'neuron' in i or 'fc3' in i or 'pool' in i]
@@ -403,11 +408,11 @@ if __name__ == "__main__":
 #     neurons = neurons_
 # =============================================================================
     
-    analyzer = ANOVA_analyzer(root='/media/acxyle/Data/ChromeDownload/Identity_SpikingVGG16bn_LIF_CelebA2622_Results/', 
-                              dest='/media/acxyle/Data/ChromeDownload/Identity_SpikingVGG16bn_LIF_CelebA2622_Neuron/',
+    analyzer = ANOVA_analyzer(root='/home/acxyle-workstation/Downloads/Face Identity Baseline/Features/', 
+                              dest='/home/acxyle-workstation/Downloads/Face Identity Baseline/Analysis/',
                               alpha=0.01, num_classes=50, num_samples=10, layers=layers, neurons=neurons)
     
     #analyzer.selectivity_neuron_ANOVA()
-    #analyzer.selectivity_neuron_ANOVA_plot()
+    analyzer.selectivity_neuron_ANOVA_plot()
 
-    analyzer.selectivity_neuron_ANOVA_plot_VS_baseline('Identity_VGG16bn_ReLU_CelebA2622_Neuron')
+    #analyzer.selectivity_neuron_ANOVA_plot_VS_baseline('Identity_VGG16bn_ReLU_CelebA2622_Neuron')

@@ -175,6 +175,7 @@ class ANOVA_analyzer():
             #plt.show()
             plt.close()
         
+    #FIXME - make it able to receive more than one comparison object
     # [notice] this function amis to compare 2 different models performance, now need to manually input the data of the second model
     def selectivity_neuron_ANOVA_plot_VS_baseline(self, baseline_model):
         print('[Codinfo] Executing selectivity_neuron_ANOVA_plot...')

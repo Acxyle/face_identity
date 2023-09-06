@@ -30,9 +30,11 @@ import utils_
 
 class ANOVA_analyzer():
     def __init__(self, 
-                 root='/Features/',
-                 dest='/Analysis/',
+                 root='/Features/', dest=None,
                  alpha=0.01, num_classes=50, num_samples=10, layers=None, neurons=None):
+        
+        if dest == None:
+            dest = '/'.join([*root.split('/')[:-1], 'Analysis'])
         
         utils_.make_dir(dest)
         self.dest = os.path.join(dest, 'ANOVA')
@@ -51,7 +53,7 @@ class ANOVA_analyzer():
         self.num_classes = num_classes
         self.num_samples = num_samples
         
-        self.model_structure = 'VGG16_pretrained'
+        self.model_structure = 'SpikingVGG16bn'
 
         # some tests to check the saved files are valid and matchable with self.layers and self.neurons
         if self.layers == None or self.neurons == None:
@@ -183,90 +185,155 @@ class ANOVA_analyzer():
             plt.close()
         
     #FIXME - make it able to receive more than one comparison object
-    # [notice] this function amis to compare 2 different models performance, now need to manually input the data of the second model
-    def selectivity_neuron_ANOVA_plot_VS_baseline(self, baseline_model):
-        print('[Codinfo] Executing selectivity_neuron_ANOVA_plot...')
-        print('{Codwarning] This function plots from signeuronIdx.csv')
+    def selectivity_neuron_ANOVA_plot_Comparison(self, comparing_models_list):
         
-        dest = os.path.join(self.dest, 'ANOVA/')
-        utils_.make_dir(dest)
+        """
+            in this function, the default model is which underlies this class, and the input is a list of comparing models
+            [notice] in update on Sept 5, 2023, the 'ratio' generation has been removed, so before this section, MUST use 
+            selectivity_neuron_ANOVA_plot() to generate the 'ratio.pkl'
+        """
+        print('[Codinfo] Executing selectivity_neuron_ANOVA_comparison_plot...')
         
-        ratio_file = os.path.join(dest, 'ratio.pkl')
+        plt.rcParams.update({'font.size': 22})
+        plt.rcParams.update({"font.family": "Times New Roman"})
         
-        if os.path.exists(ratio_file):
-            ratio = utils_.pickle_load(ratio_file)
-        else:
-            count_dict = {layer:0 for layer in self.layers}     # initializationFalse
-            # list out all neuronIdx.csv files for test
-            for layer in self.layers:
-                for f in [p for p in os.listdir(self.dest) if 'neuronIdx' in p]:
-                    if layer in f:     # [help] add extra judgement but allow more free name space
-                        sig_neuron_idx_list = self.dest + f
-                        sig_neuron_idx = np.loadtxt(sig_neuron_idx_list, delimiter=',')
-                        value = sig_neuron_idx.size
-                        count_dict[layer]=value
-                        #print(layer, value)
-                  
-            ratio = [round(a / b * 100) for a, b in zip(list(count_dict.values()), self.neurons)]
-            utils_.pickle_dump(dest+'ratio.pkl', ratio)
+        # ----- operation to acquire the ratio of current model
+        fig_folder = os.path.join(self.dest, 'Figures/')
+        utils_.make_dir(fig_folder)
         
-        ratio_baseline, baseline_model_config = self.load_baseline_data(baseline_model)     # load the baseline model
-        baseline_model_structure = baseline_model_config.split('_')[0]
-        print(f'[Codinfo] Comparing models: {self.model_structure} v.s. {baseline_model_structure}')
+        ratio_path = os.path.join(fig_folder, 'ratio.pkl')
         
         layers_color_list = color_column(self.layers)
         
+        if os.path.exists(ratio_path):
+            ratio = utils_.pickle_load(ratio_path)
+        else:
+            raise RuntimeError('[Coderror] no ratio file detected for current model, plase do selectivity_neuron_ANOVA_plot() first.')
+        # -----
+        
         # 1. for all calculation
-        self.plot_single_figure_VS(layers=self.layers, ratio=ratio, 
-                                  baseline_model_config=baseline_model_structure, ratio_baseline=ratio_baseline, 
-                                  layers_color_list=layers_color_list, dest=dest, save_path='selective unit percent comparison', 
-                                  length=math.floor(len(self.layers)/1.6), width=10, config=self.model_structure)
+        title = 'Sensitive Unit Percentage(s) Comparision'
+        fig, ax = plt.subplots(figsize=(math.floor(len(self.layers)/1.6), 10), dpi=100)
+        
+        # plot fundamental model on the canvas
+        self.plot_single_figure_VS(ax=ax, layers=self.layers, ratio=ratio, layers_color_list=layers_color_list, model_structure=self.model_structure,
+                                   linewidth=2.5, alpha=1, linestyle='-')
+        
+        # plot comparing models on the canvas
+        for comparing_model in comparing_models_list:     # for each comparing model
+            ratio_comparing, comparing_model_config_list = self.load_comparing_data(comparing_model)
+            comparing_model_structure = comparing_model_config_list[0]
+            
+            layers, _, _ = utils_.get_layers_and_neurons(comparing_model_structure, self.num_classes)
+            layer_idx = [idx for idx, _ in enumerate(self.layers) if _ in layers]
+            layers_color_list_comparing = [layers_color_list[_] for _ in layer_idx]
+            
+            print(f'[Codinfo] adding Comparing models: {comparing_model_structure}')
+            
+            self.plot_single_figure_VS(ax=ax, layers=layers, ratio=ratio_comparing, layers_color_list=layers_color_list_comparing, model_structure=comparing_model_structure)
+        
+        ax.set_xticklabels(self.layers, rotation='vertical')
+        ax.set_ylabel('percentage (%)')
+        ax.set_title(f'{title}')
+        ax.legend()
+        
+        fig.savefig(os.path.join(fig_folder, title+'.png'), bbox_inches='tight')
+        fig.savefig(os.path.join(fig_folder, title+'.eps'), bbox_inches='tight', format='eps')     # no transparency
+        fig.savefig(os.path.join(fig_folder, title+'.svg'), bbox_inches='tight', format='svg', transparent=True)
+        plt.close()
         
         # 2. for imaginary neurons only ([question] why contains pool layers?) - this version is for ANN because 'act', SNN should be 'neuron'
+        title = 'Sensitive Unit Percentage(s) Comparision - Activation'
+        
+        # ----- for fundamental model
         neuron_layer = [[idx, layer] for idx, layer in enumerate(self.layers) if 'neuron' in layer or 'pool' in layer or 'fc_3' in layer]
         neuron_layer_idx = [_[0] for _ in neuron_layer]
         neuron_layer = [_[1] for _ in neuron_layer]
         
         ratio_neuron = [ratio[_] for _ in neuron_layer_idx]
-        ratio_neuron_baseline = [ratio_baseline[_] for _ in neuron_layer_idx]
         layers_color_list_neuron = [layers_color_list[_] for _ in neuron_layer_idx]
+        
+        fig, ax = plt.subplots(figsize=(math.floor(len(neuron_layer)/1.6), 10), dpi=100)
+        
+        # plot fundamental model on the canvas
+        self.plot_single_figure_VS(ax=ax, layers=neuron_layer, ratio=ratio_neuron, layers_color_list=layers_color_list_neuron, 
+                                   model_structure=self.model_structure, linewidth=2.5, alpha=1, linestyle='-')
                 
-        self.plot_single_figure_VS(layers=neuron_layer, ratio=ratio_neuron, 
-                                  baseline_model_config=baseline_model_structure, ratio_baseline=ratio_neuron_baseline, 
-                                  layers_color_list=layers_color_list_neuron, dest=dest, save_path='selective unit percent comparison neuron', 
-                                  length=math.floor(len(neuron_layer)/1.6), width=10, config=self.model_structure)
+        # ----- for comparing model
+        # plot comparing models on the canvas
+        for comparing_model in comparing_models_list:     # for each comparing model
+            ratio_comparing, comparing_model_config_list = self.load_comparing_data(comparing_model)
+            comparing_model_structure = comparing_model_config_list[0]
+            
+            layers, _, _ = utils_.get_layers_and_neurons(comparing_model_structure, self.num_classes)
+            layers = [[idx,_] for idx, _ in enumerate(layers) if 'neuron' in _ or 'pool' in _ or 'fc_3' in _]     # <- select target layers
+            layers_idx = [_[0] for _ in layers]
+            layers = [_[1] for _ in layers]
+            ratio_comparing = [ratio_comparing[_] for _ in layers_idx]
+            
+            layer_idx = [idx for idx, _ in enumerate(self.layers) if _ in layers]
+            layers_color_list_comparing = [layers_color_list[_] for _ in layer_idx]     # <- determine the colors
+            
+            print(f'[Codinfo] adding Comparing models: {comparing_model_structure}')
+            
+            self.plot_single_figure_VS(ax=ax, layers=layers, ratio=ratio_comparing, layers_color_list=layers_color_list_comparing, model_structure=comparing_model_structure)
         
-        print('[Codinfo] selective_neuron_percent.png has been saved into {}'.format(dest))
+        ax.set_xticklabels(layers, rotation='vertical')
+        ax.set_ylabel('percentage (%)')
+        ax.set_title(f'{title}')
+        ax.legend()
         
+        fig.savefig(os.path.join(fig_folder, title+'.png'), bbox_inches='tight')
+        fig.savefig(os.path.join(fig_folder, title+'.eps'), bbox_inches='tight', format='eps')     # no transparency
+        fig.savefig(os.path.join(fig_folder, title+'.svg'), bbox_inches='tight', format='svg', transparent=True)
+        plt.close()
+        # -----
+        
+        print('[Codinfo] selective_neuron_percent.png has been saved into {}'.format(fig_folder))
+        
+    # FIXME
     def plot_single_figure_VS(self, **kwargs):
-        plt.rcParams.update({'font.size': 22})
-        plt.rcParams.update({"font.family": "Times New Roman"})
+        """
+            every time plot one model      
+        """
+        ax = kwargs['ax']
+        
+        # --- default setting for comparing lines
+        if 'linewidth' not in kwargs.keys():
+            kwargs['linewidth'] = 1.5
+        if 'alpha' not in kwargs.keys():
+            kwargs['alpha'] = 0.5
+        if 'linestyle' not in kwargs.keys():
+            kwargs['linestyle'] = '--'
+            
+        # --- default setting for baseline
+        if 'baseline' in kwargs['model_structure']:
+            kwargs['linewidth'] = 2.0
+            kwargs['alpha'] = 0.75
+            kwargs['linestyle'] = '--'
         
         logging.getLogger('matplotlib').setLevel(logging.ERROR)
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore')
-       
-            fig, ax = plt.subplots(figsize=(kwargs['length'], kwargs['width']), dpi=100)
-            ax.plot(kwargs['layers'], kwargs['ratio'], color='red', linestyle='-', linewidth=2.5, alpha=1, label=kwargs['config'])
-            ax.bar(kwargs['layers'], kwargs['ratio'], color=kwargs['layers_color_list'], width=0.5)
             
-            ax.plot(kwargs['layers'], kwargs['ratio_baseline'], color='blue', linestyle='-', linewidth=2.5, alpha=1, label=f'{kwargs["baseline_model_config"]}')
-            ax.bar(kwargs['layers'], kwargs['ratio_baseline'], color=kwargs['layers_color_list'], width=0.5, alpha=0.25)
+            ax.plot(kwargs['layers'], kwargs['ratio'], linestyle=kwargs['linestyle'], linewidth=kwargs['linewidth'], alpha=kwargs['alpha'], label=kwargs['model_structure'])
+            ax.bar(kwargs['layers'], kwargs['ratio'], color=kwargs['layers_color_list'], width=0.5, alpha=kwargs['alpha'])
             
-            ax.set_xticks(rotation='vertical')
-            ax.set_ylabel('percentage (%)')
-            ax.set_title(f'{kwargs["save_path"]}')
-            ax.legend()
-            fig.savefig(os.path.join(kwargs['dest'], kwargs['save_path']+'.png'), bbox_inches='tight')
-            fig.savefig(os.path.join(kwargs['dest'], kwargs['save_path']+'.eps'), bbox_inches='tight', format='eps')     # no transparency
-            fig.savefig(os.path.join(kwargs['dest'], kwargs['save_path']+'.svg'), bbox_inches='tight', format='svg', transparent=True)
-            #plt.show()
-            plt.close()
+    def load_comparing_data(self, comparing_model):
+        """
+            this function does not have auto path locating, must precisely provide the location of target ratio.pkl file,
+            or precisely build the path structure for multiple models
+            
+            [notice] in the update on Sept 5, 2023, the folder structures have been changed from {comparing_model}/ANOVA/ratio.pkl
+            to {comparing_model}/ANOVA/Figures/ratio.pkl. The entire update refers to github
+        """
+        ratio_comparing = utils_.pickle_load(f'/media/acxyle/Data/ChromeDownload/{comparing_model}/Analysis/ANOVA/Figures/ratio.pkl')
         
-    def load_baseline_data(self, baseline_model):
-        ratio_baseline = utils_.pickle_load(f'/media/acxyle/Data/ChromeDownload/{baseline_model}/ANOVA/ratio.pkl')
-        baseline_model_config = baseline_model.split('_')[1:-2]
-        return ratio_baseline, '_'.join(baseline_model_config)
+        if 'baseline' not in comparing_model.lower():
+            comparing_model_config_list = comparing_model.split('_')[1:-2]     # for SNN: 1_2_3_4 - structure_neuron_surrogate_T, for ANN: 1_2 - structure_activation
+        else:
+            comparing_model_config_list = [comparing_model.split('_')[1]+'(baseline)', 'ReLU']
+        return ratio_comparing, comparing_model_config_list
         
     def load_and_check_p_value(self, alpha, save=False, plot=False, verbose=False):
         print('[Codinfo] Executing load_and_check_p_value...')
@@ -394,10 +461,12 @@ def color_column(layers):
         
     return layers_color_list
 
+
 if __name__ == "__main__":
     
-    model_ = vgg.__dict__['vgg16'](num_classes=50)
-    layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, 'vgg16')
+    spiking_model = spiking_vgg.__dict__['spiking_vgg16_bn'](spiking_neuron=neuron.LIFNode, num_classes=50, surrogate_function=surrogate.ATan(), detach_reset=True)
+    functional.set_step_mode(spiking_model, step_mode='m')
+    layers, neurons, shapes = utils_.generate_vgg_layers(spiking_model, 'spiking_vgg16_bn')
     
 # =============================================================================
 #     layers_ = [i for i in layers if 'neuron' in i or 'fc3' in i or 'pool' in i]
@@ -408,11 +477,11 @@ if __name__ == "__main__":
 #     neurons = neurons_
 # =============================================================================
     
-    analyzer = ANOVA_analyzer(root='/home/acxyle-workstation/Downloads/Face Identity Baseline/Features/', 
-                              dest='/home/acxyle-workstation/Downloads/Face Identity Baseline/Analysis/',
+    analyzer = ANOVA_analyzer(root='/media/acxyle/Data/ChromeDownload/Identity_SpikingVGG16bn_LIF_CelebA2622/', 
                               alpha=0.01, num_classes=50, num_samples=10, layers=layers, neurons=neurons)
     
     #analyzer.selectivity_neuron_ANOVA()
-    analyzer.selectivity_neuron_ANOVA_plot()
-
-    #analyzer.selectivity_neuron_ANOVA_plot_VS_baseline('Identity_VGG16bn_ReLU_CelebA2622_Neuron')
+    #analyzer.selectivity_neuron_ANOVA_plot()
+    
+    comparing_models_list = ['Identity_VGG16bn_ReLU_CelebA2622', 'Identity_VGG16_ReLU_CelebA2622', 'Identity_VGG_Baseline']
+    analyzer.selectivity_neuron_ANOVA_plot_Comparison(comparing_models_list)

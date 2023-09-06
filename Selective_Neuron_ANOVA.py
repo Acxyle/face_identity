@@ -29,22 +29,23 @@ import vgg, resnet
 import utils_
 
 class ANOVA_analyzer():
-    def __init__(self, 
-                 root='/Features/', dest=None,
+    """
+        in the update of Sept 6, 2023, this code receives the entire folder path as the input rather than the 'Features' path
+    """
+    def __init__(self, root='.../Face_Identity VGG16/', 
                  alpha=0.01, num_classes=50, num_samples=10, layers=None, neurons=None):
         
-        if dest == None:
-            dest = '/'.join([*root.split('/')[:-1], 'Analysis'])
-        
-        utils_.make_dir(dest)
-        self.dest = os.path.join(dest, 'ANOVA')
+        self.root = os.path.join(root, 'Features/')     # <- folder for feature maps, which should be generated before analysis
+        self.dest = '/'.join([*root.split('/')[:-1], 'Analysis'])     # <- folder for analysis results
         utils_.make_dir(self.dest)
-        self.folder_p_values = os.path.join(self.dest, 'ANOVA_stats/')
-        utils_.make_dir(self.folder_p_values)
-        self.folder_idces = os.path.join(self.dest, 'ANOVA_idces/')
-        utils_.make_dir(self.folder_idces)
         
-        self.root = root
+        self.dest_ANOVA = os.path.join(self.dest, 'ANOVA')
+        
+        utils_.make_dir(self.dest_ANOVA)
+        self.folder_p_values = os.path.join(self.dest_ANOVA, 'ANOVA_stats/')
+        utils_.make_dir(self.folder_p_values)
+        self.folder_idces = os.path.join(self.dest_ANOVA, 'ANOVA_idces/')
+        utils_.make_dir(self.folder_idces)
         
         self.layers = layers
         self.neurons = neurons
@@ -53,7 +54,7 @@ class ANOVA_analyzer():
         self.num_classes = num_classes
         self.num_samples = num_samples
         
-        self.model_structure = 'SpikingVGG16bn'
+        self.model_structure = root.split('/')[-2].split(' ')[1]     # in current code, the 'root' file should list those information in structural name, arbitrary
 
         # some tests to check the saved files are valid and matchable with self.layers and self.neurons
         if self.layers == None or self.neurons == None:
@@ -66,7 +67,7 @@ class ANOVA_analyzer():
         
         #if set([f.split('.')[0] for f in os.listdir(self.root)]) != set(self.layers):     # [notice] can mute this message when segmental test
         #    raise AssertionError('[Coderror] the saved .pkl files must be exactly the same with attribute self.layers')
-        
+    
     def selectivity_neuron_ANOVA(self, verbose=False):
         print('[Codinfo] Executing selectivity_neuron_ANOVA...')
 

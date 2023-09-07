@@ -17,7 +17,7 @@ Created on Wed Feb 15 13:54:55 2023
         rewrite the code based on my preference - make the 'encode' not based on ANOVA but independent
 
 """
- 
+
 import os
 import math
 import pickle
@@ -27,10 +27,16 @@ import pandas as pd
 from tqdm import tqdm
 import random
 import argparse
+import gc
+import logging
 #from functools import reduce
 
 import spiking_vgg, spiking_resnet, sew_resnet
 from spikingjelly.activation_based import surrogate, neuron, functional
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+
+from joblib import Parallel, delayed
+from scipy.interpolate import interp1d
 
 import vgg, resnet
 import utils_
@@ -76,25 +82,40 @@ class Encode_feaquency_analyzer():
         print(f'[Codinfo] Calculated cal [{col}] and row+1 [{row}] for input [{input}], with remainder [{remainder}]')
         return row, col
     
-    #FIXME 
-    def obtain_encode_class_dict(self, single_neuron_test=False, verbose=False):
+    # define Encode for parallel calculation
+    def encode_calculation(self, feature, i):
+        """
+            under construction...
+        """
+        
+        feature_of_single_unit = feature[:, i]
+        grouped_feature_of_single_unit = feature_of_single_unit.reshape(-1,10)
+        
+        threshold = np.mean(feature_of_single_unit) + 2*np.std(feature_of_single_unit)
+        local_mean = np.mean(grouped_feature_of_single_unit, axis=1)     # array of 50 values
+        
+        encode_class = np.where(local_mean>threshold)[0]+1  # '>' prevent all 0
+        
+        #plt.bar(range(len(local_mean)), local_mean)
+        #plt.hlines(threshold, 0, 49)
+        
+        return encode_class
+    
+    #FIXME - the stuck problem of processpool
+    def obtain_encode_class_dict(self, ):
         """
             current version, the idx is based on id_sensitive unit, not absolute idx the correction is a big project
             considering need to change all following functions this code now looks not good, need to rewrite
-            [task 2] add parallel calculation
+            
+            [task] 1) parallel computation; 2) separate computation and plot; 3) abs Enocde rather sensitive_based unit 
         """
         print('[Codinfo] Executing obtain_encode_class_dict...')
-        self.SIMI_dict = {}
+        self.Encode_dict = {}
+        self.Sort_dict = {}
         
-        fig, axs = plt.subplots(self.subplot_row, self.subplot_col, figsize=((self.subplot_col*2, self.subplot_row*2)))   # organize the shape of subplots
-        
-        plt.subplots_adjust(hspace=0.3, wspace=0.3)
-        x = np.arange(self.num_classes)+1
-        cnt_row = 0
-        cnt_col = 0
-        save_folder = os.path.join(self.dest_Encode, 'Selected_Neuron_Encoding_Performance/')     # what's the meaning of this operation?
-        utils_.make_dir(save_folder)
-        
+        num_workers = os.cpu_count()
+        print(f'[Codinfo] Executing parallel computation with num_workers={num_workers}')
+
         # ----- layer check
         feature_list_check = [_.split('/')[-1].split('.')[0] for _ in self.feature_list]
         layers_check = self.layers.copy()
@@ -102,108 +123,261 @@ class Encode_feaquency_analyzer():
             raise RuntimeError('[Coderror] detected the features and layers not match')
         # -----
         
-        # [notice] not use this way because it makes the code hard to read
         for idx, feature_path in enumerate(self.feature_list):     # for each layer
             
-            feature = utils_.pickle_load(feature_path)      # load feature matrix
             layer = feature_path.split('/')[-1].split('.')[0]
+        
+            feature = utils_.pickle_load(feature_path)      # load feature matrix
                 
             idx_path = self.idx_list[idx]
-            sensitive_unit_idx = np.loadtxt(idx_path, delimiter=',')      # fix the problem of only using the id_sensitive_unit
+            sensitive_idx = np.loadtxt(idx_path, delimiter=',').astype(int)      # 1.1 sensitive_idx
+            non_sensitive_idx = np.array(list(set(np.arange(feature.shape[1]))-set(sensitive_idx)))     # 1.2 non_sensitive_idx
             
-            if sensitive_unit_idx.size == 0:
-                self.SIMI_dict.update({layer: [{'neuron_amount': 0},{'selective_neuron_amount': 0},{'SI_idx': {}}, {'MI_idx': {}}]})
-            elif sensitive_unit_idx.size != 0:
-                if sensitive_unit_idx.size == 1:
-                    sensitive_unit_idx = np.array([sensitive_unit_idx])
-                sensitive_unit_idx = list(map(int, sensitive_unit_idx))    
-                sensitive_units_feature = feature[:, sensitive_unit_idx]  # obtain sensitive_units_feature
-                
-                # [notice] from here, the  idx is based on id_sensitive unit
-                _, sensitive_unit_idx = sensitive_units_feature.shape
-                if verbose:
-                    print('[Codinfo] 3. identity selective neuron calculate: ', sensitive_unit_idx, 'sensitive_units_feature in total')
-                SI_idx = {}     # SI idx: encoded classes - the location in the sensitive_units_feature (sensitive unit)
-                MI_idx = {}     # MI idx: encoded classes - like above
-                # ===== loop for neurons of one layer
-                for i in range(sensitive_unit_idx):  # for each neuron
-                    neuron = sensitive_units_feature[:, i]
-                    global_mean = np.mean(neuron)
-                    global_std = np.std(neuron)
-                    threshold = global_mean + 2 * global_std
-                    d = [neuron[i*self.num_samples: i*self.num_samples+self.num_samples] for i in range(self.num_classes)]
-                    d = np.array(d)
-                    local_mean = np.mean(d, axis=1)     # array of 50 values
-                    
-                    # [notice] need to re-check this process
-                    encode_class = [i + 1 for i, mean in enumerate(local_mean) if mean > threshold]     # the list of what classes encoded by this neuron
-                    if not encode_class == []:
-                        if len(encode_class) == 1:
-                            SI_idx.update({i:encode_class})
-                        else:
-                            MI_idx.update({i:encode_class})
-                            
-                if verbose:
-                    print('\n[Codinfo] layer: {}, {} neurons (SI: {}, MI: {}) pass the threshold (all neuron: {}, selective neuron: {}).'.format(
-                    layer, len(list(SI_idx.keys()))+len(list(MI_idx.keys())), len(list(SI_idx.keys())), len(list(MI_idx.keys())), feature.shape[1], sensitive_unit_idx))
-                    
-                self.SIMI_dict.update({layer: [{'neuron_amount': feature.shape[1]},{'selective_neuron_amount': sensitive_unit_idx},{'SI_idx': SI_idx}, {'MI_idx': MI_idx}]})
-                # =====
-                
-                if single_neuron_test:
-                    if sensitive_unit_idx != 0:
-                        check_neuron = random.choice(range(sensitive_unit_idx))        # random select a neuron in one layer
-                        if verbose:
-                            print('[Codinfo] Now check', layer, ': #', check_neuron, '\n')
-                        neuron_vector = sensitive_units_feature[:, check_neuron]
-                        ID_vector_list = [neuron_vector[i*self.num_samples: i*self.num_samples+self.num_samples] for i in range(self.num_classes)] # list for each ID [list 50]
-                        ID_vector_list = np.array(ID_vector_list)
-                        mean_list = np.mean(ID_vector_list, axis=1)   # 50 means
-                        x = np.arange(self.num_classes) + 1   # add 1 from each element
+            unit_encode_dict = {}
 
-                        # === merged subplot
-                        axs[cnt_row, cnt_col].bar(x, mean_list, width=0.5)      # subplot
-                        axs[cnt_row, cnt_col].set_title(layer + ' # ' + str(check_neuron), fontsize=8)
-                        cnt_col += 1     # if initial sensitive_unit_idx == 1, this will throw error message while using old version generate_subplot_row_and_col
-                        if cnt_col == self.subplot_col:
-                            cnt_col = 0
-                            cnt_row += 1  
-                        # === independent fig
-                        fig2, axes2 = plt.subplots(1)
-                        axes2.bar(x, mean_list, width=0.5)
-                        axes2.set_xticks(np.arange(0, self.num_classes+1, step=2))
-                        axes2.set_xlabel('IDs', fontsize=8)
-                        axes2.set_ylabel('local mean', fontsize=8)
-                        axes2.set_title(layer + ' # ' + str(check_neuron))
-                        fig2.savefig(save_folder+layer+' # '+str(check_neuron)+'_encoding_performance.png', bbox_inches='tight', dpi=100)
-                        plt.close(fig2)
-                                
-            if single_neuron_test:
-                for ax in axs.flat:
-                    ax.label_outer()
-                for ax in axs.flat:
-                    ax.set_xlabel(xlabel='IDs', fontsize=8, labelpad=0)
-                    ax.set_ylabel(ylabel='local mean', fontsize=8, labelpad=0)
-                plt.tight_layout()
-                fig.savefig(self.dest_Encode+'single_neuron_encoding_performance_All.png', bbox_inches='tight', dpi=100)
-                plt.close(fig)
+            #for i in tqdm(range(feature.shape[1]), desc='unit'):     # for each neuron
+            with Parallel(n_jobs=num_workers, require='sharedmem') as parallel:
+                pl = parallel(delayed(self.encode_calculation)(feature, i) for i in tqdm(range(feature.shape[1]), desc=f'[{layer}] Encode'))  
+                
+            for i in range(feature.shape[1]):
+                unit_encode_dict[i] = pl[i]
+
+            self.Encode_dict[layer] = unit_encode_dict
             
-        print('[Codinfo] Saving SIMI ID_neuron_encode_class_dict.pkl ...')
-        utils_.pickle_dump(os.path.join(self.dest_Encode, 'ID_neuron_encode_class_dict.pkl'), self.SIMI_dict)      # save the relationship between layer (include SI and MI) and encoded classes
-        print('[Codinfo] SIMI ID_neuron_encode_dict.pkl saved in {}'.format(self.dest_Encode))
+            # [notice] 2 types of units
+            unit_encode_list = [_ for _ in unit_encode_dict.values()]
+            unit_encode_num = np.array([len(_) for _ in unit_encode_list])
+            
+            si_idx = np.where(unit_encode_num==1)[0]     # 2.1 si_idx
+            mi_idx = np.where(unit_encode_num>1)[0]     # 2.2 mi_idx
+            
+            encode_idx = np.hstack((si_idx, mi_idx))     # 2.3 (2.1+2.2) encode_idx
+            non_encode_idx = np.array(list(set(np.arange(feature.shape[1]))-set(encode_idx)))     # 2.4 non_encode_idx
+            
+            sensitive_si_idx = np.intersect1d(si_idx, sensitive_idx)     # 3.1 sensitive_si_idx
+            sensitive_mi_idx = np.intersect1d(mi_idx, sensitive_idx)     # 3.2 sensitive_mi_idx
+            sensitive_encode_idx = np.intersect1d(sensitive_idx, encode_idx)     # 3.3 sensitive_encode_idx
+            sensitive_non_encode_idx = np.intersect1d(sensitive_idx, non_encode_idx)     # 3.4 sensitive_non_encode_idx
+            
+            non_sensitive_si_idx = np.intersect1d(non_sensitive_idx, si_idx)     # 4.1 ns_s
+            non_sensitive_mi_idx = np.intersect1d(non_sensitive_idx, mi_idx)     # 4.2 ns_m
+            non_sensitive_encode_idx = np.intersect1d(non_sensitive_idx, encode_idx)     # 4.3 ns_e
+            non_sensitive_non_encode_idx = np.intersect1d(non_sensitive_idx, non_encode_idx)     # 4.4 ns_ne
+            
+            basic_type = {
+                'si_idx': si_idx,
+                'mi_idx': mi_idx,
+                'non_encode_idx': non_encode_idx
+                }
+            
+            advanced_type = {
+                'sensitive_si_idx': sensitive_si_idx,
+                'sensitive_mi_idx': sensitive_mi_idx,
+                'sensitive_encode_idx': sensitive_encode_idx,
+                'sensitive_non_encode_idx': sensitive_non_encode_idx,
+                
+                'non_sensitive_si_idx': non_sensitive_si_idx,
+                'non_sensitive_mi_idx': non_sensitive_mi_idx,
+                'non_sensitive_encode_idx': non_sensitive_encode_idx,
+                'non_sensitive_non_encode_idx': non_sensitive_non_encode_idx,
+                }
+            
+            unit_sort_dict = {
+                'basic_type': basic_type,
+                'advanced_type': advanced_type
+                }
+            
+            self.Sort_dict[layer] = unit_sort_dict
+            
+            gc.collect()
+            
+        print('[Codinfo] Saving Encode_dict.pkl and Sort_dict.pkl...')
+        utils_.pickle_dump(os.path.join(self.dest_Encode, 'Encode_dict.pkl'), self.Encode_dict)      # save the relationship between layer (include SI and MI) and encoded classes
+        utils_.pickle_dump(os.path.join(self.dest_Encode, 'Sort_dict.pkl'), self.Sort_dict)
+        print('[Codinfo] Encode_dict.pkl saved in {}'.format(self.dest_Encode))
     
     #FIXME
     # looks need to find a better way to save the data make us to better understand the encode_id, si_idx, mi_idx, just like the MATLAB version
-    def reload_and_revocer_encode_class_dict(self, save_path=None):
-        print('[Codinfo] Executing reload_and_recover_encode_class_dict...')
-        if save_path == None:
-            save_path_ = self.dest_Encode
-            
-        encode_class_dict = utils_.pickle_load(os.path.join(save_path_, 'ID_neuron_encode_class_dict.pkl'))
-        temp_dict = self.recover_encode_class_dict(encode_class_dict)
-            
-        return temp_dict
+    def reload_encode_and_sort_dict(self, ):
+        print('[Codinfo] Reloading Encode_dict and Sort_dict...')
+        
+        self.Encode_dict = utils_.pickle_load(os.path.join(self.dest_Encode, 'Encode_dict.pkl'))
+        self.Sort_dict = utils_.pickle_load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
     
+    def calculate_intersection_point(self, y1, y2, num_interpolate=10000):
+        x = np.arange(len(y1))
+        
+        f1 = interp1d(x, y1)
+        f2 = interp1d(x, y2)
+        
+        x_new = np.linspace(0, len(x)-1, num_interpolate)
+        intersection_x = None
+        for xi in x_new:
+            if f1(xi) >= f2(xi):
+                intersection_x = xi
+                break
+            
+        intersection_y = f1(intersection_x)
+        
+        return intersection_x, intersection_y
+    
+    # ----- under construction...
+    def encode_layer_percent_plot(self, fig_folder, fig, ax, curve_dict=None, point_dict=None, title=None, save=True):
+        print(f'[Condinfo] plotting {title}')
+        
+        logging.getLogger('matplotlib').setLevel(logging.ERROR)
+        
+        plt.rcParams.update({'font.size': 18})     # control the all font size
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
+        if curve_dict is not None:
+            for curve in list(curve_dict.keys()):     # this is a design of dict-dict
+                curve = curve_dict[curve]
+                ax.plot(curve['values'], color=curve['color'], linestyle=curve['linestyle'], linewidth=curve['linewidth'], label=curve['label'])
+        if point_dict is not None:
+            for point in list(point_dict.keys()):
+                point = point_dict[point]
+                ax.scatter(point['point']['x'], point['point']['y'], color=point['color'], linewidth=1.0, label=point['label'])
+                ax.vlines(point['point']['x'], 0, point['point']['y'], color='gray', linewidth=1.0)
+        
+        ax.legend(framealpha=0.5)
+        ax.set_title(f'{title}', fontname='Times New Roman')
+        ax.grid(True)
+        ax.set_xticks(np.arange(len(self.layers)), self.layers, rotation='vertical', fontname='Times New Roman')
+        ax.tick_params(axis='both', which='major', labelsize=12)
+        ax.set_ylim([0,100])
+        
+        if save:
+            fig.savefig(os.path.join(fig_folder, title+'.png'), bbox_inches='tight')
+            fig.savefig(os.path.join(fig_folder, title+'.eps'), bbox_inches='tight', format='eps')     # no transparency
+            fig.savefig(os.path.join(fig_folder, title+'.svg'), bbox_inches='tight', format='svg', transparent=True)
+    
+    # -----
+    def encode_layer_percent_plot_dict(self, values=None, point=None, color=None, linestyle=None, linewidth=None, label=None):
+
+        return {
+            'values': values,
+            'point': point,
+            'color': color,
+            'linestyle': linestyle,
+            'linewidth': linewidth,
+            'label': label
+            }
+    
+    def selectivity_encode_layer_percent_plot(self, ):
+        """
+            this function plot the percentages of different types of units over layers
+        """
+        
+        fig_folder = os.path.join(self.dest_Encode, 'Figures')
+        utils_.make_dir(fig_folder)
+        
+        if not hasattr(self, 'Encode_dict') and not hasattr(self, 'Sort_dict'):
+            self.reload_encode_and_sort_dict()
+        
+        print('[Codinfo] preparing plot...')
+        # 3 types of basic units
+        # ['si_idx', 'mi_idx', 'non_encode_idx']
+        non_encode_unit_percentages = [len(self.Sort_dict[_]['basic_type']['non_encode_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
+        si_unit_percentages = [len(self.Sort_dict[_]['basic_type']['si_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
+        mi_unit_percentages = [len(self.Sort_dict[_]['basic_type']['mi_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
+        encode_unit_percentages = [si_unit_percentages[_]+mi_unit_percentages[_] for _ in range(len(self.layers))]
+        
+        inter_x, inter_y = self.calculate_intersection_point(encode_unit_percentages, non_encode_unit_percentages)
+        inter_x_s, inter_y_s = self.calculate_intersection_point(si_unit_percentages, non_encode_unit_percentages)
+        inter_x_m, inter_y_m = self.calculate_intersection_point(mi_unit_percentages, non_encode_unit_percentages)
+        
+        sensitive_encode_unit_percentages = [len(self.Sort_dict[_]['advanced_type']['sensitive_encode_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
+        sensitive_non_encode_unit_percentages = [len(self.Sort_dict[_]['advanced_type']['sensitive_non_encode_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
+        sensitive_si_unit_percentages = [len(self.Sort_dict[_]['advanced_type']['sensitive_si_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
+        sensitive_mi_unit_percentages = [len(self.Sort_dict[_]['advanced_type']['sensitive_mi_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
+        
+        non_sensitive_encode_unit_percentages = [len(self.Sort_dict[_]['advanced_type']['non_sensitive_encode_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
+        non_sensitive_non_encode_unit_percentages = [len(self.Sort_dict[_]['advanced_type']['non_sensitive_non_encode_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
+        non_sensitive_si_unit_percentages = [len(self.Sort_dict[_]['advanced_type']['non_sensitive_si_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
+        non_sensitive_mi_unit_percentages = [len(self.Sort_dict[_]['advanced_type']['non_sensitive_mi_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
+        
+        sensitive_percentages = [sensitive_encode_unit_percentages[_]+sensitive_non_encode_unit_percentages[_] for _ in range(len(self.layers))]
+        non_sensitive_percentages = [non_sensitive_encode_unit_percentages[_]+non_sensitive_non_encode_unit_percentages[_] for _ in range(len(self.layers))]
+        # -----
+        
+        # -----
+        figs, axes = plt.subplots(2,2,figsize=(24,12))
+        
+        fig,ax = plt.subplots(figsize=(12,6))
+        curve_dict = {
+            'encode_unit': self.encode_layer_percent_plot_dict(values=encode_unit_percentages, label='encode (si+mi)', ),
+            'si_unit': self.encode_layer_percent_plot_dict(values=si_unit_percentages, label='si', linestyle='--'),
+            'mi_unit': self.encode_layer_percent_plot_dict(values=mi_unit_percentages, label='mi', linestyle='--'),
+            'non_encode_unit': self.encode_layer_percent_plot_dict(values=non_encode_unit_percentages, label='non_encode'),
+            }
+        point_dict = {
+            'intersect_e': self.encode_layer_percent_plot_dict(point={'x':inter_x,'y':inter_y}, label=f'intersect_e {inter_x:.2f}'),
+            'intersect_s': self.encode_layer_percent_plot_dict(point={'x':inter_x_s,'y':inter_y_s}, label=f'intersect_s {inter_x_s:.2f}'),
+            'intersect_m': self.encode_layer_percent_plot_dict(point={'x':inter_x_m,'y':inter_y_m}, label=f'intersect_m {inter_x_m:.2f}'),
+            }
+        self.encode_layer_percent_plot(fig_folder, fig, ax, curve_dict, point_dict, "encode vs non_encode")
+        self.encode_layer_percent_plot(fig_folder, figs, axes[0,0], curve_dict, point_dict, "encode vs non_encode", False)
+        
+        # -----
+        # 8 types of advanced units
+        # ['sensitive_si_idx', 'sensitive_mi_idx', 'sensitive_encode_idx', 'sensitive_non_encode_idx', 
+        # 'non_sensitive_si_idx', 'non_sensitive_mi_idx', 'non_sensitive_encode_idx', 'non_sensitive_non_encode_idx']
+        
+        inter_x, inter_y = self.calculate_intersection_point(sensitive_encode_unit_percentages, sensitive_non_encode_unit_percentages)
+        inter_x_s, inter_y_s = self.calculate_intersection_point(sensitive_si_unit_percentages, sensitive_non_encode_unit_percentages)
+        inter_x_m, inter_y_m = self.calculate_intersection_point(sensitive_mi_unit_percentages, sensitive_non_encode_unit_percentages)
+
+        fig,ax = plt.subplots(figsize=(12,6))
+        curve_dict = {
+            'sensitive_encode_unit': self.encode_layer_percent_plot_dict(values=sensitive_encode_unit_percentages, label='sensitive_encode(si+mi)', linewidth=1.0),
+            'sensitive_si_unit': self.encode_layer_percent_plot_dict(values=sensitive_si_unit_percentages, label='sensitive_si', linestyle='--', linewidth=1.0),
+            'sensitive_mi_unit': self.encode_layer_percent_plot_dict(values=sensitive_mi_unit_percentages, label='sensitive_mi', linestyle='--', linewidth=1.0),
+            'sensitive_non_encode_unit': self.encode_layer_percent_plot_dict(values=sensitive_non_encode_unit_percentages, label='sensitive_non_encode', linewidth=1.0),
+            'sensitive_unit':self.encode_layer_percent_plot_dict(values=sensitive_percentages, label='sensitive', linewidth=3.0)
+            }
+        point_dict = {
+            'intersect_s-e': self.encode_layer_percent_plot_dict(point={'x':inter_x,'y':inter_y}, label=f'intersect_s-e {inter_x:.2f}'),
+            'intersect_s-s': self.encode_layer_percent_plot_dict(point={'x':inter_x_s,'y':inter_y_s}, label=f'intersect_s-s {inter_x_s:.2f}'),
+            'intersect_s-m': self.encode_layer_percent_plot_dict(point={'x':inter_x_m,'y':inter_y_m}, label=f'intersect_s-m {inter_x_m:.2f}'),
+            }
+        self.encode_layer_percent_plot(fig_folder, fig, ax, curve_dict, point_dict, "sensitive")
+        self.encode_layer_percent_plot(fig_folder, figs, axes[0,1], curve_dict, point_dict, "sensitive", False)
+        
+        # -----
+        fig,ax = plt.subplots(figsize=(12,6))
+        curve_dict = {
+            'non_sensitive_encode_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_encode_unit_percentages, label='non_sensitive_encode', linewidth=1.0),
+            'non_sensitive_si_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_si_unit_percentages, label='non_sensitive_si', linestyle='--', linewidth=1.0),
+            'non_sensitive_mi_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_mi_unit_percentages, label='non_sensitive_mi', linestyle='--', linewidth=1.0),
+            'non_sensitive_non_encode_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_non_encode_unit_percentages, label='non_sensitive_non_encode', linewidth=1.0),
+            'non_sensitive_unit':self.encode_layer_percent_plot_dict(values=non_sensitive_percentages, label='non_sensitive', linewidth=3.0)
+            }
+        point_dict = None
+        self.encode_layer_percent_plot(fig_folder, fig, ax, curve_dict, point_dict, "non_sensitive")
+        self.encode_layer_percent_plot(fig_folder, figs, axes[1,0], curve_dict, point_dict, "non_sensitive", False)
+        
+        # -----
+        fig,ax = plt.subplots(figsize=(12,6))
+        curve_dict = {
+            'sensitive_unit': self.encode_layer_percent_plot_dict(values=sensitive_percentages, color='purple', label='sensitive', linewidth=3.0),
+            'non_sensitive_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_percentages, color='purple', label='non_sensitive', linestyle='--'),
+            'encode_unit': self.encode_layer_percent_plot_dict(values=encode_unit_percentages, color='blue', label='encode', linewidth=3.0),
+            'non_encode_unit': self.encode_layer_percent_plot_dict(values=non_encode_unit_percentages, color='blue', label='non_encode', linestyle='--'),
+            }
+        point_dict = None
+        self.encode_layer_percent_plot(fig_folder, fig, ax, curve_dict, point_dict, "sensitive and encode")
+        self.encode_layer_percent_plot(fig_folder, figs, axes[1,1], curve_dict, point_dict, "sensitive and encode", False)
+        
+        title = 'sensitive_and_encode_all'
+        figs.subplots_adjust(hspace=0.5, wspace=0.1)
+        figs.savefig(os.path.join(fig_folder, title+'.png'), bbox_inches='tight')
+        figs.savefig(os.path.join(fig_folder, title+'.eps'), bbox_inches='tight', format='eps')     # no transparency
+        figs.savefig(os.path.join(fig_folder, title+'.svg'), bbox_inches='tight', format='svg', transparent=True)
+        
+        plt.close('all')
+        
+    # legacy design
     def recover_encode_class_dict(self, SIMI_dict=None):     # [Warning] this function merges the encoded [classes] again, different with SIMI.py
         print('[Codinfo] Executing recover_encode_class_dict...')
         if SIMI_dict == None:   # directly succeed from self.obtain_encode_clas_dict()
@@ -368,7 +542,9 @@ if __name__ == "__main__":
     selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity Baseline/'), 
                                                      layers=layers, neurons=neurons)
     
-    selectivity_analyzer.obtain_encode_class_dict(single_neuron_test=True)
-    selectivity_analyzer.draw_encode_frequency()
-    selectivity_analyzer.draw_encode_frequency_for_each_layer()
-    selectivity_analyzer.draw_merged_encode_frequency_for_each_layer()
+    #selectivity_analyzer.obtain_encode_class_dict()
+    #selectivity_analyzer.selectivity_encode_layer_percent_plot()
+    
+    #selectivity_analyzer.draw_encode_frequency()
+    #selectivity_analyzer.draw_encode_frequency_for_each_layer()
+    #selectivity_analyzer.draw_merged_encode_frequency_for_each_layer()

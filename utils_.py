@@ -350,7 +350,7 @@ def generate_resnet_layers_list_ann(model, model_name):     # return layers and 
     
     return layers_, neurons_, shapes_
 
-def generate_vgg_layers_list_ann(model, model_name):
+def generate_vgg_layers_list_ann(model, model_name, x = torch.randn(1, 3, 224, 224)):
     
     model_dict = {'vgg5':'O', 'vgg11': 'A', 'vgg13': 'B', 'vgg16': 'D', 'vgg19': 'E'}
     cfgs = {
@@ -399,9 +399,7 @@ def generate_vgg_layers_list_ann(model, model_name):
             layers.append(classifier_layer)
             
     #layers.append('sigmoid')
-    
-    x = torch.randn(1, 3, 224, 224)
-    
+
     features = model(x)
     
     neurons = []
@@ -516,12 +514,14 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
-def imaginary_neurons_vgg(layers, neurons):
+def imaginary_neurons_vgg(layers, neurons=None):
     layers_ = [i for i in layers if 'neuron' in i or 'pool' in i or 'fc_3' in i]
     idx = [layers.index(i) for i in layers_]
-    neurons_ = [neurons[i] for i in idx]
     layers = layers_
-    neurons = neurons_
+    if neurons != None:
+        neurons_ = [neurons[i] for i in idx]
+        neurons = neurons_
+        
     return idx, layers, neurons
 
 def imaginary_neurons_resnet(layers, neurons):

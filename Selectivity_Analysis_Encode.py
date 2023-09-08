@@ -82,25 +82,6 @@ class Encode_feaquency_analyzer():
         print(f'[Codinfo] Calculated cal [{col}] and row+1 [{row}] for input [{input}], with remainder [{remainder}]')
         return row, col
     
-    # define Encode for parallel calculation
-    def encode_calculation(self, feature, i):
-        """
-            under construction...
-        """
-        
-        feature_of_single_unit = feature[:, i]
-        grouped_feature_of_single_unit = feature_of_single_unit.reshape(-1,10)
-        
-        threshold = np.mean(feature_of_single_unit) + 2*np.std(feature_of_single_unit)
-        local_mean = np.mean(grouped_feature_of_single_unit, axis=1)     # array of 50 values
-        
-        encode_class = np.where(local_mean>threshold)[0]+1  # '>' prevent all 0
-        
-        #plt.bar(range(len(local_mean)), local_mean)
-        #plt.hlines(threshold, 0, 49)
-        
-        return encode_class
-    
     #FIXME - the stuck problem of processpool
     def obtain_encode_class_dict(self, ):
         """
@@ -136,8 +117,8 @@ class Encode_feaquency_analyzer():
             unit_encode_dict = {}
 
             #for i in tqdm(range(feature.shape[1]), desc='unit'):     # for each neuron
-            with Parallel(n_jobs=num_workers, require='sharedmem') as parallel:
-                pl = parallel(delayed(self.encode_calculation)(feature, i) for i in tqdm(range(feature.shape[1]), desc=f'[{layer}] Encode'))  
+            with Parallel(n_jobs=num_workers) as parallel:
+                pl = parallel(delayed(encode_calculation)(feature, i) for i in tqdm(range(feature.shape[1]), desc=f'[{layer}] Encode'))  
                 
             for i in range(feature.shape[1]):
                 unit_encode_dict[i] = pl[i]
@@ -222,7 +203,7 @@ class Encode_feaquency_analyzer():
         return intersection_x, intersection_y
     
     # ----- under construction...
-    def encode_layer_percent_plot(self, fig_folder, fig, ax, curve_dict=None, point_dict=None, title=None, save=True):
+    def encode_layer_percent_plot(self, fig_folder, fig, ax, layers=None, curve_dict=None, point_dict=None, title=None, save=True):
         print(f'[Condinfo] plotting {title}')
         
         logging.getLogger('matplotlib').setLevel(logging.ERROR)
@@ -243,7 +224,9 @@ class Encode_feaquency_analyzer():
         ax.legend(framealpha=0.5)
         ax.set_title(f'{title}', fontname='Times New Roman')
         ax.grid(True)
-        ax.set_xticks(np.arange(len(self.layers)), self.layers, rotation='vertical', fontname='Times New Roman')
+        if layers == None:
+            layers = self.layers
+        ax.set_xticks(np.arange(len(layers)), layers, rotation='vertical', fontname='Times New Roman')
         ax.tick_params(axis='both', which='major', labelsize=12)
         ax.set_ylim([0,100])
         
@@ -264,6 +247,88 @@ class Encode_feaquency_analyzer():
             'label': label
             }
     
+    def selectivity_encode_layer_percent_plot_all_operation(self, fig_folder, figs, axes,  
+                                                            non_encode_unit_percentages, si_unit_percentages, mi_unit_percentages, encode_unit_percentages, 
+                                                            sensitive_encode_unit_percentages, sensitive_non_encode_unit_percentages, sensitive_si_unit_percentages, sensitive_mi_unit_percentages, 
+                                                            non_sensitive_encode_unit_percentages, non_sensitive_non_encode_unit_percentages, non_sensitive_si_unit_percentages, non_sensitive_mi_unit_percentages, 
+                                                            sensitive_percentages, non_sensitive_percentages,
+                                                            layers=None, saperate_fig=False):
+        
+        inter_x, inter_y = self.calculate_intersection_point(encode_unit_percentages, non_encode_unit_percentages)
+        inter_x_s, inter_y_s = self.calculate_intersection_point(si_unit_percentages, non_encode_unit_percentages)
+        inter_x_m, inter_y_m = self.calculate_intersection_point(mi_unit_percentages, non_encode_unit_percentages)
+        
+        curve_dict = {
+            'encode_unit': self.encode_layer_percent_plot_dict(values=encode_unit_percentages, label='encode (si+mi)', ),
+            'si_unit': self.encode_layer_percent_plot_dict(values=si_unit_percentages, label='si', linestyle='--'),
+            'mi_unit': self.encode_layer_percent_plot_dict(values=mi_unit_percentages, label='mi', linestyle='--'),
+            'non_encode_unit': self.encode_layer_percent_plot_dict(values=non_encode_unit_percentages, label='non_encode'),
+            }
+        point_dict = {
+            'intersect_e': self.encode_layer_percent_plot_dict(point={'x':inter_x,'y':inter_y}, label=f'intersect_e {inter_x:.2f}'),
+            'intersect_s': self.encode_layer_percent_plot_dict(point={'x':inter_x_s,'y':inter_y_s}, label=f'intersect_s {inter_x_s:.2f}'),
+            'intersect_m': self.encode_layer_percent_plot_dict(point={'x':inter_x_m,'y':inter_y_m}, label=f'intersect_m {inter_x_m:.2f}'),
+            }
+        self.encode_layer_percent_plot(fig_folder, figs, axes[0,0], layers, curve_dict, point_dict, "encode vs non_encode", False)
+        
+        if saperate_fig:
+            fig,ax = plt.subplots(figsize=(12,6))
+            self.encode_layer_percent_plot(fig_folder, fig, ax, layers, curve_dict, point_dict, "encode vs non_encode")
+        
+        # -----
+        # 8 types of advanced units
+        # ['sensitive_si_idx', 'sensitive_mi_idx', 'sensitive_encode_idx', 'sensitive_non_encode_idx', 
+        # 'non_sensitive_si_idx', 'non_sensitive_mi_idx', 'non_sensitive_encode_idx', 'non_sensitive_non_encode_idx']
+        
+        inter_x, inter_y = self.calculate_intersection_point(sensitive_encode_unit_percentages, sensitive_non_encode_unit_percentages)
+        inter_x_s, inter_y_s = self.calculate_intersection_point(sensitive_si_unit_percentages, sensitive_non_encode_unit_percentages)
+        inter_x_m, inter_y_m = self.calculate_intersection_point(sensitive_mi_unit_percentages, sensitive_non_encode_unit_percentages)
+
+        curve_dict = {
+            'sensitive_encode_unit': self.encode_layer_percent_plot_dict(values=sensitive_encode_unit_percentages, label='sensitive_encode(si+mi)', linewidth=1.0),
+            'sensitive_si_unit': self.encode_layer_percent_plot_dict(values=sensitive_si_unit_percentages, label='sensitive_si', linestyle='--', linewidth=1.0),
+            'sensitive_mi_unit': self.encode_layer_percent_plot_dict(values=sensitive_mi_unit_percentages, label='sensitive_mi', linestyle='--', linewidth=1.0),
+            'sensitive_non_encode_unit': self.encode_layer_percent_plot_dict(values=sensitive_non_encode_unit_percentages, label='sensitive_non_encode', linewidth=1.0),
+            'sensitive_unit':self.encode_layer_percent_plot_dict(values=sensitive_percentages, label='sensitive', linewidth=3.0)
+            }
+        point_dict = {
+            'intersect_s-e': self.encode_layer_percent_plot_dict(point={'x':inter_x,'y':inter_y}, label=f'intersect_s-e {inter_x:.2f}'),
+            'intersect_s-s': self.encode_layer_percent_plot_dict(point={'x':inter_x_s,'y':inter_y_s}, label=f'intersect_s-s {inter_x_s:.2f}'),
+            'intersect_s-m': self.encode_layer_percent_plot_dict(point={'x':inter_x_m,'y':inter_y_m}, label=f'intersect_s-m {inter_x_m:.2f}'),
+            }
+        self.encode_layer_percent_plot(fig_folder, figs, axes[0,1], layers, curve_dict, point_dict, "sensitive", False)
+        
+        if saperate_fig:
+            fig,ax = plt.subplots(figsize=(12,6))
+            self.encode_layer_percent_plot(fig_folder, fig, ax, layers, curve_dict, point_dict, "sensitive")
+        
+        # -----
+        curve_dict = {
+            'non_sensitive_encode_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_encode_unit_percentages, label='non_sensitive_encode', linewidth=1.0),
+            'non_sensitive_si_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_si_unit_percentages, label='non_sensitive_si', linestyle='--', linewidth=1.0),
+            'non_sensitive_mi_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_mi_unit_percentages, label='non_sensitive_mi', linestyle='--', linewidth=1.0),
+            'non_sensitive_non_encode_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_non_encode_unit_percentages, label='non_sensitive_non_encode', linewidth=1.0),
+            'non_sensitive_unit':self.encode_layer_percent_plot_dict(values=non_sensitive_percentages, label='non_sensitive', linewidth=3.0)
+            }
+        point_dict = None
+        self.encode_layer_percent_plot(fig_folder, figs, axes[1,0], layers, curve_dict, point_dict, "non_sensitive", False)
+        if saperate_fig:
+            fig,ax = plt.subplots(figsize=(12,6))
+            self.encode_layer_percent_plot(fig_folder, fig, ax, layers, curve_dict, point_dict, "non_sensitive")
+        
+        # -----
+        curve_dict = {
+            'sensitive_unit': self.encode_layer_percent_plot_dict(values=sensitive_percentages, color='purple', label='sensitive', linewidth=3.0),
+            'non_sensitive_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_percentages, color='purple', label='non_sensitive', linestyle='--'),
+            'encode_unit': self.encode_layer_percent_plot_dict(values=encode_unit_percentages, color='blue', label='encode', linewidth=3.0),
+            'non_encode_unit': self.encode_layer_percent_plot_dict(values=non_encode_unit_percentages, color='blue', label='non_encode', linestyle='--'),
+            }
+        point_dict = None
+        self.encode_layer_percent_plot(fig_folder, figs, axes[1,1], layers, curve_dict, point_dict, "sensitive and encode", False)
+        if saperate_fig:
+            fig,ax = plt.subplots(figsize=(12,6))
+            self.encode_layer_percent_plot(fig_folder, fig, ax, layers, curve_dict, point_dict, "sensitive and encode")
+        
     def selectivity_encode_layer_percent_plot(self, ):
         """
             this function plot the percentages of different types of units over layers
@@ -276,16 +341,13 @@ class Encode_feaquency_analyzer():
             self.reload_encode_and_sort_dict()
         
         print('[Codinfo] preparing plot...')
-        # 3 types of basic units
-        # ['si_idx', 'mi_idx', 'non_encode_idx']
+        # 3 types of basic units: ['si_idx', 'mi_idx', 'non_encode_idx']
+
+        # ----- recover stats
         non_encode_unit_percentages = [len(self.Sort_dict[_]['basic_type']['non_encode_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
         si_unit_percentages = [len(self.Sort_dict[_]['basic_type']['si_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
         mi_unit_percentages = [len(self.Sort_dict[_]['basic_type']['mi_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
         encode_unit_percentages = [si_unit_percentages[_]+mi_unit_percentages[_] for _ in range(len(self.layers))]
-        
-        inter_x, inter_y = self.calculate_intersection_point(encode_unit_percentages, non_encode_unit_percentages)
-        inter_x_s, inter_y_s = self.calculate_intersection_point(si_unit_percentages, non_encode_unit_percentages)
-        inter_x_m, inter_y_m = self.calculate_intersection_point(mi_unit_percentages, non_encode_unit_percentages)
         
         sensitive_encode_unit_percentages = [len(self.Sort_dict[_]['advanced_type']['sensitive_encode_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
         sensitive_non_encode_unit_percentages = [len(self.Sort_dict[_]['advanced_type']['sensitive_non_encode_idx'])/self.neurons[idx]*100 for idx, _ in enumerate(self.layers)]
@@ -299,83 +361,42 @@ class Encode_feaquency_analyzer():
         
         sensitive_percentages = [sensitive_encode_unit_percentages[_]+sensitive_non_encode_unit_percentages[_] for _ in range(len(self.layers))]
         non_sensitive_percentages = [non_sensitive_encode_unit_percentages[_]+non_sensitive_non_encode_unit_percentages[_] for _ in range(len(self.layers))]
-        # -----
         
-        # -----
+        # ----- all operations
         figs, axes = plt.subplots(2,2,figsize=(24,12))
         
-        fig,ax = plt.subplots(figsize=(12,6))
-        curve_dict = {
-            'encode_unit': self.encode_layer_percent_plot_dict(values=encode_unit_percentages, label='encode (si+mi)', ),
-            'si_unit': self.encode_layer_percent_plot_dict(values=si_unit_percentages, label='si', linestyle='--'),
-            'mi_unit': self.encode_layer_percent_plot_dict(values=mi_unit_percentages, label='mi', linestyle='--'),
-            'non_encode_unit': self.encode_layer_percent_plot_dict(values=non_encode_unit_percentages, label='non_encode'),
-            }
-        point_dict = {
-            'intersect_e': self.encode_layer_percent_plot_dict(point={'x':inter_x,'y':inter_y}, label=f'intersect_e {inter_x:.2f}'),
-            'intersect_s': self.encode_layer_percent_plot_dict(point={'x':inter_x_s,'y':inter_y_s}, label=f'intersect_s {inter_x_s:.2f}'),
-            'intersect_m': self.encode_layer_percent_plot_dict(point={'x':inter_x_m,'y':inter_y_m}, label=f'intersect_m {inter_x_m:.2f}'),
-            }
-        self.encode_layer_percent_plot(fig_folder, fig, ax, curve_dict, point_dict, "encode vs non_encode")
-        self.encode_layer_percent_plot(fig_folder, figs, axes[0,0], curve_dict, point_dict, "encode vs non_encode", False)
-        
-        # -----
-        # 8 types of advanced units
-        # ['sensitive_si_idx', 'sensitive_mi_idx', 'sensitive_encode_idx', 'sensitive_non_encode_idx', 
-        # 'non_sensitive_si_idx', 'non_sensitive_mi_idx', 'non_sensitive_encode_idx', 'non_sensitive_non_encode_idx']
-        
-        inter_x, inter_y = self.calculate_intersection_point(sensitive_encode_unit_percentages, sensitive_non_encode_unit_percentages)
-        inter_x_s, inter_y_s = self.calculate_intersection_point(sensitive_si_unit_percentages, sensitive_non_encode_unit_percentages)
-        inter_x_m, inter_y_m = self.calculate_intersection_point(sensitive_mi_unit_percentages, sensitive_non_encode_unit_percentages)
-
-        fig,ax = plt.subplots(figsize=(12,6))
-        curve_dict = {
-            'sensitive_encode_unit': self.encode_layer_percent_plot_dict(values=sensitive_encode_unit_percentages, label='sensitive_encode(si+mi)', linewidth=1.0),
-            'sensitive_si_unit': self.encode_layer_percent_plot_dict(values=sensitive_si_unit_percentages, label='sensitive_si', linestyle='--', linewidth=1.0),
-            'sensitive_mi_unit': self.encode_layer_percent_plot_dict(values=sensitive_mi_unit_percentages, label='sensitive_mi', linestyle='--', linewidth=1.0),
-            'sensitive_non_encode_unit': self.encode_layer_percent_plot_dict(values=sensitive_non_encode_unit_percentages, label='sensitive_non_encode', linewidth=1.0),
-            'sensitive_unit':self.encode_layer_percent_plot_dict(values=sensitive_percentages, label='sensitive', linewidth=3.0)
-            }
-        point_dict = {
-            'intersect_s-e': self.encode_layer_percent_plot_dict(point={'x':inter_x,'y':inter_y}, label=f'intersect_s-e {inter_x:.2f}'),
-            'intersect_s-s': self.encode_layer_percent_plot_dict(point={'x':inter_x_s,'y':inter_y_s}, label=f'intersect_s-s {inter_x_s:.2f}'),
-            'intersect_s-m': self.encode_layer_percent_plot_dict(point={'x':inter_x_m,'y':inter_y_m}, label=f'intersect_s-m {inter_x_m:.2f}'),
-            }
-        self.encode_layer_percent_plot(fig_folder, fig, ax, curve_dict, point_dict, "sensitive")
-        self.encode_layer_percent_plot(fig_folder, figs, axes[0,1], curve_dict, point_dict, "sensitive", False)
-        
-        # -----
-        fig,ax = plt.subplots(figsize=(12,6))
-        curve_dict = {
-            'non_sensitive_encode_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_encode_unit_percentages, label='non_sensitive_encode', linewidth=1.0),
-            'non_sensitive_si_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_si_unit_percentages, label='non_sensitive_si', linestyle='--', linewidth=1.0),
-            'non_sensitive_mi_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_mi_unit_percentages, label='non_sensitive_mi', linestyle='--', linewidth=1.0),
-            'non_sensitive_non_encode_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_non_encode_unit_percentages, label='non_sensitive_non_encode', linewidth=1.0),
-            'non_sensitive_unit':self.encode_layer_percent_plot_dict(values=non_sensitive_percentages, label='non_sensitive', linewidth=3.0)
-            }
-        point_dict = None
-        self.encode_layer_percent_plot(fig_folder, fig, ax, curve_dict, point_dict, "non_sensitive")
-        self.encode_layer_percent_plot(fig_folder, figs, axes[1,0], curve_dict, point_dict, "non_sensitive", False)
-        
-        # -----
-        fig,ax = plt.subplots(figsize=(12,6))
-        curve_dict = {
-            'sensitive_unit': self.encode_layer_percent_plot_dict(values=sensitive_percentages, color='purple', label='sensitive', linewidth=3.0),
-            'non_sensitive_unit': self.encode_layer_percent_plot_dict(values=non_sensitive_percentages, color='purple', label='non_sensitive', linestyle='--'),
-            'encode_unit': self.encode_layer_percent_plot_dict(values=encode_unit_percentages, color='blue', label='encode', linewidth=3.0),
-            'non_encode_unit': self.encode_layer_percent_plot_dict(values=non_encode_unit_percentages, color='blue', label='non_encode', linestyle='--'),
-            }
-        point_dict = None
-        self.encode_layer_percent_plot(fig_folder, fig, ax, curve_dict, point_dict, "sensitive and encode")
-        self.encode_layer_percent_plot(fig_folder, figs, axes[1,1], curve_dict, point_dict, "sensitive and encode", False)
+        self.selectivity_encode_layer_percent_plot_all_operation(fig_folder, figs, axes,  
+                                                                non_encode_unit_percentages, si_unit_percentages, mi_unit_percentages, encode_unit_percentages, 
+                                                                sensitive_encode_unit_percentages, sensitive_non_encode_unit_percentages, sensitive_si_unit_percentages, sensitive_mi_unit_percentages, 
+                                                                non_sensitive_encode_unit_percentages, non_sensitive_non_encode_unit_percentages, non_sensitive_si_unit_percentages, non_sensitive_mi_unit_percentages, 
+                                                                sensitive_percentages, non_sensitive_percentages,
+                                                                layers=None, saperate_fig=False)
         
         title = 'sensitive_and_encode_all'
         figs.subplots_adjust(hspace=0.5, wspace=0.1)
         figs.savefig(os.path.join(fig_folder, title+'.png'), bbox_inches='tight')
         figs.savefig(os.path.join(fig_folder, title+'.eps'), bbox_inches='tight', format='eps')     # no transparency
         figs.savefig(os.path.join(fig_folder, title+'.svg'), bbox_inches='tight', format='svg', transparent=True)
+        plt.close()
         
-        plt.close('all')
+        # -----
+        # ----- activation function
+        act_idx, act_layers, _ = utils_.imaginary_neurons_vgg(self.layers)
+        figs_act, axes_act = plt.subplots(2,2,figsize=(24,12))
+        
+        self.selectivity_encode_layer_percent_plot_all_operation(fig_folder, figs_act, axes_act,  
+                                                                [non_encode_unit_percentages[_] for _ in act_idx], [si_unit_percentages[_] for _ in act_idx], [mi_unit_percentages[_] for _ in act_idx], [encode_unit_percentages[_] for _ in act_idx], 
+                                                                [sensitive_encode_unit_percentages[_] for _ in act_idx], [sensitive_non_encode_unit_percentages[_] for _ in act_idx], [sensitive_si_unit_percentages[_] for _ in act_idx], [sensitive_mi_unit_percentages[_] for _ in act_idx], 
+                                                                [non_sensitive_encode_unit_percentages[_] for _ in act_idx], [non_sensitive_non_encode_unit_percentages[_] for _ in act_idx], [non_sensitive_si_unit_percentages[_] for _ in act_idx], [non_sensitive_mi_unit_percentages[_] for _ in act_idx], 
+                                                                [sensitive_percentages[_] for _ in act_idx], [non_sensitive_percentages[_] for _ in act_idx],
+                                                                layers=act_layers, saperate_fig=False)
+        
+        title = 'sensitive_and_encode_all_neuron'
+        figs_act.subplots_adjust(hspace=0.5, wspace=0.1)
+        figs_act.savefig(os.path.join(fig_folder, title+'.png'), bbox_inches='tight')
+        figs_act.savefig(os.path.join(fig_folder, title+'.eps'), bbox_inches='tight', format='eps')     # no transparency
+        figs_act.savefig(os.path.join(fig_folder, title+'.svg'), bbox_inches='tight', format='svg', transparent=True)
+        plt.close()
         
     # legacy design
     def recover_encode_class_dict(self, SIMI_dict=None):     # [Warning] this function merges the encoded [classes] again, different with SIMI.py
@@ -531,19 +552,37 @@ class Encode_feaquency_analyzer():
         plt.savefig(self.dest_Encode+'single_layer_encoding_performance.png', bbox_inches='tight', dpi=100)
         plt.close()
 
+# define Encode for parallel calculation
+def encode_calculation(feature, i):
+    """
+        under construction...
+    """
     
+    feature_of_single_unit = feature[:, i]
+    grouped_feature_of_single_unit = feature_of_single_unit.reshape(-1,10)
+    
+    threshold = np.mean(feature_of_single_unit) + 2*np.std(feature_of_single_unit)
+    local_mean = np.mean(grouped_feature_of_single_unit, axis=1)     # array of 50 values
+    
+    encode_class = np.where(local_mean>threshold)[0]+1  # '>' prevent all 0
+    
+    #plt.bar(range(len(local_mean)), local_mean)
+    #plt.hlines(threshold, 0, 49)
+    
+    return encode_class    
+
 if __name__ == "__main__":
     
-    model_ = vgg.__dict__['vgg16'](num_classes=50)
-    layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, 'vgg16')
+    model_ = vgg.__dict__['vgg16_bn'](num_classes=50)
+    layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, 'vgg16_bn')
 
     root_dir = '/home/acxyle-workstation/Downloads'
 
-    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity Baseline/'), 
+    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity VGG16bn/'), 
                                                      layers=layers, neurons=neurons)
     
     #selectivity_analyzer.obtain_encode_class_dict()
-    #selectivity_analyzer.selectivity_encode_layer_percent_plot()
+    selectivity_analyzer.selectivity_encode_layer_percent_plot()
     
     #selectivity_analyzer.draw_encode_frequency()
     #selectivity_analyzer.draw_encode_frequency_for_each_layer()

@@ -8,6 +8,8 @@ generate featuremap of SpikingVGG
 [Notice] This Version is valid for --- Lab Desktop --- with default settings
 
 #TODO
+    Now have powerful machine, perhaps can save the feature map in one time?
+
 """
 
 import os
@@ -41,18 +43,17 @@ parser.add_argument("--return_T_dim", dest = "return_T_dim", help="return the ou
 
 parser.add_argument("--device", type=str, default='cpu')
 
-parser.add_argument("--model", type=str, default='spiking_vgg16_bn')
+# FIXME - remove the misleading argument in the future versions
+parser.add_argument("--model", type=str, default='vgg16')     # [notice] this will triger different branches
 parser.add_argument('--neuron', type=str, default='LIF')
 
 parser.add_argument("--step_mode", type=str, default='m')
 parser.add_argument("--T", type=int, default=4)
 
-parser.add_argument("--data_path", type=str, default='/home/acxyle/Downloads/celeb50/') # for finetuned
-#parser.add_argument("--data_path", type=str, default='/home/acxyle/Downloads/MNIST-10/') 
+parser.add_argument("--data_path", type=str, default='/home/acxyle-workstation/Downloads/celeb50/') # collect data from celebA-50
+parser.add_argument("--weight_path", type=str, default="logs-ft-CelebA50-from-vgg16_CelebA2622")
 
-parser.add_argument("--weight_path", type=str, default="VGG/SNN/logs-ft-CelebA50-from-spikingvgg16bn-LIF_CelebA2622")
-#parser.add_argument("--data_path", type=str, default='/media/acxyle/Data/ChromeDownload/CelebA/CelebA_2262/val') # for validation
-parser.add_argument("--output_dir", type=str, default='/media/acxyle/Data/ChromeDownload/Identity_SpikingVGG16bn_LIF_CelebA2622_Results/')
+parser.add_argument("--output_dir", type=str, default='/home/acxyle-workstation/Downloads/Identity_VGG16_ReLU_CelebA2622_Results/')
 
 parser.add_argument("--mode", type=str, default='feature')
 parser.add_argument("--num_classes", type=int, default=50)
@@ -60,7 +61,7 @@ parser.add_argument("--num_samples", type=int, default=10)
 parser.add_argument("--batch_size", type=int, default=1)
 
 args = parser.parse_args()
-model_root = "/home/acxyle/Git/spikingjelly-master/spikingjelly/activation_based/model/"
+model_root = "/home/acxyle-workstation/Downloads/"
 
 def create_model_and_load_weight(args):  # -> return model with loaded weight
 
@@ -243,7 +244,10 @@ def spikingjelly_evaluate(model, layers, layers_, neurons, args, verbose=True):
                     pickle.dump(feature_matrix, f, protocol=-1)
     
 def ANN_evaluate(model, layers, layers_, neurons, args, verbose=True):
-
+    """
+        This function generates the feature map of ANN. This function use 
+    """
+    
     utils_.make_dir(args.output_dir)
     batch_size = args.batch_size
     valdir = args.data_path
@@ -256,7 +260,7 @@ def ANN_evaluate(model, layers, layers_, neurons, args, verbose=True):
                                                 dataset_test, 
                                                 batch_size=batch_size, 
                                                 sampler=test_sampler, 
-                                                num_workers=8, 
+                                                num_workers=os.cpu_count(), 
                                                 pin_memory= False,
                                                 worker_init_fn=utils_.seed_worker
                                                 )
@@ -294,8 +298,7 @@ def ANN_evaluate(model, layers, layers_, neurons, args, verbose=True):
                     target = target.to(args.device, non_blocking=True)
                     
                     feature_list = model(image)
-                    
-                    #FIXME
+
                     output=feature_list[-1]
                     #output=feature_list
                        
@@ -333,8 +336,7 @@ def ANN_evaluate(model, layers, layers_, neurons, args, verbose=True):
                 if verbose:
                     print('feature_matrix: ', feature_matrix.shape)
                     print('saving feature map of layer [{}]'.format(layer_))
-                with open(args.output_dir + '/' + layer_ + '.pkl',  'wb') as f:
-                    pickle.dump(feature_matrix, f, protocol=-1)
+                utils_.pickle_dump(os.path.join(args.output_dir, layer_+'.pkl'), feature_matrix)
 
 if __name__ =="__main__":
     
@@ -346,11 +348,13 @@ if __name__ =="__main__":
     # 2. obtain layers_list and neurons_list
     layers, neurons, _ = generate_layers_and_neurons(model, args)     # [notice] neurons may be removed in future because of low generalization and additional workload
     
-    layers_ = [i for i in layers if 'neuron' in i or 'fc' in i or 'pool' in i]
+    layers_ = [i for i in layers]
     
     # 3. feed model and layers&neurons into the evaluator
-    spikingjelly_evaluate(model, layers, layers_, neurons, args, verbose=False)
-    #ANN_evaluate(model, layers, layers_, neurons, args, verbose=True)
+    if 'spiking' in args.model.lower():
+        spikingjelly_evaluate(model, layers, layers_, neurons, args, verbose=False)
+    else:
+        ANN_evaluate(model, layers, layers_, neurons, args, verbose=False)
 
 
     

@@ -36,7 +36,8 @@ from spikingjelly.activation_based import surrogate, neuron, functional
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 
 from joblib import Parallel, delayed
-from scipy.interpolate import interp1d
+from scipy.interpolate import interp1d, RegularGridInterpolator, LinearNDInterpolator, CloughTocher2DInterpolator
+from collections import Counter
 
 import vgg, resnet
 import utils_
@@ -420,85 +421,198 @@ class Encode_feaquency_analyzer():
             
         return temp_dict
     
-    # fill-in the white blank
+    def draw_encode_feaquency_layers(self, freq, ):
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
+        fig_folder = os.path.join(self.dest_Encode, 'Figures')
+        utils_.make_dir(fig_folder)
+        frequency_folder = os.path.join(fig_folder, 'Frequency_layer')
+        utils_.make_dir(frequency_folder)
+        
+        for _ in range(freq.shape[1]):
+            fig,ax=plt.subplots()
+            ax.bar(np.arange(1,51), freq[:,_])
+            
+            for __ in range(1,4):
+                rect = plt.Rectangle((0, np.mean(freq[:,_])), 50, utils_.generate_threshold(freq[:,_], alpha=0, delta=__), edgecolor=None, facecolor='blue', alpha=0.25)
+                ax.add_patch(rect)
+            
+            ax.set_title(self.layers[_])
+            ax.set_ylim([np.min(freq), 1.2*np.max(freq[:,_])])
+            fig.savefig(os.path.join(frequency_folder, self.layers[_]+'.png'), bbox_inches='tight')
+            plt.close()
+        
+        
+    def generate_freq_map(self, ):
+        
+        if not hasattr(self, 'Encode_dict') and not hasattr(self, 'Sort_dict'):
+            self.reload_encode_and_sort_dict()
+        
+        print('[Codinfo] generating freq map...')
+        
+        correct_id = utils_.lexicographic_order(50)+1
+        self.freq = []
+
+        for idx, _ in enumerate(self.layers):
+            
+            pool = [j for i in list(self.Encode_dict[_].values()) for j in i]
+            frequency = Counter(pool)
+            
+            frequency = {correct_id[_-1]:frequency[_] for _ in range(1,51)}     # map correct_id
+            frequency = {_:frequency[_] for _ in range(1,51)}     # sort correct_id
+            
+            frequency = {_:(frequency[_]/self.neurons[idx]) for _ in frequency.keys()}
+            #frequency = [frequency[_]/np.sum(frequency) for _ in range(50)]
+            self.freq.append(np.array(list(frequency.values())))
+        
+        print('[Codinfo] generated freq map')
+
+        
+    #FIXME - make it more useful
     def draw_encode_frequency(self):        # general figure for encoding frequency
-    
+        """
+            in the update of Sept 9, abandonded the use of dict_based frequency and the pd.DataFrame.from_dict(freq_dic) plotting
+            [interesting] A interesting notice is, perhaps can use the same mean+2std to select what ID has been encoded by one layer, 
+            and use all the units to build a sub-net the do other experiments...
+        """
+        logging.getLogger('matplotlib').setLevel(logging.ERROR)
+        
         print('[Codinfo] Executing draw_encode_frequency...')
         
-        if self.mode == 'reload_encode_dict':
-            encode_class_dict = self.reload_and_revocer_encode_class_dict()
-        else:
-            encode_class_dict = self.recover_encode_class_dict() 
-        #print(encode_class_dict)
+        fig_folder = os.path.join(self.dest_Encode, 'Figures')
+        utils_.make_dir(fig_folder)
         
-        freq_dic = {}
-        for idx, layer in enumerate(self.layers):    # for each layer
-            freq = {g:0 for g in range(1,51)}
-            encode_class_list = encode_class_dict[layer]   # [list] obtain the encoded classes
-    
-            for item in encode_class_list:  # for each class
-                if item in freq:  # update the dict or add new k-v pair
-                    freq[item] += 1 
-                    
-            freq = {k: v / self.neurons[idx] for k, v in freq.items()}    # convert v from abs avlue to ratio
-            #freq = dict(sorted(freq.items(), key=lambda item: item[0]))     # sort
-            freq_dic.update({layer: freq})
+        self.generate_freq_map()
+            
+        freq = np.array(self.freq).T
         
-        a = pd.DataFrame.from_dict(freq_dic)
-        a_neuron = a[[i for i in self.layers if 'neuron' in i or 'pool' in i or 'fc_3' in i]]
+        # ----- exterior plots
+        self.draw_encode_feaquency_layers(freq)
         
-        # 1. for all calculations
-        plt.figure()
-        im = plt.matshow(a, aspect='auto')
+        idx, layers, _ = utils_.imaginary_neurons_vgg(self.layers)
         
-        plt.colorbar(im, fraction=0.12, pad=0.04)
-        plt.xticks([])
-        plt.xlabel(f'{a.shape[1]} Layers')
-        plt.yticks([])
-        plt.ylabel('IDs')
-        plt.title('all')
-        plt.savefig(self.dest_Encode+'Encoding_frequency_of_layers_all_calculation.png', bbox_inches='tight', dpi=100)
+        # ----- raw 2D fig
+        fig, ax = plt.subplots(figsize=(10,7))
+        img = ax.imshow(freq, origin='lower')
+        fig.colorbar(img)
+        ax.set_title('layer and ID (2D)')
+        ax.set_xticks(np.arange(len(self.layers)))
+        ax.set_xticklabels(['' if _ not in idx else self.layers[_] for _ in range(len(self.layers))], rotation='vertical', fontname='Times New Roman')
+        ax.set_yticks(np.arange(0,50,5), np.arange(1,51,5), fontname='Times New Roman')
+        fig.savefig(os.path.join(fig_folder, 'layer and ID (2D).png'), bbox_inches='tight')
+        fig.savefig(os.path.join(fig_folder, 'layer and ID (2D).eps'), bbox_inches='tight', format='eps')
         plt.close()
         
-        # 2. for imaginary neurons
-        plt.figure()
-        im = plt.matshow(a_neuron, aspect='auto')
-        plt.colorbar(im, fraction=0.12, pad=0.04)
-        plt.xticks([])
-        plt.xlabel(f'{a_neuron.shape[1]} Layers')
-        plt.yticks([])
-        plt.ylabel('IDs')
-        plt.title('act')
-        plt.savefig(self.dest_Encode+'Encoding_frequency_of_layers.png', bbox_inches='tight', dpi=100)
-        plt.close()
-        
-        # 3. merged plot
-        fig, axs = plt.subplots(1, 2)
-        im = axs[0].matshow(a, aspect='auto')
-        axs[1].matshow(a_neuron, aspect='auto')
-        axs[0].set_title('all')
-        axs[0].set_xticks([])
-        axs[0].set_xlabel(f'{a.shape[1]} Layers')
-        axs[0].set_yticks([])
-        axs[0].set_ylabel('IDs')
-        axs[1].set_title('act')
-        axs[1].set_xticks([])
-        axs[1].set_xlabel(f'{a_neuron.shape[1]} Layers')
-        axs[1].set_yticks([])
-        fig.suptitle(f'Encoding Frequency - {self.model_structure}', fontsize=10)
-        fig.subplots_adjust(top=0.8)
-        fig.colorbar(im, ax=axs, orientation='vertical')
-        plt.savefig(self.dest_Encode+'Encoding_frequency_of_layers_merged.png', bbox_inches='tight')
-        plt.savefig(self.dest_Encode+'Encoding_frequency_of_layers_merged.eps', bbox_inches='tight', format='eps')
-        plt.close()
+        # ----- raw 3D fig
+        x = np.arange(freq.shape[1])
+        y = np.arange(freq.shape[0])
+        X, Y = np.meshgrid(x, y)
 
+        fig = plt.figure(figsize=(len(self.layers)/2, self.num_classes/2))
+        ax = fig.add_subplot(111, projection='3d')
+        surf = ax.plot_surface(X, Y, freq, cmap='viridis')
+
+        #ax.set_xlabel('Layers')
+        ax.set_ylabel('IDs', fontname='Times New Roman')
+        ax.set_zlabel('Normalized responses', fontname='Times New Roman')
+        
+        ax.set_xticks(np.arange(len(self.layers)))
+        ax.set_xticklabels(['' if _ not in idx else self.layers[_] for _ in range(len(self.layers))], rotation='vertical', fontname='Times New Roman')
+        ax.set_yticks(np.arange(0, 50, 5), np.arange(1, 51, 5), fontname='Times New Roman')
+
+        ax.set_title('Layer and ID (3D)', fontname='Times New Roman')
+        
+        for label in ax.get_xticklabels():
+            label.set_rotation(-50)  # 45 degree angle for x-axis tick labels
+        for label in ax.get_yticklabels():
+            label.set_rotation(-35)  # -45 degree angle for y-axis tick labels
+        
+        fig.colorbar(surf, shrink=0.4)
+        ax.view_init(elev=30, azim=225)
+
+        plt.tight_layout()
+        fig.savefig(os.path.join(fig_folder, 'layer and ID (3D).png'), bbox_inches='tight')
+        fig.savefig(os.path.join(fig_folder, 'layer and ID (3D).eps'), bbox_inches='tight', format='eps')
+        plt.close()
+        
+# =============================================================================
+#         # ----- interpolation
+#         x_fine_grid = np.linspace(0, freq.shape[1]-1, 1000)  # 10 times denser
+#         y_fine_grid = np.linspace(0, freq.shape[0]-1, 1000)  # 10 times denser
+#         
+#         ct_interp_full = CloughTocher2DInterpolator(list(zip(X.ravel(), Y.ravel())), freq.ravel())
+#         Z_fine_ct = ct_interp_full(np.meshgrid(y_fine_grid, x_fine_grid)[0], np.meshgrid(y_fine_grid, x_fine_grid)[1])
+#         
+#         fig = plt.figure(figsize=(20, 14))
+#         ax = fig.add_subplot(111, projection='3d')
+#         ax.plot_surface(np.meshgrid(y_fine_grid, x_fine_grid)[0], np.meshgrid(y_fine_grid, x_fine_grid)[1], 
+#                         Z_fine_ct, cmap='viridis')
+# 
+#         ax.set_xlabel('X axis')
+#         ax.set_ylabel('Y axis')
+#         ax.set_zlabel('Z axis')
+#         ax.set_title('Interpolation using CloughTocher2DInterpolator')
+#         fig.colorbar(surf, shrink=0.5)
+#         ax.view_init(elev=30, azim=225)
+#         
+#         plt.tight_layout()
+#         fig.savefig(os.path.join(fig_folder, '3D interp.png'), bbox_inches='tight')
+#         fig.savefig(os.path.join(fig_folder, '3D interp.eps'), bbox_inches='tight', format='eps')
+#         plt.close()
+#         # -----
+# =============================================================================
+        
+    def generate_encoded_id_unit_idx(self,):
+        
+        correct_id = utils_.lexicographic_order(50)+1
+        
+        idx_folder = os.path.join(self.dest_Encode, 'unit_of_interested')
+        utils_.make_dir(idx_folder)
+        
+        self.generate_freq_map()
+        freq = np.array(self.freq).T
+        
+        layer_dict = {}
+        
+        for idx, layer in tqdm(enumerate(self.layers), desc='enc'):
+            
+            encoded_id_dict = {}
+            test = list(self.Encode_dict[layer].values())
+            for level in range(0,4):
+                encoded_id = np.where(freq[:,idx]>=utils_.generate_threshold(freq[:,idx], delta=level))[0]+1
+ 
+                test_dict = {}
+                if encoded_id.size>0:
+                    for id_ in encoded_id:
+                        id_ = correct_id[np.where(correct_id==id_)[0]]
+                        
+                        test_ = [[idx_,_] for idx_, _ in enumerate(test) if id_ in _]     # for unit encodes certain id
+                        test_idx = [_[0] for _ in test_]
+                        test_ = [_[1] for _ in test_]    
+                        
+                        test_1 = [[idx_,_] for idx_, _ in enumerate(test) if id_ in _ and len(_)==1]     # for unit ONLY encodes certain id
+                        test_idx1 = [_[0] for _ in test_1]
+                        test_1 = [_[1] for _ in test_1]    
+                        
+                        test_u = []
+                        [test_u.append(_) for _ in test_ if _ not in test_u]
+                        
+                        test_dict.update({id_.item(): {
+                            'single': test_idx1,
+                            'all': test_idx,
+                            'combinations': test_u
+                            }})
+                
+                encoded_id_dict.update({level: test_dict})
+            
+            layer_dict.update({layer: encoded_id_dict})
+                
+        print('6')
+
+    # legacy design - not in use
     def draw_encode_frequency_for_each_layer(self):         # encoding frequency for each layer
         print('[Codinfo] Executing draw_encode_frequency_for_each_layer...')
-        if self.mode == 'reload_encode_dict':
-            encode_class_dict = self.reload_and_revocer_encode_class_dict()
-        else:
-            encode_class_dict = self.recover_encode_class_dict()  
-
+        encode_class_dict = self.recover_encode_class_dict()  
         #make dir fo the image batch
         save_folder = os.path.join(self.dest_Encode, 'Each_Layer_Encoding_Performance/')
         utils_.make_dir(save_folder)
@@ -519,12 +633,10 @@ class Encode_feaquency_analyzer():
             plt.savefig(save_folder+layer+'_encoding_performance.png', bbox_inches='tight', dpi=100)
             plt.close()
     
-    def draw_merged_encode_frequency_for_each_layer(self):      # encoding frequency for each layer, basiccaly this is the merged version of the last one
+    # legacy design - not in use
+    def draw_merged_encode_frequency_for_each_layer(self):      
         print('[Codinfo] Executing draw_merged_encode_frequency_for_each_layer...')
-        if self.mode == 'reload_encode_dict':
-            encode_class_dict = self.reload_and_revocer_encode_class_dict()
-        else:
-            encode_class_dict = self.recover_encode_class_dict()
+        encode_class_dict = self.recover_encode_class_dict()
         
         fig, axs = plt.subplots(self.subplot_row, self.subplot_col, figsize=((self.subplot_col*2, self.subplot_row*2)))
         plt.subplots_adjust(hspace=0.3, wspace=0.3)
@@ -573,17 +685,16 @@ def encode_calculation(feature, i):
 
 if __name__ == "__main__":
     
-    model_ = vgg.__dict__['vgg16_bn'](num_classes=50)
-    layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, 'vgg16_bn')
+    model_ = vgg.__dict__['vgg16'](num_classes=50)
+    layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, 'vgg16')
 
     root_dir = '/home/acxyle-workstation/Downloads'
 
-    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity VGG16bn/'), 
+    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity Baseline/'), 
                                                      layers=layers, neurons=neurons)
     
     #selectivity_analyzer.obtain_encode_class_dict()
-    selectivity_analyzer.selectivity_encode_layer_percent_plot()
-    
+    #selectivity_analyzer.selectivity_encode_layer_percent_plot()
     #selectivity_analyzer.draw_encode_frequency()
-    #selectivity_analyzer.draw_encode_frequency_for_each_layer()
-    #selectivity_analyzer.draw_merged_encode_frequency_for_each_layer()
+    selectivity_analyzer.generate_encoded_id_unit_idx()
+

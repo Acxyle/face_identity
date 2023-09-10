@@ -164,8 +164,16 @@ def findMinY(x, ax):
     
     return Y     # [question] should return ax
 
+# -----
+def generate_threshold(input, alpha=1, delta=2):
+    """
+        return np.mean(input)+delta*np.std(input), delta(default)=2
+    """
+    return alpha*np.mean(input)+delta*np.std(input)
+    
+# -----
 def lexicographic_order(num_classes):
-    id_order = np.arange(1,1+num_classes).astype(str)
+    id_order = np.arange(num_classes).astype(str)
     id_order_idx = np.argsort(id_order)
     id_order_lexical = id_order[id_order_idx].astype(int)
     
@@ -482,9 +490,9 @@ def cal_acc1_acc5(output, target):
     acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
     return acc1, acc5
     
-def SVM_classification(matrix, label):
+def SVM_classification(matrix, label, test_size=0.2, random_state=6):
     # [notice] test_size should be the same with finetune but not 100% necessary, random_state is a personal preference
-    matrix_train, matrix_test, label_train, label_test = train_test_split(matrix, label, test_size=0.2, random_state=6)
+    matrix_train, matrix_test, label_train, label_test = train_test_split(matrix, label, test_size=test_size, random_state=random_state)
     
     '''
     # [notice] default kernel='rbf', which is non-linear. 
@@ -503,15 +511,8 @@ def SVM_classification(matrix, label):
       clf.fit(matrix_train, label_train)
       
       predicted = clf.predict(matrix_test)
-      
-      #correct = 0
-      #samples = len(label_test)
-      #for i in range(samples):
-      #    if predicted[i] == label_test[i]:
-      #        correct += 1
-      #acc = correct / samples
-      
-      acc = accuracy_score(label_test, predicted)
+
+      acc = accuracy_score(label_test, predicted)*100
       
     return acc
 

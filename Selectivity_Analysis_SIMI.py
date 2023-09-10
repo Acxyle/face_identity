@@ -116,14 +116,19 @@ class Selectivity_Analysis_SIMI():
             
                     all_acc = utils_.SVM_classification(feature, label)*100
                     all_acc_dict.update({layer: all_acc})
+                    
                     ID_acc = utils_.SVM_classification(feature[:, sig_neuron_idx], label)*100
                     ID_acc_dict.update({layer: ID_acc})
+                    
                     nonID_acc = utils_.SVM_classification(feature[:, non_sig_neuron_idx], label)*100
                     nonID_acc_dict.update({layer: nonID_acc})
+                    
                     SIMI_acc = utils_.SVM_classification(feature[:, SIMI_idx], label)*100
                     SIMI_acc_dict.update({layer: SIMI_acc})
+                    
                     SI_acc = utils_.SVM_classification(feature[:, SI_idx], label)*100
                     SI_acc_dict.update({layer: SI_acc})
+                    
                     MI_acc = utils_.SVM_classification(feature[:, MI_idx], label)*100
                     MI_acc_dict.update({layer: MI_acc})
                     

@@ -6,7 +6,8 @@ Created on Thu Feb  9 12:53:33 2023
 @author: acxyle
 
     #TODO
-    build a compact script for (1) ANOVA analysis; (2) .pkl and .csv store; (3) plot
+    build a compact script for (1) ANOVA analysis; (2) .pkl and .csv store; (3) plot; (4) comparisons
+    
 """
 
 import os
@@ -40,12 +41,7 @@ class ANOVA_analyzer():
         utils_.make_dir(self.dest)
         
         self.dest_ANOVA = os.path.join(self.dest, 'ANOVA')
-        
         utils_.make_dir(self.dest_ANOVA)
-        self.folder_p_values = os.path.join(self.dest_ANOVA, 'ANOVA_stats/')
-        utils_.make_dir(self.folder_p_values)
-        self.folder_idces = os.path.join(self.dest_ANOVA, 'ANOVA_idces/')
-        utils_.make_dir(self.folder_idces)
         
         self.layers = layers
         self.neurons = neurons
@@ -67,42 +63,51 @@ class ANOVA_analyzer():
         
         #if set([f.split('.')[0] for f in os.listdir(self.root)]) != set(self.layers):     # [notice] can mute this message when segmental test
         #    raise AssertionError('[Coderror] the saved .pkl files must be exactly the same with attribute self.layers')
-    
-    def selectivity_neuron_ANOVA(self, verbose=False):
+        
+    def selectivity_neuron_ANOVA(self, ):
         print('[Codinfo] Executing selectivity_neuron_ANOVA...')
-
-        for idx_l, layer in enumerate(self.layers):     # for each layer
-            neuron_idx = []
-            with open(os.path.join(self.root, layer+'.pkl'), 'rb') as pkl:
-                feature = pickle.load(pkl)
-            pl = np.zeros(feature.shape[1])       # p_value_list for all neuron
+        num_workers = int(os.cpu_count()/2)
+        print(f'[Codinfo] Executing parallel computation with num_workers={num_workers}')
+        
+        idces_path = os.path.join(self.dest_ANOVA, 'ANOVA_idces.pkl')
+        stats_path = os.path.join(self.dest_ANOVA, 'ANOVA_stats.pkl')
+        
+        if os.path.exists(idces_path) and os.path.exists(stats_path):
+            self.ANOVA_idces = utils_.pickle_load(idces_path)
+            self.ANOVA_stats = utils_.pickle_load(stats_path)
+        
+        else:
+            ANOVA_idces = {}
+            ANOVA_stats = {}
+            
+            for idx_l, layer in enumerate(self.layers):     # for each layer
+    
+                with open(os.path.join(self.root, layer+'.pkl'), 'rb') as pkl:
+                    feature = pickle.load(pkl)
+                pl = np.zeros(feature.shape[1])       # p_value_list for all neuron
+                    
+                if feature.shape[0] != self.num_classes*self.num_samples or feature.shape[1] != self.neurons[idx_l]:     #  feature check
+                    raise AssertionError('[Coderror] feature.shape[0] ({}) != self.num_classes*self.num_samples ({},{}) or feature.shape[1] ({}) != self.neurons[idx_l] ({})'.format(
+                        feature.shape[0], self.num_classes, self.num_samples, feature.shape[1], self.neurons[idx_l]))
                 
-            if verbose:
-                print(layer, feature.shape)
-            if feature.shape[0] != self.num_classes*self.num_samples or feature.shape[1] != self.neurons[idx_l]:     #  feature check
-                raise AssertionError('[Coderror] feature.shape[0] ({}) != self.num_classes*self.num_samples ({},{}) or feature.shape[1] ({}) != self.neurons[idx_l] ({})'.format(
-                    feature.shape[0], self.num_classes, self.num_samples, feature.shape[1], self.neurons[idx_l]))
+                # ----- parallel computing by joblib
+                pl = Parallel(n_jobs=num_workers)(delayed(self.one_way_ANOVA)(feature, i) for i in tqdm(range(feature.shape[1]), desc=f'[{layer}] ANOVA'))
+    
+                neuron_idx = np.array([idx for idx, p in enumerate(pl) if p < self.alpha])     # p_value_idx_list for neurons that satisfy the threshold
+                
+                ANOVA_stats.update({layer: pl})
+                ANOVA_idces.update({layer: neuron_idx})
             
-            # ----- parallel computing by joblib
-            pl = Parallel(n_jobs=os.cpu_count())(delayed(self.one_way_ANOVA)(feature, i) for i in tqdm(range(feature.shape[1]), desc=f'[{layer}] ANOVA'))
+            utils_.pickle_dump(idces_path, ANOVA_idces)
+            utils_.pickle_dump(stats_path, ANOVA_stats)
             
-            if not os.path.exists(os.path.join(self.folder_p_values, layer+'-pvalue.csv')):
-                np.savetxt(os.path.join(self.folder_p_values, layer+'-pvalue.csv'), pl)
+            print('[Codinfo] Selectivity_Neuron_ANOVA Calculation Done.')
+            print('[Codinfo] pvalue.csv and neuron_idx.pkl files have been saved in {}'.format(self.dest_ANOVA))
             
-            sig_neuron_idx = [idx for idx, p in enumerate(pl) if p < self.alpha]     # p_value_idx_list for neurons that satisfy the threshold
-              
-            if verbose:
-                print('[Codinfo]', layer, 'has', len(sig_neuron_idx), 'significant neurons')
-                  
-            neuron_idx.append(sig_neuron_idx)
-            neuron_idx = np.array(neuron_idx)
-            if not os.path.exists(os.path.join(self.folder_idces, layer+'-neuronIdx.csv')):
-                np.savetxt(os.path.join(self.folder_idces, layer+'-neuronIdx.csv'), neuron_idx, delimiter=',')
+            self.ANOVA_idces = ANOVA_idces
+            self.ANOVA_stats = ANOVA_stats
         
-        print('[Codinfo] Selectivity_Neuron_ANOVA Calculation Done.')
-        print('[Codinfo] pvalue.csv and neuron_idx.pkl files have been saved in {}'.format(self.dest))
-        
-    # define ANOVE for multi-threads excution
+    # define ANOVA for parallel calculation
     def one_way_ANOVA(self, feature, i):
         """
             if all units have responses 0, so will have 50 groups each has 10 0 values, this will cause 'nan' F_value and 'nan' p_value
@@ -121,7 +126,7 @@ class ANOVA_analyzer():
         print('[Codinfo] Executing selectivity_neuron_ANOVA_plot...')
         print('{Codwarning] This function plots from signeuronIdx.csv')
         
-        fig_folder = os.path.join(self.dest, 'Figures/')
+        fig_folder = os.path.join(self.dest_ANOVA, 'Figures/')
         utils_.make_dir(fig_folder)
         
         ratio_path = os.path.join(fig_folder, 'ratio.pkl')
@@ -132,13 +137,11 @@ class ANOVA_analyzer():
             
             # list out all neuronIdx.csv files for test
             for layer in self.layers:
-                for f in [p for p in os.listdir(self.folder_idces) if 'neuronIdx' in p]:
-                    if layer in f:     # [help] add extra judgement but allow more free name space
-                        sig_neuron_idx_list = self.folder_idces + f
-                        sig_neuron_idx = np.loadtxt(sig_neuron_idx_list, delimiter=',')
-                        value = sig_neuron_idx.size
-                        count_dict[layer]=value
-                        #print(layer, value)
+                sig_neuron_idx_list = self.ANOVA_idces[layer]
+                sig_neuron_idx = np.loadtxt(sig_neuron_idx_list, delimiter=',')
+                value = sig_neuron_idx.size
+                count_dict[layer]=value
+                #print(layer, value)
                   
             ratio = [round(a / b * 100) for a, b in zip(list(count_dict.values()), self.neurons)]  # ratio = unit_passed_ANOVA/all_unit
             utils_.pickle_dump(ratio_path, ratio)     # save the percentages for other plot
@@ -185,7 +188,6 @@ class ANOVA_analyzer():
             #plt.show()
             plt.close()
         
-    #FIXME - make it able to receive more than one comparison object
     def selectivity_neuron_ANOVA_plot_Comparison(self, comparing_models_list):
         
         """
@@ -260,7 +262,6 @@ class ANOVA_analyzer():
         self.plot_single_figure_VS(ax=ax, layers=neuron_layer, ratio=ratio_neuron, layers_color_list=layers_color_list_neuron, 
                                    model_structure=self.model_structure, linewidth=2.5, alpha=1, linestyle='-')
                 
-        # ----- for comparing model
         # plot comparing models on the canvas
         for comparing_model in comparing_models_list:     # for each comparing model
             ratio_comparing, comparing_model_config_list = self.load_comparing_data(comparing_model)
@@ -288,7 +289,6 @@ class ANOVA_analyzer():
         fig.savefig(os.path.join(fig_folder, title+'.eps'), bbox_inches='tight', format='eps')     # no transparency
         fig.savefig(os.path.join(fig_folder, title+'.svg'), bbox_inches='tight', format='svg', transparent=True)
         plt.close()
-        # -----
         
         print('[Codinfo] selective_neuron_percent.png has been saved into {}'.format(fig_folder))
         
@@ -340,6 +340,8 @@ class ANOVA_analyzer():
         print('[Codinfo] Executing load_and_check_p_value...')
         self.load_and_check_p_value_global(alpha, self.dest, self.layers, self.neurons, save, plot, verbose)
      
+        
+    # [notice] below code is legacy design from early version in March 2023 for outside call to investigate alpha-level
     @staticmethod
     def load_and_check_p_value_global(alpha, p_folder, layers, neurons, save=False, plot=False, verbose=False):
         
@@ -431,10 +433,10 @@ class ANOVA_analyzer():
         #plt.show()
         print('[Codinfo] selectivi_neuron_percent_differet_alpha.png has been saved into {}'.format(dest))
 
-# [notice] in order to increase generalization, color assignment is not in use but randomly generate colors, this can be changed back to fix colors in simple situations
+
 def color_column(layers):
     """
-    distinguish how many types in layers and return a list of color as the length of layers
+        in order to increase generalization, color assignment is not in use but randomly generate colors
     """
     layers_t = []
     color = []
@@ -465,24 +467,13 @@ def color_column(layers):
 
 if __name__ == "__main__":
     
-    spiking_model = spiking_vgg.__dict__['spiking_vgg16_bn'](spiking_neuron=neuron.LIFNode, num_classes=50, surrogate_function=surrogate.ATan(), detach_reset=True)
-    functional.set_step_mode(spiking_model, step_mode='m')
-    layers, neurons, shapes = utils_.generate_vgg_layers(spiking_model, 'spiking_vgg16_bn')
+    model_ = vgg.__dict__['vgg16'](num_classes=50)
+    layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, 'vgg16')
     
-# =============================================================================
-#     layers_ = [i for i in layers if 'neuron' in i or 'fc3' in i or 'pool' in i]
-#     index_ = [layers.index(i) for i in layers_]
-#     neurons_ = [neurons[i] for i in index_]
-#     shapes_ = [shapes[i] for i in index_]
-#     layers = layers_
-#     neurons = neurons_
-# =============================================================================
-    
-    analyzer = ANOVA_analyzer(root='/media/acxyle/Data/ChromeDownload/Identity_SpikingVGG16bn_LIF_CelebA2622/', 
+    analyzer = ANOVA_analyzer(root='/home/acxyle-workstation/Downloads/Face_Identity VGG16/', 
                               alpha=0.01, num_classes=50, num_samples=10, layers=layers, neurons=neurons)
     
     #analyzer.selectivity_neuron_ANOVA()
-    #analyzer.selectivity_neuron_ANOVA_plot()
-    
-    comparing_models_list = ['Identity_VGG16bn_ReLU_CelebA2622', 'Identity_VGG16_ReLU_CelebA2622', 'Identity_VGG_Baseline']
-    analyzer.selectivity_neuron_ANOVA_plot_Comparison(comparing_models_list)
+    analyzer.selectivity_neuron_ANOVA_plot()
+
+    #analyzer.selectivity_neuron_ANOVA_plot_VS_baseline('Identity_VGG16bn_ReLU_CelebA2622_Neuron')

@@ -45,6 +45,9 @@ import utils_
 
 class Encode_feaquency_analyzer():
     """
+        The the basic design, the feature map and encode_dict follows the lexical order. While the figure and Encode_id_unit_dict.pkl
+        follows natural order
+    
         in the update on Sept 6, 2023, remove original 2 input files setting
     """
     def __init__(self, root,
@@ -64,8 +67,8 @@ class Encode_feaquency_analyzer():
         self.num_samples = num_samples
         
         self.feature_list = [os.path.join(self.root, _) for _ in sorted(os.listdir(self.root)) if 'pkl' in _]     # feature .pkl list
-        idx_folder = os.path.join(self.dest, 'ANOVA/ANOVA_idces')
-        self.idx_list = [os.path.join(idx_folder, _) for _ in sorted(os.listdir(idx_folder)) if 'neuronIdx'  in _]    # <- consider to remove this?
+        
+        self.ANOVA_idces = utils_.pickle_load(os.path.join(self.dest, 'ANOVA/ANOVA_idces.pkl'))   # <- consider to remove this?
         
         if layers == None or neurons == None:
             raise RuntimeError('[Codwarning] invalid layers and neurons')
@@ -110,9 +113,9 @@ class Encode_feaquency_analyzer():
             layer = feature_path.split('/')[-1].split('.')[0]
         
             feature = utils_.pickle_load(feature_path)      # load feature matrix
-                
-            idx_path = self.idx_list[idx]
-            sensitive_idx = np.loadtxt(idx_path, delimiter=',').astype(int)      # 1.1 sensitive_idx
+
+            sensitive_idx = self.ANOVA_idces[layer]
+             
             non_sensitive_idx = np.array(list(set(np.arange(feature.shape[1]))-set(sensitive_idx)))     # 1.2 non_sensitive_idx
             
             unit_encode_dict = {}
@@ -450,22 +453,30 @@ class Encode_feaquency_analyzer():
         
         print('[Codinfo] generating freq map...')
         
-        correct_id = utils_.lexicographic_order(50)+1
-        self.freq = []
-
-        for idx, _ in enumerate(self.layers):
-            
-            pool = [j for i in list(self.Encode_dict[_].values()) for j in i]
-            frequency = Counter(pool)
-            
-            frequency = {correct_id[_-1]:frequency[_] for _ in range(1,51)}     # map correct_id
-            frequency = {_:frequency[_] for _ in range(1,51)}     # sort correct_id
-            
-            frequency = {_:(frequency[_]/self.neurons[idx]) for _ in frequency.keys()}
-            #frequency = [frequency[_]/np.sum(frequency) for _ in range(50)]
-            self.freq.append(np.array(list(frequency.values())))
+        freq_path = os.path.join(self.dest_Encode, 'freq.pkl')
         
-        print('[Codinfo] generated freq map')
+        if os.path.exists(freq_path):
+            freq = utils_.pickle_load(freq_path)
+        else:
+            correct_id = utils_.lexicographic_order(50)+1
+            freq = []
+    
+            for idx, _ in enumerate(self.layers):
+                
+                pool = [j for i in list(self.Encode_dict[_].values()) for j in i]
+                frequency = Counter(pool)
+                
+                frequency = {correct_id[_-1]:frequency[_] for _ in range(1,51)}     # map correct_id
+                frequency = {_:frequency[_] for _ in range(1,51)}     # sort correct_id
+                
+                frequency = {_:(frequency[_]/self.neurons[idx]) for _ in frequency.keys()}
+                #frequency = [frequency[_]/np.sum(frequency) for _ in range(50)]
+                freq.append(np.array(list(frequency.values())))
+                
+            freq = np.array(freq).T  
+            utils_.pickle_dump(freq_path, freq)
+        
+        return freq
 
     #FIXME - make it more useful
     def draw_encode_frequency(self):        # general figure for encoding frequency
@@ -561,60 +572,137 @@ class Encode_feaquency_analyzer():
 #         # -----
 # =============================================================================
         
-    def generate_encoded_id_unit_idx(self,):
+    #FIXME - the index problem, try to convert the lexical to natural order from the very beginning
+    def generate_encoded_id_unit_idx(self, ):
         
         correct_id = utils_.lexicographic_order(50)+1
-        
         idx_folder = os.path.join(self.dest_Encode, 'unit_of_interested')
         utils_.make_dir(idx_folder)
         
-        self.generate_freq_map()
-        freq = np.array(self.freq).T
+        Encode_id_unit_dict_path = os.path.join(os.path.join(self.dest_Encode, 'Encode_id_unit_dict.pkl'))
         
-        layer_dict = {}
-        
-        for idx, layer in tqdm(enumerate(self.layers), desc='enc'):
-            
-            encoded_id_dict = {}
-            test = list(self.Encode_dict[layer].values())
-            for level in range(0,4):
-                encoded_id = np.where(freq[:,idx]>=utils_.generate_threshold(freq[:,idx], delta=level))[0]+1
- 
-                test_dict = {}
-                if encoded_id.size>0:
-                    for id_ in encoded_id:     # for each id (correct)
-                        id__ = np.where(correct_id==id_)[0].item()+1     # id (lexical order)
-                        
-                        test_ = [[idx_,_] for idx_, _ in enumerate(test) if id__ in _]     # for unit encodes certain id
-                        test_idx = [_[0] for _ in test_]
-                        test_ = [_[1] for _ in test_]    
-                        
-                        test_1 = [[idx_,_] for idx_, _ in enumerate(test) if id__ in _ and len(_)==1]     # for unit ONLY encodes certain id
-                        test_idx1 = [_[0] for _ in test_1]
-                        #test_1 = [_[1] for _ in test_1]    
-                        
-                        test_u = []
-                        [test_u.append(_) for _ in test_ if _ not in test_u]
-                        for idx_tmp, i in enumerate(test_u):
-                            tmp = []
-                            [tmp.append(correct_id[value_tmp-1]) for value_tmp in i]
-                            test_u[idx_tmp] = tmp
-                        
-                        test_dict.update({id_.item(): {
-                            'single': test_idx1,
-                            'all': test_idx,
-                            'combinations': test_u
-                            }})
+        if os.path.exists(Encode_id_unit_dict_path):
+            layer_dict = utils_.pickle_load(Encode_id_unit_dict_path)
+        else:    
+            freq = self.generate_freq_map()
+            layer_dict = {}
+            for idx, layer in tqdm(enumerate(self.layers), desc='enc'):
                 
-                encoded_id_dict.update({level: test_dict})
-            
-            layer_dict.update({layer: encoded_id_dict})
-        
-        print('[Codinfo] Saving Encoded_id_unit.pkl...')
-        utils_.pickle_dump(os.path.join(self.dest_Encode, 'Encode_id_unit_dict.pkl'), layer_dict) 
+                encoded_id_dict = {}
+                test = list(self.Encode_dict[layer].values())
+                for level in range(0,4):
+                    encoded_id = np.where(freq[:,idx]>=utils_.generate_threshold(freq[:,idx], delta=level))[0]+1
+     
+                    test_dict = {}
+                    if encoded_id.size>0:
+                        for id_ in encoded_id:     # for each id (correct)
+                            id__ = np.where(correct_id==id_)[0].item()+1     # id (lexical order)
+                            
+                            test_ = [[idx_,_] for idx_, _ in enumerate(test) if id__ in _]     # for unit encodes certain id
+                            test_idx = [_[0] for _ in test_]
+                            test_ = [_[1] for _ in test_]    
+                            
+                            test_1 = [[idx_,_] for idx_, _ in enumerate(test) if id__ in _ and len(_)==1]     # for unit ONLY encodes certain id
+                            test_idx1 = [_[0] for _ in test_1]
+                            #test_1 = [_[1] for _ in test_1]    
+                            
+                            test_u = []
+                            [test_u.append(_) for _ in test_ if _ not in test_u]
+                            for idx_tmp, i in enumerate(test_u):
+                                tmp = []
+                                [tmp.append(correct_id[value_tmp-1]) for value_tmp in i]
+                                test_u[idx_tmp] = tmp
+                            
+                            test_dict.update({id_.item(): {
+                                'single': test_idx1,
+                                'all': test_idx,
+                                'combinations': test_u
+                                }})
+                    
+                    encoded_id_dict.update({level: test_dict})
                 
-        print('6')
-
+                layer_dict.update({layer: encoded_id_dict})
+            
+            print('[Codinfo] Saving Encoded_id_unit.pkl...')
+            utils_.pickle_dump(Encode_id_unit_dict_path, layer_dict) 
+            
+        return layer_dict
+    
+    def SVM(self,):
+        
+        if not hasattr(self, 'Encode_dict') and not hasattr(self, 'Sort_dict'):
+            self.reload_encode_and_sort_dict()
+        
+        freq = self.generate_freq_map()
+        
+        layer_dict =  self.generate_encoded_id_unit_idx()
+        
+        ANOVA_idces = utils_.pickle_load(os.path.join(self.dest, 'ANOVA/ANOVA_idces.pkl'))
+        
+        SVM_path = os.path.join(self.dest_Encode, 'SVM.pkl')
+        
+        if os.path.exists(SVM_path):
+            layer_SVM = utils_.pickle_load(SVM_path)
+        else:
+            # ----- for SVM
+            label = utils_.lexicographic_order(50)+1
+            label = np.repeat(label, 10)
+            
+            layer_SVM = {}
+            
+            for layer in self.layers:
+                
+                tqdm_bar = tqdm(total=14, desc=f'layer')
+                
+                feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
+                Encode_dict = self.Encode_dict[layer]
+                Sort_dict = self.Sort_dict[layer]
+                
+                sensitive_idx = ANOVA_idces[layer]
+                non_sensitive_idx = np.array(list(set(np.arange(feature.shape[1])) - set(sensitive_idx)))
+                
+                si_idx = Sort_dict['basic_type']['si_idx']
+                mi_idx = Sort_dict['basic_type']['mi_idx']
+                
+                all_acc = utils_.SVM_classification(feature, label), tqdm_bar.update(1)
+                
+                sensitive_acc = utils_.SVM_classification(feature[:, sensitive_idx], label), tqdm_bar.update(1)
+                non_sensitive_acc = utils_.SVM_classification(feature[:, non_sensitive_idx], label), tqdm_bar.update(1)
+                
+                si_acc = utils_.SVM_classification(feature[:, si_idx], label), tqdm_bar.update(1)
+                mi_acc = utils_.SVM_classification(feature[:, mi_idx], label), tqdm_bar.update(1)
+                encode_acc = utils_.SVM_classification(feature[:, [*si_idx, *mi_idx]], label), tqdm_bar.update(1)
+            
+                s_si_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['sensitive_si_idx']], label), tqdm_bar.update(1)
+                s_mi_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['sensitive_mi_idx']], label), tqdm_bar.update(1)
+                s_encode_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['sensitive_encode_idx']], label), tqdm_bar.update(1)
+                s_non_encode_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['sensitive_non_encode_idx']], label), tqdm_bar.update(1)
+                
+                ns_si_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['non_sensitive_si_idx']], label), tqdm_bar.update(1)
+                ns_mi_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['non_sensitive_mi_idx']], label), tqdm_bar.update(1)
+                ns_encode_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['non_sensitive_encode_idx']], label), tqdm_bar.update(1)
+                ns_non_encode_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['non_sensitive_non_encode_idx']], label), tqdm_bar.update(1)
+                
+                layer_SVM.update({
+                    'all_acc': all_acc,
+                    'sensitive_acc': sensitive_acc,
+                    'non_sensitive_acc': non_sensitive_acc,
+                    'si_acc': si_acc,
+                    'mi_acc': mi_acc,
+                    'encode_acc': encode_acc,
+                    's_si_acc': s_si_acc,
+                    's_mi_acc': s_mi_acc,
+                    's_encode_acc': s_encode_acc,
+                    's_non_encode_acc': s_non_encode_acc,
+                    'ns_si_acc': ns_si_acc,
+                    'ns_mi_acc': ns_mi_acc,
+                    'ns_encode_acc': ns_encode_acc,
+                    'ns_non_encode_acc': ns_non_encode_acc
+                    })
+            
+            utils_.pickle_dump(SVM_path, layer_SVM)
+            print('[Condinfo] SVM calculation down')
+            
     # legacy design - not in use
     def draw_encode_frequency_for_each_layer(self):         # encoding frequency for each layer
         print('[Codinfo] Executing draw_encode_frequency_for_each_layer...')
@@ -701,6 +789,6 @@ if __name__ == "__main__":
     
     #selectivity_analyzer.obtain_encode_class_dict()
     #selectivity_analyzer.selectivity_encode_layer_percent_plot()
-    selectivity_analyzer.draw_encode_frequency()
+    #selectivity_analyzer.draw_encode_frequency()
     #selectivity_analyzer.generate_encoded_id_unit_idx()
-
+    selectivity_analyzer.SVM()

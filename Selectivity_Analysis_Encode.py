@@ -438,7 +438,7 @@ class Encode_feaquency_analyzer():
                 ax.add_patch(rect)
             
             ax.set_title(self.layers[_])
-            ax.set_ylim([np.min(freq), 1.2*np.max(freq[:,_])])
+            ax.set_ylim([np.min(freq), 1.1*np.max(freq)])
             fig.savefig(os.path.join(frequency_folder, self.layers[_]+'.png'), bbox_inches='tight')
             plt.close()
         
@@ -467,7 +467,6 @@ class Encode_feaquency_analyzer():
         
         print('[Codinfo] generated freq map')
 
-        
     #FIXME - make it more useful
     def draw_encode_frequency(self):        # general figure for encoding frequency
         """
@@ -583,19 +582,23 @@ class Encode_feaquency_analyzer():
  
                 test_dict = {}
                 if encoded_id.size>0:
-                    for id_ in encoded_id:
-                        id_ = correct_id[np.where(correct_id==id_)[0]]
+                    for id_ in encoded_id:     # for each id (correct)
+                        id__ = np.where(correct_id==id_)[0].item()+1     # id (lexical order)
                         
-                        test_ = [[idx_,_] for idx_, _ in enumerate(test) if id_ in _]     # for unit encodes certain id
+                        test_ = [[idx_,_] for idx_, _ in enumerate(test) if id__ in _]     # for unit encodes certain id
                         test_idx = [_[0] for _ in test_]
                         test_ = [_[1] for _ in test_]    
                         
-                        test_1 = [[idx_,_] for idx_, _ in enumerate(test) if id_ in _ and len(_)==1]     # for unit ONLY encodes certain id
+                        test_1 = [[idx_,_] for idx_, _ in enumerate(test) if id__ in _ and len(_)==1]     # for unit ONLY encodes certain id
                         test_idx1 = [_[0] for _ in test_1]
-                        test_1 = [_[1] for _ in test_1]    
+                        #test_1 = [_[1] for _ in test_1]    
                         
                         test_u = []
                         [test_u.append(_) for _ in test_ if _ not in test_u]
+                        for idx_tmp, i in enumerate(test_u):
+                            tmp = []
+                            [tmp.append(correct_id[value_tmp-1]) for value_tmp in i]
+                            test_u[idx_tmp] = tmp
                         
                         test_dict.update({id_.item(): {
                             'single': test_idx1,
@@ -606,6 +609,9 @@ class Encode_feaquency_analyzer():
                 encoded_id_dict.update({level: test_dict})
             
             layer_dict.update({layer: encoded_id_dict})
+        
+        print('[Codinfo] Saving Encoded_id_unit.pkl...')
+        utils_.pickle_dump(os.path.join(self.dest_Encode, 'Encode_id_unit_dict.pkl'), layer_dict) 
                 
         print('6')
 
@@ -695,6 +701,6 @@ if __name__ == "__main__":
     
     #selectivity_analyzer.obtain_encode_class_dict()
     #selectivity_analyzer.selectivity_encode_layer_percent_plot()
-    #selectivity_analyzer.draw_encode_frequency()
-    selectivity_analyzer.generate_encoded_id_unit_idx()
+    selectivity_analyzer.draw_encode_frequency()
+    #selectivity_analyzer.generate_encoded_id_unit_idx()
 

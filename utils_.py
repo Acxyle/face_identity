@@ -22,6 +22,18 @@ from sklearn import svm
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 
+# ----- test script
+ANOVA_stats = {}
+ANOVA_idces = {}
+for layer in layers:
+    stats = np.loadtxt(os.path.join(ANOVA_path, 'ANOVA_stats', f'{layer}-pvalue.csv'), delimiter=',')
+    idces = np.loadtxt(os.path.join(ANOVA_path, 'ANOVA_idces', f'{layer}-neuronIdx.csv'), delimiter=',').astype(int)
+    ANOVA_stats.update({layer:stats})
+    ANOVA_idces.update({layer:idces})
+utils_.pickle_dump(os.path.join(ANOVA_path, 'ANOVA_stats.pkl'), ANOVA_stats)
+utils_.pickle_dump(os.path.join(ANOVA_path, 'ANOVA_idces.pkl'), ANOVA_idces)
+# -----
+
 # ------ sigstar functions
 def sigstar(groups, stats, ax, nosort=False):
     """

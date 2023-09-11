@@ -628,9 +628,9 @@ class Encode_feaquency_analyzer():
             
         return layer_dict
     
-    def single_acc(self, feature, label, tqdm_bar=None):
-        if feature.size != 0:
-            acc = utils_.SVM_classification(feature, label)
+    def single_acc(self, feature, idx, label, tqdm_bar=None):
+        if len(idx) != 0:
+            acc = utils_.SVM_classification(feature[:, idx], label)
         else:
             acc = 0. 
             
@@ -652,7 +652,7 @@ class Encode_feaquency_analyzer():
         
         ANOVA_idces = utils_.pickle_load(os.path.join(self.dest, 'ANOVA/ANOVA_idces.pkl'))
         
-        SVM_path = os.path.join(self.dest_Encode, 'SVM.pkl')
+        SVM_path = os.path.join(self.dest_Encode, 'SVM2.pkl')
         
         if os.path.exists(SVM_path):
             layer_SVM = utils_.pickle_load(SVM_path)
@@ -665,57 +665,149 @@ class Encode_feaquency_analyzer():
             
             for layer in self.layers:
                 
-                tqdm_bar = tqdm(total=14, desc=f'{layer}')
+                tqdm_bar = tqdm(total=15, desc=f'{layer}')
                 
                 feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
-                Encode_dict = self.Encode_dict[layer]
+                #Encode_dict = self.Encode_dict[layer]
                 Sort_dict = self.Sort_dict[layer]
                 
-                sensitive_idx = ANOVA_idces[layer]
-                non_sensitive_idx = np.array(list(set(np.arange(feature.shape[1])) - set(sensitive_idx)))
+                #sensitive_idx = ANOVA_idces[layer]
+                #non_sensitive_idx = np.array(list(set(np.arange(feature.shape[1])) - set(sensitive_idx)))
                 
-                si_idx = Sort_dict['basic_type']['si_idx']
-                mi_idx = Sort_dict['basic_type']['mi_idx']
+                #si_idx = Sort_dict['basic_type']['si_idx']
+                #mi_idx = Sort_dict['basic_type']['mi_idx']
                 
-                all_acc = self.single_acc(feature, label, tqdm_bar)
+# =============================================================================
+#                 all_acc = self.single_acc(feature, np.arange(feature.shape[1]), label, tqdm_bar)
+#                 
+#                 sensitive_acc = self.single_acc(feature, sensitive_idx, label, tqdm_bar)
+#                 non_sensitive_acc = self.single_acc(feature, non_sensitive_idx, label, tqdm_bar)
+#                 
+#                 si_acc = self.single_acc(feature, si_idx, label, tqdm_bar)
+#                 mi_acc = self.single_acc(feature, mi_idx, label, tqdm_bar)
+#                 encode_acc = self.single_acc(feature, [*si_idx, *mi_idx], label, tqdm_bar)
+#             
+#                 s_si_acc = self.single_acc(feature, Sort_dict['advanced_type']['sensitive_si_idx'], label, tqdm_bar)
+#                 s_mi_acc = self.single_acc(feature, Sort_dict['advanced_type']['sensitive_mi_idx'], label, tqdm_bar)
+#                 s_encode_acc = self.single_acc(feature, Sort_dict['advanced_type']['sensitive_encode_idx'], label, tqdm_bar)
+#                 s_non_encode_acc = self.single_acc(feature, Sort_dict['advanced_type']['sensitive_non_encode_idx'], label, tqdm_bar)
+#                 
+#                 ns_si_acc = self.single_acc(feature, Sort_dict['advanced_type']['non_sensitive_si_idx'], label, tqdm_bar)
+#                 ns_mi_acc = self.single_acc(feature, Sort_dict['advanced_type']['non_sensitive_mi_idx'], label, tqdm_bar)
+#                 ns_encode_acc = self.single_acc(feature, Sort_dict['advanced_type']['non_sensitive_encode_idx'], label, tqdm_bar)
+#                 ns_non_encode_acc = self.single_acc(feature, Sort_dict['advanced_type']['non_sensitive_non_encode_idx'], label, tqdm_bar)
+#                 
+#                 layer_SVM.update({layer:
+#                     {
+#                     'all_acc': all_acc,
+#                     'sensitive_acc': sensitive_acc,
+#                     'non_sensitive_acc': non_sensitive_acc,
+#                     'si_acc': si_acc,
+#                     'mi_acc': mi_acc,
+#                     'encode_acc': encode_acc,
+#                     's_si_acc': s_si_acc,
+#                     's_mi_acc': s_mi_acc,
+#                     's_encode_acc': s_encode_acc,
+#                     's_non_encode_acc': s_non_encode_acc,
+#                     'ns_si_acc': ns_si_acc,
+#                     'ns_mi_acc': ns_mi_acc,
+#                     'ns_encode_acc': ns_encode_acc,
+#                     'ns_non_encode_acc': ns_non_encode_acc
+#                     }})
+# =============================================================================
+                    
+
                 
-                sensitive_acc = self.single_acc(feature[:, sensitive_idx], label, tqdm_bar)
-                non_sensitive_acc = self.single_acc(feature[:, non_sensitive_idx], label, tqdm_bar)
-                
-                si_acc = self.single_acc(feature[:, si_idx], label, tqdm_bar)
-                mi_acc = self.single_acc(feature[:, mi_idx], label, tqdm_bar)
-                encode_acc = self.single_acc(feature[:, [*si_idx, *mi_idx]], label, tqdm_bar)
+                non_encode_acc = self.single_acc(feature, Sort_dict['basic_type']['non_encode_idx'], label, tqdm_bar)
             
-                s_si_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['sensitive_si_idx']], label, tqdm_bar)
-                s_mi_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['sensitive_mi_idx']], label, tqdm_bar)
-                s_encode_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['sensitive_encode_idx']], label, tqdm_bar)
-                s_non_encode_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['sensitive_non_encode_idx']], label, tqdm_bar)
+
                 
-                ns_si_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['non_sensitive_si_idx']], label, tqdm_bar)
-                ns_mi_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['non_sensitive_mi_idx']], label, tqdm_bar)
-                ns_encode_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['non_sensitive_encode_idx']], label, tqdm_bar)
-                ns_non_encode_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['non_sensitive_non_encode_idx']], label, tqdm_bar)
-                
-                layer_SVM.update({
-                    'all_acc': all_acc,
-                    'sensitive_acc': sensitive_acc,
-                    'non_sensitive_acc': non_sensitive_acc,
-                    'si_acc': si_acc,
-                    'mi_acc': mi_acc,
-                    'encode_acc': encode_acc,
-                    's_si_acc': s_si_acc,
-                    's_mi_acc': s_mi_acc,
-                    's_encode_acc': s_encode_acc,
-                    's_non_encode_acc': s_non_encode_acc,
-                    'ns_si_acc': ns_si_acc,
-                    'ns_mi_acc': ns_mi_acc,
-                    'ns_encode_acc': ns_encode_acc,
-                    'ns_non_encode_acc': ns_non_encode_acc
-                    })
+                layer_SVM.update({layer:
+                    {
+                   
+                    'non_encode_acc': non_encode_acc,
+
+                    }})
             
             utils_.pickle_dump(SVM_path, layer_SVM)
             print('[Condinfo] SVM calculation down')
+        
+        return layer_SVM
             
+    def SVM_plot(self, ):
+        
+        layer_SVM = self.SVM()
+        
+        unit_type = ['all_acc', 
+         'sensitive_acc', 
+         'non_sensitive_acc',
+         'si_acc',
+         'mi_acc',
+         'encode_acc',
+         's_si_acc',
+         's_mi_acc',
+         's_encode_acc',
+         's_non_encode_acc',
+         'ns_si_acc',
+         'ns_mi_acc',
+         'ns_encode_acc',
+         'ns_non_encode_acc']
+        
+        all_acc_plot = [layer_SVM[layer]['all_acc'] for layer in self.layers]
+        
+        sensitive_acc_plot = [layer_SVM[layer]['sensitive_acc'] for layer in self.layers]
+        non_sensitive_acc_plot = [layer_SVM[layer]['non_sensitive_acc'] for layer in self.layers]
+        
+        si_acc_plot = [layer_SVM[layer]['si_acc'] for layer in self.layers]
+        mi_acc_plot = [layer_SVM[layer]['mi_acc'] for layer in self.layers]
+        encode_acc_plot = [layer_SVM[layer]['encode_acc'] for layer in self.layers]
+        
+        s_si_acc_plot = [layer_SVM[layer]['s_si_acc'] for layer in self.layers]
+        s_mi_acc_plot = [layer_SVM[layer]['s_mi_acc'] for layer in self.layers]
+        s_encode_acc_plot = [layer_SVM[layer]['s_encode_acc'] for layer in self.layers]
+        s_non_encode_acc_plot = [layer_SVM[layer]['s_non_encode_acc'] for layer in self.layers]
+        
+        ns_si_acc_plot = [layer_SVM[layer]['ns_si_acc'] for layer in self.layers]
+        ns_mi_acc_plot = [layer_SVM[layer]['ns_mi_acc'] for layer in self.layers]
+        ns_encode_acc_plot = [layer_SVM[layer]['ns_encode_acc'] for layer in self.layers]
+        ns_non_encode_acc_plot = [layer_SVM[layer]['ns_non_encode_acc'] for layer in self.layers]
+        
+        fig, ax = plt.subplots(figsize=(20,12))
+        
+        ax.plot(all_acc_plot, 'black', label='all')
+        
+        ax.plot(sensitive_acc_plot, 'purple', label='sensitive')
+        ax.plot(non_sensitive_acc_plot, 'blue', label='non_sensitive')
+        
+        ax.plot(si_acc_plot, 'orange', label='si')
+        ax.plot(mi_acc_plot, 'green', label='mi')
+        ax.plot(encode_acc_plot, 'skyblue', label='encode')
+        
+        ax.plot(s_si_acc_plot, 'orange', label='s_si', linestyle='--')
+        ax.plot(s_mi_acc_plot, 'green', label='s_mi', linestyle='--')
+        ax.plot(s_encode_acc_plot, 'skyblue', label='s_encode', linestyle='--')
+        ax.plot(s_non_encode_acc_plot, 'red', label='s_non_encode', linestyle='--')
+        
+        ax.plot(ns_si_acc_plot, 'orange', label='ns_si', linestyle='dotted')
+        ax.plot(ns_mi_acc_plot, 'green', label='ns_mi', linestyle='dotted')
+        ax.plot(ns_encode_acc_plot, 'skyblue', label='ns_encode', linestyle='dotted')
+        ax.plot(ns_non_encode_acc_plot, 'red', label='ns_non_encode', linestyle='dotted')
+        
+        ax.set_ylim([0, 100])
+        
+        idx, layers, _ = utils_.imaginary_neurons_vgg(self.layers)
+        
+        ax.set_xticks(np.arange(len(self.layers)))
+        ax.set_xticklabels(['' if _ not in idx else self.layers[_] for _ in range(len(self.layers))], rotation='vertical', fontname='Times New Roman')
+        ax.set_yticks(np.arange(1, 101))
+        ax.set_yticklabels(['' if (_%10)!=0 else _ for _ in range(1,101)], rotation='vertical', fontname='Times New Roman')
+
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+        
+        ax.legend()
+        
+        print('6')
+        
     # legacy design - not in use
     def draw_encode_frequency_for_each_layer(self):         # encoding frequency for each layer
         print('[Codinfo] Executing draw_encode_frequency_for_each_layer...')
@@ -805,3 +897,4 @@ if __name__ == "__main__":
     #selectivity_analyzer.draw_encode_frequency()
     #selectivity_analyzer.generate_encoded_id_unit_idx()
     selectivity_analyzer.SVM()
+    #selectivity_analyzer.SVM_plot()

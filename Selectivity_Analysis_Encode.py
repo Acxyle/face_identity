@@ -628,7 +628,20 @@ class Encode_feaquency_analyzer():
             
         return layer_dict
     
+    def single_acc(self, feature, label, tqdm_bar=None):
+        if feature.size != 0:
+            acc = utils_.SVM_classification(feature, label)
+        else:
+            acc = 0. 
+            
+        if isinstance(tqdm_bar, tqdm):
+            tqdm_bar.update(1)
+        
+        return acc
+    
     def SVM(self,):
+        
+        print('[Codinfo] computing SVM...')
         
         if not hasattr(self, 'Encode_dict') and not hasattr(self, 'Sort_dict'):
             self.reload_encode_and_sort_dict()
@@ -652,7 +665,7 @@ class Encode_feaquency_analyzer():
             
             for layer in self.layers:
                 
-                tqdm_bar = tqdm(total=14, desc=f'layer')
+                tqdm_bar = tqdm(total=14, desc=f'{layer}')
                 
                 feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
                 Encode_dict = self.Encode_dict[layer]
@@ -664,24 +677,24 @@ class Encode_feaquency_analyzer():
                 si_idx = Sort_dict['basic_type']['si_idx']
                 mi_idx = Sort_dict['basic_type']['mi_idx']
                 
-                all_acc = utils_.SVM_classification(feature, label), tqdm_bar.update(1)
+                all_acc = self.single_acc(feature, label, tqdm_bar)
                 
-                sensitive_acc = utils_.SVM_classification(feature[:, sensitive_idx], label), tqdm_bar.update(1)
-                non_sensitive_acc = utils_.SVM_classification(feature[:, non_sensitive_idx], label), tqdm_bar.update(1)
+                sensitive_acc = self.single_acc(feature[:, sensitive_idx], label, tqdm_bar)
+                non_sensitive_acc = self.single_acc(feature[:, non_sensitive_idx], label, tqdm_bar)
                 
-                si_acc = utils_.SVM_classification(feature[:, si_idx], label), tqdm_bar.update(1)
-                mi_acc = utils_.SVM_classification(feature[:, mi_idx], label), tqdm_bar.update(1)
-                encode_acc = utils_.SVM_classification(feature[:, [*si_idx, *mi_idx]], label), tqdm_bar.update(1)
+                si_acc = self.single_acc(feature[:, si_idx], label, tqdm_bar)
+                mi_acc = self.single_acc(feature[:, mi_idx], label, tqdm_bar)
+                encode_acc = self.single_acc(feature[:, [*si_idx, *mi_idx]], label, tqdm_bar)
             
-                s_si_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['sensitive_si_idx']], label), tqdm_bar.update(1)
-                s_mi_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['sensitive_mi_idx']], label), tqdm_bar.update(1)
-                s_encode_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['sensitive_encode_idx']], label), tqdm_bar.update(1)
-                s_non_encode_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['sensitive_non_encode_idx']], label), tqdm_bar.update(1)
+                s_si_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['sensitive_si_idx']], label, tqdm_bar)
+                s_mi_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['sensitive_mi_idx']], label, tqdm_bar)
+                s_encode_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['sensitive_encode_idx']], label, tqdm_bar)
+                s_non_encode_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['sensitive_non_encode_idx']], label, tqdm_bar)
                 
-                ns_si_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['non_sensitive_si_idx']], label), tqdm_bar.update(1)
-                ns_mi_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['non_sensitive_mi_idx']], label), tqdm_bar.update(1)
-                ns_encode_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['non_sensitive_encode_idx']], label), tqdm_bar.update(1)
-                ns_non_encode_acc = utils_.SVM_classification(feature[:, Sort_dict['advanced_type']['non_sensitive_non_encode_idx']], label), tqdm_bar.update(1)
+                ns_si_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['non_sensitive_si_idx']], label, tqdm_bar)
+                ns_mi_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['non_sensitive_mi_idx']], label, tqdm_bar)
+                ns_encode_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['non_sensitive_encode_idx']], label, tqdm_bar)
+                ns_non_encode_acc = self.single_acc(feature[:, Sort_dict['advanced_type']['non_sensitive_non_encode_idx']], label, tqdm_bar)
                 
                 layer_SVM.update({
                     'all_acc': all_acc,

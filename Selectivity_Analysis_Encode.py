@@ -39,6 +39,9 @@ from joblib import Parallel, delayed
 from scipy.interpolate import interp1d, RegularGridInterpolator, LinearNDInterpolator, CloughTocher2DInterpolator
 from collections import Counter
 
+from scipy.stats import gaussian_kde
+from matplotlib import gridspec
+
 import vgg, resnet
 import utils_
 
@@ -492,10 +495,8 @@ class Encode_feaquency_analyzer():
         fig_folder = os.path.join(self.dest_Encode, 'Figures')
         utils_.make_dir(fig_folder)
         
-        self.generate_freq_map()
-            
-        freq = np.array(self.freq).T
-        
+        freq = self.generate_freq_map()
+
         # ----- exterior plots
         self.draw_encode_feaquency_layers(freq)
         
@@ -607,7 +608,7 @@ class Encode_feaquency_analyzer():
                             #test_1 = [_[1] for _ in test_1]    
                             
                             test_u = []
-                            [test_u.append(_) for _ in test_ if _ not in test_u]
+                            [test_u.append(_) for _ in test_ if np.all(~np.isin(_, test_u))]
                             for idx_tmp, i in enumerate(test_u):
                                 tmp = []
                                 [tmp.append(correct_id[value_tmp-1]) for value_tmp in i]
@@ -630,7 +631,7 @@ class Encode_feaquency_analyzer():
     
     def single_acc(self, feature, idx, label, tqdm_bar=None):
         if len(idx) != 0:
-            acc = utils_.SVM_classification(feature[:, idx], label)
+            acc = utils_.SVM_classification(feature[:, idx], label, test_size=0.2, random_state=42)
         else:
             acc = 0. 
             
@@ -645,8 +646,6 @@ class Encode_feaquency_analyzer():
         
         if not hasattr(self, 'Encode_dict') and not hasattr(self, 'Sort_dict'):
             self.reload_encode_and_sort_dict()
-
-        #layer_dict =  self.generate_encoded_id_unit_idx()
         
         ANOVA_idces = utils_.pickle_load(os.path.join(self.dest, 'ANOVA/ANOVA_idces.pkl'))
         
@@ -837,6 +836,112 @@ class Encode_feaquency_analyzer():
         
         print('[Codinfo] Image saved')
         
+    def layer_boxplot(self,):
+        
+        if not hasattr(self, 'Sort_dict'):
+            self.Sort_dict = utils_.pickle_load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
+        
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
+        fig_folder = os.path.join(self.dest_Encode, 'Layer_units_stats')
+        utils_.make_dir(fig_folder)
+        
+        colorpool_jet = plt.get_cmap('jet', 50)
+        colors = [colorpool_jet(i) for i in range(50)]
+
+        layers = self.layers[31:]
+        
+        for layer in layers:
+            
+            Sort_dict = self.Sort_dict[layer]
+            feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
+            
+            y_lim_min = np.min(feature)
+            y_lim_max = np.max(feature)*0.67
+        
+            s_si_idx = Sort_dict['advanced_type']['sensitive_si_idx']
+            s_mi_idx = Sort_dict['advanced_type']['sensitive_mi_idx']
+            s_non_encode_idx = Sort_dict['advanced_type']['sensitive_non_encode_idx']
+            
+            ns_si_idx = Sort_dict['advanced_type']['non_sensitive_si_idx']
+            ns_mi_idx = Sort_dict['advanced_type']['non_sensitive_mi_idx']
+            ns_non_encode_idx = Sort_dict['advanced_type']['non_sensitive_non_encode_idx']
+            
+            idx_dict = {
+                's_si': s_si_idx,
+                's_mi':s_mi_idx,
+                's_non_encode': s_non_encode_idx,
+                'ns_si': ns_si_idx,
+                'ns_mi': ns_mi_idx,
+                'ns_non_encode': ns_non_encode_idx
+                }
+            
+            fig = plt.figure(figsize=(15,10))
+            gs_main = gridspec.GridSpec(2, 3, figure=fig)
+            
+            tqdm_bar = tqdm(total=6, desc=f'{layer}')
+            
+            i_ = 0
+            for i in range(2):
+                for j in range(3):
+                    # Define a sub-grid within the current cell of the main grid
+                    gs_sub = gridspec.GridSpecFromSubplotSpec(1, 2, width_ratios=[4, 1], subplot_spec=gs_main[i, j])
+
+                    ax_left = fig.add_subplot(gs_sub[0])
+                    ax_right = fig.add_subplot(gs_sub[1])
+                    
+                    if i_ != 0:
+                        ax_left.set_xticks([])
+                        ax_left.set_yticks([])
+    
+                    ax_right.set_xticks([])
+                    ax_right.set_yticks([])
+                    
+                    if idx_dict[list(idx_dict.keys())[i_]].size == 0:
+                        pct = len(idx_dict[list(idx_dict.keys())[i_]])/feature.shape[1]*100
+                        ax_left.set_title(list(idx_dict.keys())[i_] + f' {pct:.2f}%')
+                        ax_right.set_title('th')
+                        i_ +=1
+                    else:
+                        feature_test = feature[:,idx_dict[list(idx_dict.keys())[i_]]]
+                        
+                        for _ in range(feature_test.shape[1]):     # <- this is where you can use parallel computation
+                        
+                            #tmp = np.mean(np.array([feature_test[i*10:(i+1)*10,_] for i in range(50)]), axis=1)
+                            tmp = np.mean(feature_test.reshape(50,10,-1), axis=1)
+                            ax_left.scatter(np.arange(1,51), tmp, color=colors, alpha=0.1, marker='.', s=5)
+                            
+                        #with Parallel(n_jobs=os.cpu_count()) as parallel:
+                        #    pl = parallel(delayed(single_unit_scatterplot)(feature_test, i, ax_left, colors) for i in tqdm(range(feature_test.shape[1]), desc=f'[{list(idx_dict.keys())[i_]}]'))  
+                        
+                        pct = len(idx_dict[list(idx_dict.keys())[i_]])/feature.shape[1]*100
+                        
+                        ax_left.set_title(list(idx_dict.keys())[i_] + f' {pct:.2f}%')
+                        
+                        test = np.mean(np.array(feature_test), axis=0)+2*np.std(np.array(feature_test), axis=0)
+                        kde = gaussian_kde(test)
+                        x_vals = np.linspace(np.min(test), 1.2*np.max(test), 1000)
+                        y_vals = kde(x_vals)
+                        ax_left.set_ylim([y_lim_min, y_lim_max])
+                        ax_right.set_ylim([y_lim_min, y_lim_max])
+                        ax_right.plot(y_vals, x_vals, color='red')
+                        ax_right.set_title('th')
+                        
+                        y_vals_max = np.max(y_vals)
+                        x_vals_max = x_vals[np.where(y_vals==y_vals_max)[0].item()]
+                        
+                        ax_left.hlines(x_vals_max, 0, 50, colors='red', alpha=0.75, linestyle='--')
+                        ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='red', alpha=0.75, linestyle='--')
+                        
+                        i_ += 1
+                    tqdm_bar.update(1)
+                    
+            plt.tight_layout()
+            fig.savefig(os.path.join(fig_folder, f'{layer}.png'), bbox_inches='tight')
+            #fig.savefig(os.path.join(fig_folder, f'{layer}.eps'), bbox_inches='tight', format='eps')
+            #fig.savefig(os.path.join(fig_folder, f'{layer}.svg'), bbox_inches='tight', format='svg', transparent=True)
+            plt.close()
+    
     # legacy design - not in use
     def draw_encode_frequency_for_each_layer(self):         # encoding frequency for each layer
         print('[Codinfo] Executing draw_encode_frequency_for_each_layer...')
@@ -892,6 +997,11 @@ class Encode_feaquency_analyzer():
         plt.savefig(self.dest_Encode+'single_layer_encoding_performance.png', bbox_inches='tight', dpi=100)
         plt.close()
 
+def single_unit_scatterplot(feature_test, i, ax, colors):
+    tmp = feature_test[:,i]
+    tmp = np.array([tmp[i*10:(i+1)*10] for i in range(50)])
+    ax.scatter(np.arange(1,51), np.mean(np.array(tmp), axis=1), color=colors, alpha=0.1, marker='.', s=5)
+
 # define Encode for parallel calculation
 def encode_calculation(feature, i):
     """
@@ -918,12 +1028,12 @@ if __name__ == "__main__":
 
     root_dir = '/home/acxyle-workstation/Downloads'
 
-    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity Baseline/'), 
+    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity VGG16/'), 
                                                      layers=layers, neurons=neurons)
     
     #selectivity_analyzer.obtain_encode_class_dict()
     #selectivity_analyzer.selectivity_encode_layer_percent_plot()
     #selectivity_analyzer.draw_encode_frequency()
     #selectivity_analyzer.generate_encoded_id_unit_idx()
-    #selectivity_analyzer.SVM()
-    selectivity_analyzer.SVM_plot()
+    #selectivity_analyzer.SVM_plot()
+    selectivity_analyzer.layer_boxplot()

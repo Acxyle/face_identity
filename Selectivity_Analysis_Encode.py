@@ -922,30 +922,34 @@ class Encode_feaquency_analyzer():
                         feature_test = np.mean(feature_test.reshape(50,10,-1), axis=1)     # (50, num_units)
                         # ----- stats: mean
                         test_mean = feature_test.reshape(-1)    # (50*num_units)
-                        kde_mean = gaussian_kde(test_mean)
-                        x_vals_mean = np.linspace(np.min(test_mean), np.max(test_mean), 1000)
-                        y_vals_mean = kde_mean(x_vals_mean)
-                        ax_right.set_ylim([y_lim_min, y_lim_max])
-                        ax_right.plot(y_vals_mean, x_vals_mean, color='blue')
+                        if np.std(test_mean) == 0:
+                            pass
+                        else:
+                            kde_mean = gaussian_kde(test_mean)
+                            x_vals_mean = np.linspace(np.min(test_mean), np.max(test_mean), 1000)
+                            y_vals_mean = kde_mean(x_vals_mean)
+                            ax_right.set_ylim([y_lim_min, y_lim_max])
+                            ax_right.plot(y_vals_mean, x_vals_mean, color='blue')
                         
                         # ----- stats: mean+2std
-                        test = np.mean(feature_test, axis=0)+2*np.std(feature_test, axis=0)
-                        kde = gaussian_kde(test)
-                        x_vals = np.linspace(np.min(test), np.max(test), 1000)
-                        y_vals = kde(x_vals)
+                        test = np.mean(feature_test, axis=0) + 2*np.std(feature_test, axis=0)
+                        if np.std(test) == 0:
+                            pass
+                        else:
+                            kde = gaussian_kde(test)
+                            x_vals = np.linspace(np.min(test), np.max(test), 1000)
+                            y_vals = kde(x_vals)
+                            ax_right.plot(y_vals, x_vals, color='red')
+                        
+                            y_vals_max = np.max(y_vals)
+                            x_vals_max = x_vals[np.where(y_vals==y_vals_max)[0].item()]
+                            
+                            ax_left.hlines(x_vals_max, 0, 50, colors='red', alpha=0.5, linestyle='--')
+                            ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='red', alpha=0.5, linestyle='--')
+                        
                         ax_left.set_ylim([y_lim_min, y_lim_max])
                         ax_right.set_ylim([y_lim_min, y_lim_max])
-                        ax_right.plot(y_vals, x_vals, color='red')
                         ax_right.set_title('th')
-                        
-                        y_vals_max = np.max(y_vals)
-                        x_vals_max = x_vals[np.where(y_vals==y_vals_max)[0].item()]
-                        
-                        ax_left.hlines(x_vals_max, 0, 50, colors='red', alpha=0.5, linestyle='--')
-                        ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='red', alpha=0.5, linestyle='--')
-                        
-                        i_ += 1
-                    tqdm_bar.update(1)
                    
             ax.axis('off')
             ax.plot([],[],color='blue',label='mean')

@@ -836,7 +836,7 @@ class Encode_feaquency_analyzer():
         
         print('[Codinfo] Image saved')
         
-    def layer_boxplot(self,):
+        def layer_boxplot(self,):
         
         if not hasattr(self, 'Sort_dict'):
             self.Sort_dict = utils_.pickle_load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
@@ -850,7 +850,7 @@ class Encode_feaquency_analyzer():
         colorpool_jet = plt.get_cmap('jet', 50)
         colors = [colorpool_jet(i) for i in range(50)]
 
-        layers = self.layers[31:]
+        layers = self.layers[44:]
         
         for layer in layers:
             
@@ -858,7 +858,7 @@ class Encode_feaquency_analyzer():
             feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
             
             y_lim_min = np.min(feature)
-            y_lim_max = np.max(feature)*0.67
+            y_lim_max = np.max(feature)
         
             s_si_idx = Sort_dict['advanced_type']['sensitive_si_idx']
             s_mi_idx = Sort_dict['advanced_type']['sensitive_mi_idx']
@@ -919,44 +919,64 @@ class Encode_feaquency_analyzer():
                         ax_left.set_title(list(idx_dict.keys())[i_] + f' {pct:.2f}%')
                         
                         
-                        feature_test = np.mean(feature_test.reshape(50,10,-1), axis=1)     # (50, num_units)
-                        # ----- stats: mean
-                        test_mean = feature_test.reshape(-1)    # (50*num_units)
+                        feature_test_mean = np.mean(feature_test.reshape(50,10,-1), axis=1)     # (50, num_units)
+                        # ----- stats: mean for each ID
+                        test_mean = feature_test_mean.reshape(-1)    # (50*num_units)
                         if np.std(test_mean) == 0:
                             pass
                         else:
                             kde_mean = gaussian_kde(test_mean)
-                            x_vals_mean = np.linspace(np.min(test_mean), np.max(test_mean), 1000)
+                            x_vals_mean = np.linspace(np.min(test_mean), np.max(test_mean)*1.1, 1000)
                             y_vals_mean = kde_mean(x_vals_mean)
                             ax_right.set_ylim([y_lim_min, y_lim_max])
                             ax_right.plot(y_vals_mean, x_vals_mean, color='blue')
-                        
-                        # ----- stats: mean+2std
+                            
+                        # ----- stats: mean for each img
                         test = np.mean(feature_test, axis=0) + 2*np.std(feature_test, axis=0)
                         if np.std(test) == 0:
                             pass
                         else:
                             kde = gaussian_kde(test)
-                            x_vals = np.linspace(np.min(test), np.max(test), 1000)
+                            x_vals = np.linspace(np.min(test), np.max(test)*1.1, 1000)
+                            y_vals = kde(x_vals)
+                            ax_right.plot(y_vals, x_vals, color='teal')
+                        
+                            y_vals_max = np.max(y_vals)
+                            x_vals_max = x_vals[np.where(y_vals==y_vals_max)[0].item()]
+                            
+                            ax_left.hlines(x_vals_max, 0, 50, colors='teal', alpha=0.75, linestyle='--')
+                            ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='teal', alpha=0.75, linestyle='--')
+                        
+                        # ----- stats: mean+2std for each ID
+                        test = np.mean(feature_test_mean, axis=0) + 2*np.std(feature_test_mean, axis=0)
+                        if np.std(test) == 0:
+                            pass
+                        else:
+                            kde = gaussian_kde(test)
+                            x_vals = np.linspace(np.min(test), np.max(test)*1.1, 1000)
                             y_vals = kde(x_vals)
                             ax_right.plot(y_vals, x_vals, color='red')
                         
                             y_vals_max = np.max(y_vals)
                             x_vals_max = x_vals[np.where(y_vals==y_vals_max)[0].item()]
                             
-                            ax_left.hlines(x_vals_max, 0, 50, colors='red', alpha=0.5, linestyle='--')
-                            ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='red', alpha=0.5, linestyle='--')
+                            ax_left.hlines(x_vals_max, 0, 50, colors='red', alpha=0.75, linestyle='--')
+                            ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='red', alpha=0.75, linestyle='--')
                         
                         ax_left.set_ylim([y_lim_min, y_lim_max])
                         ax_right.set_ylim([y_lim_min, y_lim_max])
                         ax_right.set_title('th')
+                        
+                        i_ += 1
+                    tqdm_bar.update(1)
                    
             ax.axis('off')
             ax.plot([],[],color='blue',label='mean')
+            ax.plot([],[],color='teal',label='ref')
             ax.plot([],[],color='red',label='threshold')
             
             fig.suptitle(f'{layer} [{self.model_structure}]', y=0.97, fontsize=20)
-            fig.legend(loc='lower center', bbox_to_anchor=(0.5, -0.05), ncol=2, bbox_transform=plt.gcf().transFigure)
+            fig.legend(loc='lower center', bbox_to_anchor=(0.5, -0.05), ncol=3, bbox_transform=plt.gcf().transFigure)
             
             plt.tight_layout()
             fig.savefig(os.path.join(fig_folder, f'{layer}.png'), bbox_inches='tight')

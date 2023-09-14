@@ -836,7 +836,7 @@ class Encode_feaquency_analyzer():
         
         print('[Codinfo] Image saved')
         
-        def layer_boxplot(self,):
+    def layer_boxplot(self,):
         
         if not hasattr(self, 'Sort_dict'):
             self.Sort_dict = utils_.pickle_load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))

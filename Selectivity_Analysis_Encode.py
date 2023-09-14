@@ -842,6 +842,7 @@ class Encode_feaquency_analyzer():
             self.Sort_dict = utils_.pickle_load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
         
         plt.rcParams.update({"font.family": "Times New Roman"})
+        plt.rcParams.update({'font.size': 14})
         
         fig_folder = os.path.join(self.dest_Encode, 'Layer_units_stats')
         utils_.make_dir(fig_folder)
@@ -876,7 +877,7 @@ class Encode_feaquency_analyzer():
                 'ns_non_encode': ns_non_encode_idx
                 }
             
-            fig = plt.figure(figsize=(15,10))
+            fig, ax = plt.subplots(figsize=(16,8))
             gs_main = gridspec.GridSpec(2, 3, figure=fig)
             
             tqdm_bar = tqdm(total=6, desc=f'{layer}')
@@ -903,12 +904,11 @@ class Encode_feaquency_analyzer():
                         ax_right.set_title('th')
                         i_ +=1
                     else:
-                        feature_test = feature[:,idx_dict[list(idx_dict.keys())[i_]]]
+                        feature_test = feature[:,idx_dict[list(idx_dict.keys())[i_]]]     # (500, num_units)
                         
-                        for _ in range(feature_test.shape[1]):     # <- this is where you can use parallel computation
+                        for _ in range(feature_test.shape[1]):     # <- use parallel computation?
                         
-                            #tmp = np.mean(np.array([feature_test[i*10:(i+1)*10,_] for i in range(50)]), axis=1)
-                            tmp = np.mean(feature_test.reshape(50,10,-1), axis=1)
+                            tmp = np.mean(feature_test.reshape(50,10,-1), axis=1)[:, _]     # (50,1)
                             ax_left.scatter(np.arange(1,51), tmp, color=colors, alpha=0.1, marker='.', s=5)
                             
                         #with Parallel(n_jobs=os.cpu_count()) as parallel:
@@ -918,9 +918,20 @@ class Encode_feaquency_analyzer():
                         
                         ax_left.set_title(list(idx_dict.keys())[i_] + f' {pct:.2f}%')
                         
-                        test = np.mean(np.array(feature_test), axis=0)+2*np.std(np.array(feature_test), axis=0)
+                        
+                        feature_test = np.mean(feature_test.reshape(50,10,-1), axis=1)     # (50, num_units)
+                        # ----- stats: mean
+                        test_mean = feature_test.reshape(-1)    # (50*num_units)
+                        kde_mean = gaussian_kde(test_mean)
+                        x_vals_mean = np.linspace(np.min(test_mean), np.max(test_mean), 1000)
+                        y_vals_mean = kde_mean(x_vals_mean)
+                        ax_right.set_ylim([y_lim_min, y_lim_max])
+                        ax_right.plot(y_vals_mean, x_vals_mean, color='blue')
+                        
+                        # ----- stats: mean+2std
+                        test = np.mean(feature_test, axis=0)+2*np.std(feature_test, axis=0)
                         kde = gaussian_kde(test)
-                        x_vals = np.linspace(np.min(test), 1.2*np.max(test), 1000)
+                        x_vals = np.linspace(np.min(test), np.max(test), 1000)
                         y_vals = kde(x_vals)
                         ax_left.set_ylim([y_lim_min, y_lim_max])
                         ax_right.set_ylim([y_lim_min, y_lim_max])
@@ -930,12 +941,19 @@ class Encode_feaquency_analyzer():
                         y_vals_max = np.max(y_vals)
                         x_vals_max = x_vals[np.where(y_vals==y_vals_max)[0].item()]
                         
-                        ax_left.hlines(x_vals_max, 0, 50, colors='red', alpha=0.75, linestyle='--')
-                        ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='red', alpha=0.75, linestyle='--')
+                        ax_left.hlines(x_vals_max, 0, 50, colors='red', alpha=0.5, linestyle='--')
+                        ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='red', alpha=0.5, linestyle='--')
                         
                         i_ += 1
                     tqdm_bar.update(1)
-                    
+                   
+            ax.axis('off')
+            ax.plot([],[],color='blue',label='mean')
+            ax.plot([],[],color='red',label='threshold')
+            
+            fig.suptitle(f'{layer} [{self.model_structure}]', y=0.97, fontsize=20)
+            fig.legend(loc='lower center', bbox_to_anchor=(0.5, -0.05), ncol=2, bbox_transform=plt.gcf().transFigure)
+            
             plt.tight_layout()
             fig.savefig(os.path.join(fig_folder, f'{layer}.png'), bbox_inches='tight')
             #fig.savefig(os.path.join(fig_folder, f'{layer}.eps'), bbox_inches='tight', format='eps')
@@ -1028,7 +1046,7 @@ if __name__ == "__main__":
 
     root_dir = '/home/acxyle-workstation/Downloads'
 
-    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity VGG16/'), 
+    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity Baseline/'), 
                                                      layers=layers, neurons=neurons)
     
     #selectivity_analyzer.obtain_encode_class_dict()

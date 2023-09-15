@@ -536,10 +536,11 @@ class Encode_feaquency_analyzer():
         
         # ----- raw 2D fig
         fig = plt.figure(figsize=(20, 10))
-
+        cmap = 'turbo'
+        
         ax1 = plt.gcf().add_axes([0.1, 0.1, 0.25, 0.75])
         freq = freq_dict['all']
-        img = ax1.imshow(freq, origin='lower', vmin=vmin, vmax=vmax)
+        ax1.imshow(freq, origin='lower', vmin=vmin, vmax=vmax, cmap=cmap)
         ax1.set_title('all')
         
         ax1.set_xticks(np.arange(len(self.layers)))
@@ -554,7 +555,7 @@ class Encode_feaquency_analyzer():
         for key in list(freq_dict.keys())[1:]:
             freq = freq_dict[key]
             ax = plt.gcf().add_axes([0.375 + x_step*x, 0.1 + y_step*y, 0.175, 0.35])
-            ax.imshow(freq, origin='lower', vmin=vmin, vmax=vmax)
+            ax.imshow(freq, origin='lower', vmin=vmin, vmax=vmax, cmap=cmap)
             ax.set_title(f'{key}')
             ax.set_xticks([])
             ax.set_yticks([])
@@ -582,9 +583,10 @@ class Encode_feaquency_analyzer():
         X, Y = np.meshgrid(x, y)
 
         fig = plt.figure(figsize=(20, 10))
-
+        cmap = 'turbo'
+        
         ax1 = plt.gcf().add_axes([0.1, 0.1, 0.25, 0.75], projection='3d')
-        surf = ax1.plot_surface(X, Y, freq_dict['all'], cmap='viridis')
+        ax1.plot_surface(X, Y, freq_dict['all'], cmap=cmap)
 
         ax1.set_ylabel('IDs')
         ax1.set_zlabel('Normalized responses')
@@ -610,7 +612,7 @@ class Encode_feaquency_analyzer():
         for key in list(freq_dict.keys())[1:]:
             freq = freq_dict[key]
             ax = plt.gcf().add_axes([0.375 + x_step*x, 0.1 + y_step*y, 0.175, 0.35], projection='3d')
-            surf = ax.plot_surface(X, Y, freq_dict[key], cmap='viridis')
+            ax.plot_surface(X, Y, freq_dict[key], cmap=cmap, vmin=vmin, vmax=vmax)
             ax.set_title(f'{key}')
             
             ax.set_xticks(idx)

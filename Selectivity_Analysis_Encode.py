@@ -459,25 +459,51 @@ class Encode_feaquency_analyzer():
         freq_path = os.path.join(self.dest_Encode, 'freq.pkl')
         
         if os.path.exists(freq_path):
-            freq = utils_.pickle_load(freq_path)
+            freq_dict = utils_.pickle_load(freq_path)
         else:
             correct_id = utils_.lexicographic_order(50)+1
-            freq = []
+            
+            freq_dict = {
+                'all': self.generate_freq_map_single(correct_id),
+                
+                'sensitive_si': self.generate_freq_map_single(correct_id, 'advanced_type', 'sensitive_si_idx'),
+                'sensitive_mi': self.generate_freq_map_single(correct_id, 'advanced_type', 'sensitive_mi_idx'),
+                'sensitive_non_encode': self.generate_freq_map_single(correct_id, 'advanced_type', 'sensitive_non_encode_idx'),
+                
+                'non_sensitive_si': self.generate_freq_map_single(correct_id, 'advanced_type', 'non_sensitive_si_idx'),
+                'non_sensitive_mi': self.generate_freq_map_single(correct_id, 'advanced_type', 'non_sensitive_mi_idx'),
+                'non_sensitive_non_encode': self.generate_freq_map_single(correct_id, 'advanced_type', 'non_sensitive_non_encode_idx')
+                }
+
+            utils_.pickle_dump(freq_path, freq_dict)
+        
+        return freq_dict
     
-            for idx, _ in enumerate(self.layers):
-                
-                pool = [j for i in list(self.Encode_dict[_].values()) for j in i]
-                frequency = Counter(pool)
-                
-                frequency = {correct_id[_-1]:frequency[_] for _ in range(1,51)}     # map correct_id
-                frequency = {_:frequency[_] for _ in range(1,51)}     # sort correct_id
-                
-                frequency = {_:(frequency[_]/self.neurons[idx]) for _ in frequency.keys()}
-                #frequency = [frequency[_]/np.sum(frequency) for _ in range(50)]
-                freq.append(np.array(list(frequency.values())))
-                
-            freq = np.array(freq).T  
-            utils_.pickle_dump(freq_path, freq)
+    def generate_freq_map_single(self, correct_id, unit_type_1=None, unit_type_2=None):
+
+        freq = []
+
+        for idx in tqdm(range(len(self.layers)), desc=f'{unit_type_2}'):
+            
+            if unit_type_1 != None and unit_type_2 != None:
+                target_unit = self.Sort_dict[self.layers[idx]][unit_type_1][unit_type_2]
+            else:
+                target_unit = np.arange(self.neurons[idx])
+            
+            encode_layer = self.Encode_dict[self.layers[idx]]
+            target_encode = [encode_layer[single_encode] for single_encode in target_unit]
+
+            pool = [j for i in target_encode for j in i]     # for all unit
+            frequency = Counter(pool)
+            
+            frequency = {correct_id[_-1]:frequency[_] for _ in range(1,51)}     # map correct_id
+            frequency = {_:frequency[_] for _ in range(1,51)}     # sort correct_id
+            
+            frequency = {_:(frequency[_]/self.neurons[idx]) for _ in frequency.keys()}
+            #frequency = [frequency[_]/np.sum(frequency) for _ in range(50)]
+            freq.append(np.array(list(frequency.values())))
+            
+        freq = np.array(freq).T      
         
         return freq
 
@@ -495,83 +521,147 @@ class Encode_feaquency_analyzer():
         fig_folder = os.path.join(self.dest_Encode, 'Figures')
         utils_.make_dir(fig_folder)
         
-        freq = self.generate_freq_map()
+        freq_dict = self.generate_freq_map()
 
         # ----- exterior plots
-        self.draw_encode_feaquency_layers(freq)
+        #self.draw_encode_feaquency_layers(freq)
         
         idx, layers, _ = utils_.imaginary_neurons_vgg(self.layers)
         
+        vmin = 1.
+        vmax = 0.
+        for key in list(freq_dict.keys()):
+            vmin = np.min([vmin, np.min(freq_dict[key])])
+            vmax = np.max([vmax, np.max(freq_dict[key])])
+        
         # ----- raw 2D fig
-        fig, ax = plt.subplots(figsize=(10,7))
-        img = ax.imshow(freq, origin='lower')
-        fig.colorbar(img)
-        ax.set_title('layer and ID (2D)')
-        ax.set_xticks(np.arange(len(self.layers)))
-        ax.set_xticklabels(['' if _ not in idx else self.layers[_] for _ in range(len(self.layers))], rotation='vertical', fontname='Times New Roman')
-        ax.set_yticks(np.arange(0,50,5), np.arange(1,51,5), fontname='Times New Roman')
+        fig = plt.figure(figsize=(20, 10))
+
+        ax1 = plt.gcf().add_axes([0.1, 0.1, 0.25, 0.75])
+        freq = freq_dict['all']
+        img = ax1.imshow(freq, origin='lower', vmin=vmin, vmax=vmax)
+        ax1.set_title('all')
+        
+        ax1.set_xticks(np.arange(len(self.layers)))
+        ax1.set_xticklabels(['' if _ not in idx else self.layers[_] for _ in range(len(self.layers))], rotation='vertical')
+        ax1.set_yticks(np.arange(0,50,5), np.arange(1,51,5))
+    
+        x_step = 0.225
+        x = 0
+        y_step = 0.4
+        y = 0
+        
+        for key in list(freq_dict.keys())[1:]:
+            freq = freq_dict[key]
+            ax = plt.gcf().add_axes([0.375 + x_step*x, 0.1 + y_step*y, 0.175, 0.35])
+            ax.imshow(freq, origin='lower', vmin=vmin, vmax=vmax)
+            ax.set_title(f'{key}')
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.axis('off')
+            x+=1
+            if x == 3:
+                y = 1
+                x = 0
+                
+        cax = fig.add_axes([1.02, 0.1, 0.01, 0.75]) 
+        #fig.colorbar(img, cax=cax)     # plot the colorbar based on the img, but not every time the 'all' contains the vmin and vmax
+        cmap = plt.cm.viridis
+        norm = plt.Normalize(vmin=vmin, vmax=vmax)
+        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)   # plot colorbar based on arbitrary vmin and vmax
+            
+        fig.suptitle(f'layer - ID [{self.model_structure}]', x=0.55, y=0.925, fontsize=20)
+        
         fig.savefig(os.path.join(fig_folder, 'layer and ID (2D).png'), bbox_inches='tight')
         fig.savefig(os.path.join(fig_folder, 'layer and ID (2D).eps'), bbox_inches='tight', format='eps')
         plt.close()
         
         # ----- raw 3D fig
-        x = np.arange(freq.shape[1])
-        y = np.arange(freq.shape[0])
+        x = np.arange(len(self.layers))
+        y = np.arange(self.num_classes)
         X, Y = np.meshgrid(x, y)
 
-        fig = plt.figure(figsize=(len(self.layers)/2, self.num_classes/2))
-        ax = fig.add_subplot(111, projection='3d')
-        surf = ax.plot_surface(X, Y, freq, cmap='viridis')
+        fig = plt.figure(figsize=(20, 10))
 
-        #ax.set_xlabel('Layers')
-        ax.set_ylabel('IDs', fontname='Times New Roman')
-        ax.set_zlabel('Normalized responses', fontname='Times New Roman')
-        
-        ax.set_xticks(np.arange(len(self.layers)))
-        ax.set_xticklabels(['' if _ not in idx else self.layers[_] for _ in range(len(self.layers))], rotation='vertical', fontname='Times New Roman')
-        ax.set_yticks(np.arange(0, 50, 5), np.arange(1, 51, 5), fontname='Times New Roman')
+        ax1 = plt.gcf().add_axes([0.1, 0.1, 0.25, 0.75], projection='3d')
+        surf = ax1.plot_surface(X, Y, freq_dict['all'], cmap='viridis')
 
-        ax.set_title('Layer and ID (3D)', fontname='Times New Roman')
+        ax1.set_ylabel('IDs')
+        ax1.set_zlabel('Normalized responses')
         
-        for label in ax.get_xticklabels():
+        ax1.set_xticks(np.arange(len(self.layers)))
+        ax1.set_xticklabels(['' if _ not in idx else self.layers[_] for _ in range(len(self.layers))], rotation='vertical')
+        ax1.set_yticks(np.arange(0, 50, 5), np.arange(1, 51, 5))
+
+        ax1.set_title('Layer and ID (3D)')
+        
+        for label in ax1.get_xticklabels():
             label.set_rotation(-50)  # 45 degree angle for x-axis tick labels
-        for label in ax.get_yticklabels():
+        for label in ax1.get_yticklabels():
             label.set_rotation(-35)  # -45 degree angle for y-axis tick labels
         
-        fig.colorbar(surf, shrink=0.4)
-        ax.view_init(elev=30, azim=225)
+        ax1.view_init(elev=30, azim=225)
+        
+        x_step = 0.225
+        x = 0
+        y_step = 0.4
+        y = 0
+        
+        for key in list(freq_dict.keys())[1:]:
+            freq = freq_dict[key]
+            ax = plt.gcf().add_axes([0.375 + x_step*x, 0.1 + y_step*y, 0.175, 0.35], projection='3d')
+            surf = ax.plot_surface(X, Y, freq_dict[key], cmap='viridis')
+            ax.set_title(f'{key}')
+            
+            ax.set_xticks(idx)
+            ax.set_xticklabels(['' for _ in idx])
+            
+            ax.set_yticks(np.arange(0, 50, 5), np.arange(1, 51, 5))
+            ax.set_yticklabels(['' for _ in np.arange(0, 50, 5)])
+            
+            ax.set_zlim(vmin, vmax)
+            
+            ax.view_init(elev=30, azim=225)
+            
+            #ax.set_yticks([])
+            #ax.axis('off')
+            x+=1
+            if x == 3:
+                y = 1
+                x = 0
+        
+        cax = fig.add_axes([1.02, 0.15, 0.01, 0.7])
+        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
+        fig.suptitle(f'layer - ID (3D) [{self.model_structure}]', x=0.55, y=0.925, fontsize=20)
 
         plt.tight_layout()
         fig.savefig(os.path.join(fig_folder, 'layer and ID (3D).png'), bbox_inches='tight')
         fig.savefig(os.path.join(fig_folder, 'layer and ID (3D).eps'), bbox_inches='tight', format='eps')
         plt.close()
         
-# =============================================================================
-#         # ----- interpolation
-#         x_fine_grid = np.linspace(0, freq.shape[1]-1, 1000)  # 10 times denser
-#         y_fine_grid = np.linspace(0, freq.shape[0]-1, 1000)  # 10 times denser
-#         
-#         ct_interp_full = CloughTocher2DInterpolator(list(zip(X.ravel(), Y.ravel())), freq.ravel())
-#         Z_fine_ct = ct_interp_full(np.meshgrid(y_fine_grid, x_fine_grid)[0], np.meshgrid(y_fine_grid, x_fine_grid)[1])
-#         
-#         fig = plt.figure(figsize=(20, 14))
-#         ax = fig.add_subplot(111, projection='3d')
-#         ax.plot_surface(np.meshgrid(y_fine_grid, x_fine_grid)[0], np.meshgrid(y_fine_grid, x_fine_grid)[1], 
-#                         Z_fine_ct, cmap='viridis')
-# 
-#         ax.set_xlabel('X axis')
-#         ax.set_ylabel('Y axis')
-#         ax.set_zlabel('Z axis')
-#         ax.set_title('Interpolation using CloughTocher2DInterpolator')
-#         fig.colorbar(surf, shrink=0.5)
-#         ax.view_init(elev=30, azim=225)
-#         
-#         plt.tight_layout()
-#         fig.savefig(os.path.join(fig_folder, '3D interp.png'), bbox_inches='tight')
-#         fig.savefig(os.path.join(fig_folder, '3D interp.eps'), bbox_inches='tight', format='eps')
-#         plt.close()
-#         # -----
-# =============================================================================
+        # ----- interpolation
+        #x_fine_grid = np.linspace(0, freq.shape[1]-1, 1000)  # 10 times denser
+        #y_fine_grid = np.linspace(0, freq.shape[0]-1, 1000)  # 10 times denser
+        
+        #ct_interp_full = CloughTocher2DInterpolator(list(zip(X.ravel(), Y.ravel())), freq.ravel())
+        #Z_fine_ct = ct_interp_full(np.meshgrid(y_fine_grid, x_fine_grid)[0], np.meshgrid(y_fine_grid, x_fine_grid)[1])
+        
+        #fig = plt.figure(figsize=(20, 14))
+        #ax = fig.add_subplot(111, projection='3d')
+        #ax.plot_surface(np.meshgrid(y_fine_grid, x_fine_grid)[0], np.meshgrid(y_fine_grid, x_fine_grid)[1], Z_fine_ct, cmap='viridis')
+
+        #ax.set_xlabel('X axis')
+        #ax.set_ylabel('Y axis')
+        #ax.set_zlabel('Z axis')
+        #ax.set_title('Interpolation using CloughTocher2DInterpolator')
+        #fig.colorbar(surf, shrink=0.5)
+        #ax.view_init(elev=30, azim=225)
+        
+        #plt.tight_layout()
+        #fig.savefig(os.path.join(fig_folder, '3D interp.png'), bbox_inches='tight')
+        #fig.savefig(os.path.join(fig_folder, '3D interp.eps'), bbox_inches='tight', format='eps')
+        #plt.close()
+        # -----
         
     #FIXME - the index problem, try to convert the lexical to natural order from the very beginning
     def generate_encoded_id_unit_idx(self, ):
@@ -850,7 +940,7 @@ class Encode_feaquency_analyzer():
         colorpool_jet = plt.get_cmap('jet', 50)
         colors = [colorpool_jet(i) for i in range(50)]
 
-        layers = self.layers[44:]
+        layers = self.layers[31:]
         
         for layer in layers:
             
@@ -1075,7 +1165,7 @@ if __name__ == "__main__":
     
     #selectivity_analyzer.obtain_encode_class_dict()
     #selectivity_analyzer.selectivity_encode_layer_percent_plot()
-    #selectivity_analyzer.draw_encode_frequency()
+    selectivity_analyzer.draw_encode_frequency()
     #selectivity_analyzer.generate_encoded_id_unit_idx()
     #selectivity_analyzer.SVM_plot()
-    selectivity_analyzer.layer_boxplot()
+    #selectivity_analyzer.layer_boxplot()

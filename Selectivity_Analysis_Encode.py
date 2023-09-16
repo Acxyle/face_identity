@@ -941,10 +941,8 @@ class Encode_feaquency_analyzer():
         
         colorpool_jet = plt.get_cmap('jet', 50)
         colors = [colorpool_jet(i) for i in range(50)]
-
-        layers = self.layers[31:]
         
-        for layer in layers:
+        for layer in self.layers:
             
             Sort_dict = self.Sort_dict[layer]
             feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
@@ -997,21 +995,31 @@ class Encode_feaquency_analyzer():
                         i_ +=1
                     else:
                         feature_test = feature[:,idx_dict[list(idx_dict.keys())[i_]]]     # (500, num_units)
+                        feature_test_mean = feature_test.reshape(self.num_classes, self.num_samples, -1)     # (50, 10, num_units)
                         
-                        for _ in range(feature_test.shape[1]):     # <- use parallel computation?
+                        # ----- legacy design
+                        #for _ in range(feature_test.shape[1]):     
+                        #    tmp = np.mean(feature_test.reshape(50,10,-1), axis=1)[:, _]     # (50,1)
+                        #    ax_left.scatter(np.arange(1,51), tmp, color=colors, alpha=0.1, marker='.', s=5)
+                        # -----
+                           
+                        # -----
+                        x = np.array([[[_] for _ in range(self.num_classes)]*feature_test_mean.shape[2]]).reshape(-1)
+                        y = np.mean(feature_test_mean, axis=1).reshape(-1)
                         
-                            tmp = np.mean(feature_test.reshape(50,10,-1), axis=1)[:, _]     # (50,1)
-                            ax_left.scatter(np.arange(1,51), tmp, color=colors, alpha=0.1, marker='.', s=5)
-                            
-                        #with Parallel(n_jobs=os.cpu_count()) as parallel:
-                        #    pl = parallel(delayed(single_unit_scatterplot)(feature_test, i, ax_left, colors) for i in tqdm(range(feature_test.shape[1]), desc=f'[{list(idx_dict.keys())[i_]}]'))  
+                        c = np.array(colors)
+                        c = np.tile(c, [feature_test_mean.shape[2], 1])
+                        #c = np.repeat(c, 10, axis=0)     # <- for each img
+                        
+                        # -----
+                        ax_left.scatter(x, y, color=c, alpha=0.1, marker='.', s=5)
+                        # -----
                         
                         pct = len(idx_dict[list(idx_dict.keys())[i_]])/feature.shape[1]*100
+                        ax_left.set_title(list(idx_dict.keys())[i_] + f' [{pct:.2f}%]')
+                        # -----
                         
-                        ax_left.set_title(list(idx_dict.keys())[i_] + f' {pct:.2f}%')
-                        
-                        
-                        feature_test_mean = np.mean(feature_test.reshape(50,10,-1), axis=1)     # (50, num_units)
+                        feature_test_mean = np.mean(feature_test_mean, axis=1)     # (50, num_units)
                         # ----- stats: mean for each ID
                         test_mean = feature_test_mean.reshape(-1)    # (50*num_units)
                         if np.std(test_mean) == 0:
@@ -1130,11 +1138,16 @@ class Encode_feaquency_analyzer():
         plt.tight_layout()
         plt.savefig(self.dest_Encode+'single_layer_encoding_performance.png', bbox_inches='tight', dpi=100)
         plt.close()
-
+        
 def single_unit_scatterplot(feature_test, i, ax, colors):
     tmp = feature_test[:,i]
-    tmp = np.array([tmp[i*10:(i+1)*10] for i in range(50)])
-    ax.scatter(np.arange(1,51), np.mean(np.array(tmp), axis=1), color=colors, alpha=0.1, marker='.', s=5)
+    tmp = tmp.reshape(50, 10)
+    
+    #tmp = np.mean(tmp, axis=1)
+    #ax.scatter(np.arange(1,51), tmp, color=colors, alpha=0.1, marker='.', s=5)
+    
+    for i in range(50):
+        ax.scatter(np.ones(10)*i, tmp[i,:], color=colors[i], alpha=0.1, marker='.', s=5)
 
 # define Encode for parallel calculation
 def encode_calculation(feature, i):
@@ -1162,12 +1175,12 @@ if __name__ == "__main__":
 
     root_dir = '/home/acxyle-workstation/Downloads'
 
-    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity Baseline/'), 
+    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity VGG16/'), 
                                                      layers=layers, neurons=neurons)
     
     #selectivity_analyzer.obtain_encode_class_dict()
     #selectivity_analyzer.selectivity_encode_layer_percent_plot()
-    selectivity_analyzer.draw_encode_frequency()
+    #selectivity_analyzer.draw_encode_frequency()
     #selectivity_analyzer.generate_encoded_id_unit_idx()
     #selectivity_analyzer.SVM_plot()
-    #selectivity_analyzer.layer_boxplot()
+    selectivity_analyzer.layer_boxplot()

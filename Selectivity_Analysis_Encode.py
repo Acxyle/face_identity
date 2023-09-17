@@ -668,6 +668,8 @@ class Encode_feaquency_analyzer():
     #FIXME - the index problem, try to convert the lexical to natural order from the very beginning
     def generate_encoded_id_unit_idx(self, ):
         
+        print('[Codinfo] Generating_encoded_id_unit_idx...')
+        
         correct_id = utils_.lexicographic_order(50)+1
         idx_folder = os.path.join(self.dest_Encode, 'unit_of_interested')
         utils_.make_dir(idx_folder)
@@ -677,14 +679,14 @@ class Encode_feaquency_analyzer():
         if os.path.exists(Encode_id_unit_dict_path):
             layer_dict = utils_.pickle_load(Encode_id_unit_dict_path)
         else:    
-            freq = self.generate_freq_map()
+            freq_dict = self.generate_freq_map()
             layer_dict = {}
             for idx, layer in tqdm(enumerate(self.layers), desc='enc'):
                 
                 encoded_id_dict = {}
                 test = list(self.Encode_dict[layer].values())
                 for level in range(0,4):
-                    encoded_id = np.where(freq[:,idx]>=utils_.generate_threshold(freq[:,idx], delta=level))[0]+1
+                    encoded_id = np.where(freq_dict['all'][:,idx] >= utils_.generate_threshold(freq_dict['all'][:,idx], delta=level))[0]+1
      
                     test_dict = {}
                     if encoded_id.size>0:
@@ -928,7 +930,109 @@ class Encode_feaquency_analyzer():
         
         print('[Codinfo] Image saved')
         
-    def layer_boxplot(self,):
+    def layer_response_single_boxplot(self, random_select_units=10):
+        
+        """
+            this function provides boxplot of example units of different types
+        """
+        
+        if not hasattr(self, 'Sort_dict'):
+            self.Sort_dict = utils_.pickle_load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
+            
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        plt.rcParams.update({'font.size': 14})
+        
+        fig_folder = os.path.join(self.dest_Encode, 'Layer_units_samples')
+        utils_.make_dir(fig_folder)
+        
+        colorpool_jet = plt.get_cmap('jet', 50)
+        colors = [colorpool_jet(i) for i in range(50)]
+    
+        for layer in self.layers:
+            
+            layer_fig_folder = os.path.join(fig_folder, f'{layer}')
+            utils_.make_dir(layer_fig_folder)
+            
+            Sort_dict = self.Sort_dict[layer]
+            feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
+            
+            y_lim_min = np.min(feature)
+            y_lim_max = np.max(feature)
+            
+            idx_dict = {
+                's_si': Sort_dict['advanced_type']['sensitive_si_idx'],
+                's_mi': Sort_dict['advanced_type']['sensitive_mi_idx'],
+                's_non_encode': Sort_dict['advanced_type']['sensitive_non_encode_idx'],
+                'ns_si': Sort_dict['advanced_type']['non_sensitive_si_idx'],
+                'ns_mi': Sort_dict['advanced_type']['non_sensitive_mi_idx'],
+                'ns_non_encode': Sort_dict['advanced_type']['non_sensitive_non_encode_idx']
+                }
+            
+            for key in tqdm(list(idx_dict.keys()), desc=f'{layer}'):     # for each type
+                test_type = idx_dict[key]
+                
+                type_layer_fig_folder = os.path.join(layer_fig_folder, f'{key}')
+                utils_.make_dir(type_layer_fig_folder)
+                
+                if test_type.size == 0:
+                    pass
+                
+                else:
+                    if test_type.size > random_select_units:
+                        test_idces = random.sample(list(test_type), random_select_units)
+                    else:
+                        test_idces = test_type
+                    
+                    for idx in test_idces:     # for each unit
+                    
+                        fig, ax = plt.subplots(1, 2, figsize=(20,10))
+                    
+                        x = np.array([[_]*10 for _ in range(1,51)])
+                        y = feature[:, idx]
+                        c = np.repeat(np.array(colors), 10, axis=0)
+                        
+                        test_feature = [y.reshape(self.num_classes, self.num_samples)[_] for _ in range(self.num_classes)]
+                        test_feature_mean = np.array([np.mean(test_feature[_]) for _ in range(self.num_classes)])
+                        
+                        ax[0].scatter(x, y, color=c, s=10)
+                        ax[0].scatter(np.arange(1,51), test_feature_mean, color=colors, marker='d')
+                        for _ in range(self.num_classes):
+                            ax[0].vlines(_+1, np.min(y), test_feature_mean[_], linestyle='--')
+                        ax[0].hlines(np.mean(y)+2*np.std(y), 1, 50, colors='red', linestyle='--', label=r'$V_{th}=\bar{x}+\sqrt{\frac{1}{500}\sum(x_i-\bar{x})^2}$')
+                        ax[0].hlines(np.mean(test_feature_mean)+2*np.std(test_feature_mean), 1, 50, colors='teal', linestyle='--', label=r'$ref=\bar{x}+\sqrt{\frac{1}{50}\sum(x_i-\bar{x_i})^2}, \bar{x_i} = \frac{1}{10}\sum{x_i}$')
+                        ax[0].set_title('scatters')
+                        ax[0].legend(framealpha=0.75)
+  
+                        ax[0].set_ylim([y_lim_min, y_lim_max])
+                        
+                        boxes = ax[1].boxplot(test_feature, patch_artist=True, sym='+')
+                        ax[1].hlines(np.mean(np.array(test_feature))+2*np.std(np.array(test_feature)), 1, 50, colors='red', linestyle='--')
+                        ax[1].hlines(np.mean(test_feature_mean)+2*np.std(test_feature_mean), 1, 50, colors='teal', linestyle='--')
+                        
+                        ax[1].scatter(np.arange(1,51), test_feature_mean, color=colors, marker='d')
+                        for _ in range(self.num_classes):
+                            ax[1].vlines(_+1, np.min(y), test_feature_mean[_], linestyle='--')
+                        
+                        for i, _ in enumerate(boxes['boxes']):
+                            _.set(color=colors[i], alpha=0.5)
+                        for i, _ in enumerate(boxes['fliers']):
+                            _.set(marker='+', markerfacecolor=colors[i], markeredgecolor=colors[i], markersize=10, alpha=0.75)
+                        ax[1].set_title('boxplots')
+                        
+                        ax[1].set_ylim([y_lim_min, y_lim_max])
+                        
+                        fig.suptitle(f'[{layer}] unit: {idx}', y=0.98)
+                        plt.tight_layout()
+                        
+                        fig.savefig(os.path.join(type_layer_fig_folder, f'{key}_{idx}.png'), bbox_inches='tight')
+                        #fig.savefig(os.path.join(fig_folder, f'{layer}.eps'), bbox_inches='tight', format='eps')
+                        #fig.savefig(os.path.join(fig_folder, f'{layer}.svg'), bbox_inches='tight', format='svg', transparent=True)
+                        plt.close()
+                        
+                        gc.collect()
+                    
+    
+    def layer_response_assemble(self,):
         
         if not hasattr(self, 'Sort_dict'):
             self.Sort_dict = utils_.pickle_load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
@@ -942,29 +1046,23 @@ class Encode_feaquency_analyzer():
         colorpool_jet = plt.get_cmap('jet', 50)
         colors = [colorpool_jet(i) for i in range(50)]
         
-        for layer in self.layers:
+        layers = self.layers[1:2]
+        
+        for layer in layers:
             
             Sort_dict = self.Sort_dict[layer]
             feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
             
             y_lim_min = np.min(feature)
             y_lim_max = np.max(feature)
-        
-            s_si_idx = Sort_dict['advanced_type']['sensitive_si_idx']
-            s_mi_idx = Sort_dict['advanced_type']['sensitive_mi_idx']
-            s_non_encode_idx = Sort_dict['advanced_type']['sensitive_non_encode_idx']
-            
-            ns_si_idx = Sort_dict['advanced_type']['non_sensitive_si_idx']
-            ns_mi_idx = Sort_dict['advanced_type']['non_sensitive_mi_idx']
-            ns_non_encode_idx = Sort_dict['advanced_type']['non_sensitive_non_encode_idx']
             
             idx_dict = {
-                's_si': s_si_idx,
-                's_mi':s_mi_idx,
-                's_non_encode': s_non_encode_idx,
-                'ns_si': ns_si_idx,
-                'ns_mi': ns_mi_idx,
-                'ns_non_encode': ns_non_encode_idx
+                's_si': Sort_dict['advanced_type']['sensitive_si_idx'],
+                's_mi': Sort_dict['advanced_type']['sensitive_mi_idx'],
+                's_non_encode': Sort_dict['advanced_type']['sensitive_non_encode_idx'],
+                'ns_si': Sort_dict['advanced_type']['non_sensitive_si_idx'],
+                'ns_mi': Sort_dict['advanced_type']['non_sensitive_mi_idx'],
+                'ns_non_encode': Sort_dict['advanced_type']['non_sensitive_non_encode_idx']
                 }
             
             fig, ax = plt.subplots(figsize=(16,8))
@@ -997,12 +1095,6 @@ class Encode_feaquency_analyzer():
                         feature_test = feature[:,idx_dict[list(idx_dict.keys())[i_]]]     # (500, num_units)
                         feature_test_mean = feature_test.reshape(self.num_classes, self.num_samples, -1)     # (50, 10, num_units)
                         
-                        # ----- legacy design
-                        #for _ in range(feature_test.shape[1]):     
-                        #    tmp = np.mean(feature_test.reshape(50,10,-1), axis=1)[:, _]     # (50,1)
-                        #    ax_left.scatter(np.arange(1,51), tmp, color=colors, alpha=0.1, marker='.', s=5)
-                        # -----
-                           
                         # -----
                         x = np.array([[[_] for _ in range(self.num_classes)]*feature_test_mean.shape[2]]).reshape(-1)
                         y = np.mean(feature_test_mean, axis=1).reshape(-1)
@@ -1012,7 +1104,7 @@ class Encode_feaquency_analyzer():
                         #c = np.repeat(c, 10, axis=0)     # <- for each img
                         
                         # -----
-                        ax_left.scatter(x, y, color=c, alpha=0.1, marker='.', s=5)
+                        ax_left.scatter(x, y, color=c, alpha=0.1, marker='.', s=1)     # use small size to replace adjustable alpha
                         # -----
                         
                         pct = len(idx_dict[list(idx_dict.keys())[i_]])/feature.shape[1]*100
@@ -1081,8 +1173,10 @@ class Encode_feaquency_analyzer():
             plt.tight_layout()
             fig.savefig(os.path.join(fig_folder, f'{layer}.png'), bbox_inches='tight')
             #fig.savefig(os.path.join(fig_folder, f'{layer}.eps'), bbox_inches='tight', format='eps')
-            #fig.savefig(os.path.join(fig_folder, f'{layer}.svg'), bbox_inches='tight', format='svg', transparent=True)
+            fig.savefig(os.path.join(fig_folder, f'{layer}.svg'), bbox_inches='tight', format='svg', transparent=True)
             plt.close()
+            
+            gc.collect()
     
     # legacy design - not in use
     def draw_encode_frequency_for_each_layer(self):         # encoding frequency for each layer
@@ -1158,7 +1252,7 @@ def encode_calculation(feature, i):
     feature_of_single_unit = feature[:, i]
     grouped_feature_of_single_unit = feature_of_single_unit.reshape(-1,10)
     
-    threshold = np.mean(feature_of_single_unit) + 2*np.std(feature_of_single_unit)
+    threshold = np.mean(feature_of_single_unit) + 2*np.std(feature_of_single_unit)     # [notice] np.std([500 firing_rates]) is np.sqrt(10) times larger than np.std([50 mean_firing_rates])
     local_mean = np.mean(grouped_feature_of_single_unit, axis=1)     # array of 50 values
     
     encode_class = np.where(local_mean>threshold)[0]+1  # '>' prevent all 0
@@ -1170,17 +1264,20 @@ def encode_calculation(feature, i):
 
 if __name__ == "__main__":
     
-    model_ = vgg.__dict__['vgg16'](num_classes=50)
-    layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, 'vgg16')
+    model_name = 'vgg16_bn'
+    
+    model_ = vgg.__dict__[model_name](num_classes=50)
+    layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, model_name)
 
     root_dir = '/home/acxyle-workstation/Downloads'
 
-    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity VGG16/'), 
+    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T4_CelebA2622/'), 
                                                      layers=layers, neurons=neurons)
     
     #selectivity_analyzer.obtain_encode_class_dict()
     #selectivity_analyzer.selectivity_encode_layer_percent_plot()
     #selectivity_analyzer.draw_encode_frequency()
     #selectivity_analyzer.generate_encoded_id_unit_idx()
-    #selectivity_analyzer.SVM_plot()
-    selectivity_analyzer.layer_boxplot()
+    selectivity_analyzer.SVM_plot()
+    selectivity_analyzer.layer_response_assemble()
+    selectivity_analyzer.layer_response_single_boxplot()

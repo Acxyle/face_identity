@@ -4,6 +4,8 @@
 Created on Sat Feb 18 15:23:50 2023
 
 @author: acxyle
+
+[Notice] Most of the code are legacy from Jinge Wang's code, most of the code is not in use
 """
 import os
 import pickle
@@ -158,7 +160,8 @@ class Selectivity_Analysis_SIMI():
         
         self.plot_single_decoding(ax, layer_list, all_acc_dict,ID_acc_dict, nonID_acc_dict, SIMI_acc_dict, SI_acc_dict, MI_acc_dict, vertical=True, title='Decoding_Performance_(all)')
         plt.close()
-
+        
+    # ------------------------------------------------
     #FIXME
     def plt_SVM_all_calculation_comparison(self):
         print('[Codinfo] Executing SIMI plotting for selected neuron...')

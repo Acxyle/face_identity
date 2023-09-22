@@ -12,10 +12,16 @@ Created on Wed Feb 15 13:54:55 2023
         4. draw_merged_encode_frequency_for_each_layer()
         5. draw_single_neuron_response()
     
-    Task: Sept 6, 2023
+    Task: Sept 17, 2023
         
-        rewrite the code based on my preference - make the 'encode' not based on ANOVA but independent
-
+        1) devide computation and plot
+        2) further divide the unit types
+        2.1) refer to the threshold in biological neuron to remove less active unit
+        2.2) use 'ref (mean(mean_values)+2std(mean_values))' as an additional condition to select spontaneous active unites
+    
+    Task: Sept 22, 2023
+    
+        1) refer to ANOVA, write function(s) to compare results from different modules
 """
 
 import os
@@ -77,7 +83,7 @@ class Encode_feaquency_analyzer():
             raise RuntimeError('[Codwarning] invalid layers and neurons')
             
         # FIXME - to have a better function to plot
-        self.subplot_row, self.subplot_col = self.generate_subplot_row_and_col(len(self.layers))
+        #self.subplot_row, self.subplot_col = self.generate_subplot_row_and_col(len(self.layers))
         
         self.model_structure = root.split('/')[-2].split(' ')[2]
         
@@ -111,11 +117,9 @@ class Encode_feaquency_analyzer():
             raise RuntimeError('[Coderror] detected the features and layers not match')
         # -----
         
-        for idx, feature_path in enumerate(self.feature_list):     # for each layer
+        for layer in self.layers:     # for each layer
             
-            layer = feature_path.split('/')[-1].split('.')[0]
-        
-            feature = utils_.pickle_load(feature_path)      # load feature matrix
+            feature = utils_.pickle_load(os.path.join(self.root, f'{layer}.pkl'))      # load feature matrix
 
             sensitive_idx = self.ANOVA_idces[layer]
              
@@ -123,56 +127,56 @@ class Encode_feaquency_analyzer():
             
             unit_encode_dict = {}
 
-            #for i in tqdm(range(feature.shape[1]), desc='unit'):     # for each neuron
+            # -----
             with Parallel(n_jobs=num_workers) as parallel:
                 pl = parallel(delayed(encode_calculation)(feature, i) for i in tqdm(range(feature.shape[1]), desc=f'[{layer}] Encode'))  
-                
-            for i in range(feature.shape[1]):
-                unit_encode_dict[i] = pl[i]
+            # -----
+ 
+            unit_encode_dict = {i:pl[i] for i in range(len(pl))}     # convert the returned list to dict
 
-            self.Encode_dict[layer] = unit_encode_dict
+            self.Encode_dict[layer] = unit_encode_dict     # save as dict for further use
             
-            # [notice] 2 types of units
             unit_encode_list = [_ for _ in unit_encode_dict.values()]
             unit_encode_num = np.array([len(_) for _ in unit_encode_list])
             
+            # ----- basic encode units
             si_idx = np.where(unit_encode_num==1)[0]     # 2.1 si_idx
             mi_idx = np.where(unit_encode_num>1)[0]     # 2.2 mi_idx
+            encode_idx = np.concatenate((si_idx, mi_idx))     # 2.3 (2.1+2.2) encode_idx
+            non_encode_idx = np.setdiff1d(np.arange(feature.shape[1]), encode_idx)     # 2.4 non_encode_idx
             
-            encode_idx = np.hstack((si_idx, mi_idx))     # 2.3 (2.1+2.2) encode_idx
-            non_encode_idx = np.array(list(set(np.arange(feature.shape[1]))-set(encode_idx)))     # 2.4 non_encode_idx
-            
+            # ----- sensitive units
             sensitive_si_idx = np.intersect1d(si_idx, sensitive_idx)     # 3.1 sensitive_si_idx
             sensitive_mi_idx = np.intersect1d(mi_idx, sensitive_idx)     # 3.2 sensitive_mi_idx
             sensitive_encode_idx = np.intersect1d(sensitive_idx, encode_idx)     # 3.3 sensitive_encode_idx
             sensitive_non_encode_idx = np.intersect1d(sensitive_idx, non_encode_idx)     # 3.4 sensitive_non_encode_idx
             
+            # ----- non_sensitive units
             non_sensitive_si_idx = np.intersect1d(non_sensitive_idx, si_idx)     # 4.1 ns_s
             non_sensitive_mi_idx = np.intersect1d(non_sensitive_idx, mi_idx)     # 4.2 ns_m
             non_sensitive_encode_idx = np.intersect1d(non_sensitive_idx, encode_idx)     # 4.3 ns_e
             non_sensitive_non_encode_idx = np.intersect1d(non_sensitive_idx, non_encode_idx)     # 4.4 ns_ne
             
-            basic_type = {
-                'si_idx': si_idx,
-                'mi_idx': mi_idx,
-                'non_encode_idx': non_encode_idx
-                }
-            
-            advanced_type = {
-                'sensitive_si_idx': sensitive_si_idx,
-                'sensitive_mi_idx': sensitive_mi_idx,
-                'sensitive_encode_idx': sensitive_encode_idx,
-                'sensitive_non_encode_idx': sensitive_non_encode_idx,
-                
-                'non_sensitive_si_idx': non_sensitive_si_idx,
-                'non_sensitive_mi_idx': non_sensitive_mi_idx,
-                'non_sensitive_encode_idx': non_sensitive_encode_idx,
-                'non_sensitive_non_encode_idx': non_sensitive_non_encode_idx,
-                }
-            
+            # --- save in dict
             unit_sort_dict = {
-                'basic_type': basic_type,
-                'advanced_type': advanced_type
+                
+                'basic_type': {
+                    'si_idx': si_idx,
+                    'mi_idx': mi_idx,
+                    'non_encode_idx': non_encode_idx
+                    },
+                
+                'advanced_type': {
+                    'sensitive_si_idx': sensitive_si_idx,
+                    'sensitive_mi_idx': sensitive_mi_idx,
+                    'sensitive_encode_idx': sensitive_encode_idx,
+                    'sensitive_non_encode_idx': sensitive_non_encode_idx,
+                    
+                    'non_sensitive_si_idx': non_sensitive_si_idx,
+                    'non_sensitive_mi_idx': non_sensitive_mi_idx,
+                    'non_sensitive_encode_idx': non_sensitive_encode_idx,
+                    'non_sensitive_non_encode_idx': non_sensitive_non_encode_idx,
+                    }
                 }
             
             self.Sort_dict[layer] = unit_sort_dict
@@ -344,8 +348,8 @@ class Encode_feaquency_analyzer():
         fig_folder = os.path.join(self.dest_Encode, 'Figures')
         utils_.make_dir(fig_folder)
         
-        if not hasattr(self, 'Encode_dict') and not hasattr(self, 'Sort_dict'):
-            self.reload_encode_and_sort_dict()
+        if not hasattr(self, 'Sort_dict'):
+            self.Sort_dict = utils_.pickle_load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
         
         print('[Codinfo] preparing plot...')
         # 3 types of basic units: ['si_idx', 'mi_idx', 'non_encode_idx']
@@ -369,7 +373,7 @@ class Encode_feaquency_analyzer():
         sensitive_percentages = [sensitive_encode_unit_percentages[_]+sensitive_non_encode_unit_percentages[_] for _ in range(len(self.layers))]
         non_sensitive_percentages = [non_sensitive_encode_unit_percentages[_]+non_sensitive_non_encode_unit_percentages[_] for _ in range(len(self.layers))]
         
-        # ----- all operations
+        # ----- all operation
         figs, axes = plt.subplots(2,2,figsize=(24,12))
         
         self.selectivity_encode_layer_percent_plot_all_operation(fig_folder, figs, axes,  
@@ -386,7 +390,6 @@ class Encode_feaquency_analyzer():
         figs.savefig(os.path.join(fig_folder, title+'.svg'), bbox_inches='tight', format='svg', transparent=True)
         plt.close()
         
-        # -----
         # ----- activation function
         act_idx, act_layers, _ = utils_.imaginary_neurons_vgg(self.layers)
         figs_act, axes_act = plt.subplots(2,2,figsize=(24,12))
@@ -405,29 +408,10 @@ class Encode_feaquency_analyzer():
         figs_act.savefig(os.path.join(fig_folder, title+'.svg'), bbox_inches='tight', format='svg', transparent=True)
         plt.close()
         
-    # legacy design
-    def recover_encode_class_dict(self, SIMI_dict=None):     # [Warning] this function merges the encoded [classes] again, different with SIMI.py
-        print('[Codinfo] Executing recover_encode_class_dict...')
-        if SIMI_dict == None:   # directly succeed from self.obtain_encode_clas_dict()
-            SIMI_dict_ = self.SIMI_dict
-        else:
-            SIMI_dict_ = SIMI_dict
-        temp_dict = {}
-        for k, v in SIMI_dict_.items():  # for each layer
-            encode_class = []
-            if list(v[2]['SI_idx'].values()) != []:
-                for i in list(v[2]['SI_idx'].values()):     # for each neuron
-                    for j in i:
-                        encode_class.append(j)
-            if list(v[3]['MI_idx'].values()) != []:
-                for i in list(v[3]['MI_idx'].values()):
-                    for j in i:
-                        encode_class.append(j)    
-            temp_dict.update({k: encode_class})
-            
-        return temp_dict
-    
-    def draw_encode_feaquency_layers(self, freq, ):
+    def draw_encode_frequency_layers(self, freq, ):
+        """
+            this functions provides the encode frequency of each layer
+        """
         plt.rcParams.update({"font.family": "Times New Roman"})
         
         fig_folder = os.path.join(self.dest_Encode, 'Figures')
@@ -483,27 +467,25 @@ class Encode_feaquency_analyzer():
 
         freq = []
 
-        for idx in tqdm(range(len(self.layers)), desc=f'{unit_type_2}'):
+        for layer_idx in tqdm(range(len(self.layers)), desc=f'{unit_type_2}'):
             
             if unit_type_1 != None and unit_type_2 != None:
-                target_unit = self.Sort_dict[self.layers[idx]][unit_type_1][unit_type_2]
+                target_units = self.Sort_dict[self.layers[layer_idx]][unit_type_1][unit_type_2]
             else:
-                target_unit = np.arange(self.neurons[idx])
+                target_units = np.arange(self.neurons[layer_idx])
             
-            encode_layer = self.Encode_dict[self.layers[idx]]
-            target_encode = [encode_layer[single_encode] for single_encode in target_unit]
+            unit_encode_dict = self.Encode_dict[self.layers[layer_idx]]
+            unit_encode_list = [unit_encode_dict[unit] for unit in target_units]
 
-            pool = [j for i in target_encode for j in i]     # for all unit
+            pool = [id_ for encoded_ids in unit_encode_list for id_ in encoded_ids]     # for all unit
             frequency = Counter(pool)
             
             frequency = {correct_id[_-1]:frequency[_] for _ in range(1,51)}     # map correct_id
-            frequency = {_:frequency[_] for _ in range(1,51)}     # sort correct_id
+            frequency = {_: frequency[_]/self.neurons[layer_idx] for _ in range(1,51)}     # sort correct_id
             
-            frequency = {_:(frequency[_]/self.neurons[idx]) for _ in frequency.keys()}
-            #frequency = [frequency[_]/np.sum(frequency) for _ in range(50)]
             freq.append(np.array(list(frequency.values())))
             
-        freq = np.array(freq).T      
+        freq = np.array(freq).T      # (num_layers, num_classes) -> (num_classes, num_layers)
         
         return freq
 
@@ -511,8 +493,7 @@ class Encode_feaquency_analyzer():
     def draw_encode_frequency(self):        # general figure for encoding frequency
         """
             in the update of Sept 9, abandonded the use of dict_based frequency and the pd.DataFrame.from_dict(freq_dic) plotting
-            [interesting] A interesting notice is, perhaps can use the same mean+2std to select what ID has been encoded by one layer, 
-            and use all the units to build a sub-net the do other experiments...
+            
         """
         logging.getLogger('matplotlib').setLevel(logging.ERROR)
         
@@ -524,8 +505,9 @@ class Encode_feaquency_analyzer():
         freq_dict = self.generate_freq_map()
 
         # ----- exterior plots
-        #self.draw_encode_feaquency_layers(freq)
+        self.draw_encode_frequency_layers(freq_dict['all'])
         
+        # -----
         idx, layers, _ = utils_.imaginary_neurons_vgg(self.layers)
         
         vmin = 1.
@@ -567,7 +549,6 @@ class Encode_feaquency_analyzer():
                 
         cax = fig.add_axes([1.02, 0.1, 0.01, 0.75]) 
         #fig.colorbar(img, cax=cax)     # plot the colorbar based on the img, but not every time the 'all' contains the vmin and vmax
-        cmap = plt.cm.viridis
         norm = plt.Normalize(vmin=vmin, vmax=vmax)
         fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)   # plot colorbar based on arbitrary vmin and vmax
             
@@ -667,6 +648,11 @@ class Encode_feaquency_analyzer():
         
     #FIXME - the index problem, try to convert the lexical to natural order from the very beginning
     def generate_encoded_id_unit_idx(self, ):
+        
+        """
+            [interesting] A interesting notice is, perhaps can use the same mean+2std to select what ID has been encoded by one layer, 
+            and use all the units to build a sub-net the do other experiments...
+        """
         
         print('[Codinfo] Generating_encoded_id_unit_idx...')
         
@@ -808,7 +794,7 @@ class Encode_feaquency_analyzer():
                     }})
                     
             utils_.pickle_dump(SVM_path, layer_SVM)
-            print('[Condinfo] SVM calculation down')
+            print('[Condinfo] SVM calculation done')
         
         return layer_SVM
             
@@ -929,26 +915,178 @@ class Encode_feaquency_analyzer():
         plt.close('all')
         
         print('[Codinfo] Image saved')
+    
+    def layer_response_assemble(self,):
         
+        print('[Codinfo] Executing layer_response_assemble...')
+        
+        if not hasattr(self, 'Sort_dict'):
+            self.Sort_dict = utils_.pickle_load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
+        
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        plt.rcParams.update({'font.size': 14})
+        
+        fig_folder = os.path.join(self.dest_Encode, 'Layer_units_stats')
+        utils_.make_dir(fig_folder)
+        
+        colorpool_jet = plt.get_cmap('jet', 50)
+        colors = [colorpool_jet(i) for i in range(50)]
+        
+        layers = self.layers[4:10]
+        
+        with Parallel(n_jobs=1) as parallel:     
+            parallel(delayed(self.layer_response_assemble_sinlge_layer)(fig_folder, layer, colors) for layer in layers)  
+
+        gc.collect()
+    
+    def layer_response_assemble_sinlge_layer(self, fig_folder, layer, colors):
+        
+        Sort_dict = self.Sort_dict[layer]
+        feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
+        
+        y_lim_min = np.min(feature)
+        y_lim_max = np.max(feature)
+        
+        idx_dict = {
+            's_si': Sort_dict['advanced_type']['sensitive_si_idx'],
+            's_mi': Sort_dict['advanced_type']['sensitive_mi_idx'],
+            's_non_encode': Sort_dict['advanced_type']['sensitive_non_encode_idx'],
+            'ns_si': Sort_dict['advanced_type']['non_sensitive_si_idx'],
+            'ns_mi': Sort_dict['advanced_type']['non_sensitive_mi_idx'],
+            'ns_non_encode': Sort_dict['advanced_type']['non_sensitive_non_encode_idx']
+            }
+        
+        fig, ax = plt.subplots(figsize=(16,8))
+        gs_main = gridspec.GridSpec(2, 3, figure=fig)
+        
+        tqdm_bar = tqdm(total=6, desc=f'{layer}')
+        
+        i_ = 0
+        for i in range(2):
+            for j in range(3):
+                # Define a sub-grid within the current cell of the main grid
+                gs_sub = gridspec.GridSpecFromSubplotSpec(1, 2, width_ratios=[4, 1], subplot_spec=gs_main[i, j])
+
+                ax_left = fig.add_subplot(gs_sub[0])
+                ax_right = fig.add_subplot(gs_sub[1])
+                
+                if i_ != 0:
+                    ax_left.set_xticks([])
+                    ax_left.set_yticks([])
+
+                ax_right.set_xticks([])
+                ax_right.set_yticks([])
+                
+                if idx_dict[list(idx_dict.keys())[i_]].size == 0:
+                    pct = len(idx_dict[list(idx_dict.keys())[i_]])/feature.shape[1]*100
+                    ax_left.set_title(list(idx_dict.keys())[i_] + f' {pct:.2f}%')
+                    ax_right.set_title('th')
+                    i_ +=1
+                else:
+                    feature_test = feature[:,idx_dict[list(idx_dict.keys())[i_]]]     # (500, num_units)
+                    feature_test_mean = feature_test.reshape(self.num_classes, self.num_samples, -1)     # (50, 10, num_units)
+                    
+                    # -----
+                    x = np.array([[[_] for _ in range(self.num_classes)]*feature_test_mean.shape[2]]).reshape(-1)
+                    y = np.mean(feature_test_mean, axis=1).reshape(-1)
+                    
+                    c = np.array(colors)
+                    c = np.tile(c, [feature_test_mean.shape[2], 1])
+                    #c = np.repeat(c, 10, axis=0)     # <- for each img
+                    
+                    # -----
+                    ax_left.scatter(x, y, color=c, alpha=0.1, marker='.', s=1)     # use small size to replace adjustable alpha
+                    # -----
+                    
+                    pct = len(idx_dict[list(idx_dict.keys())[i_]])/feature.shape[1]*100
+                    ax_left.set_title(list(idx_dict.keys())[i_] + f' [{pct:.2f}%]')
+                    # -----
+                    
+                    feature_test_mean = np.mean(feature_test_mean, axis=1)     # (50, num_units)
+                    # ----- stats: mean for each ID
+                    values = feature_test_mean.reshape(-1)    # (50*num_units)
+                    if np.std(values) == 0:
+                        pass
+                    else:
+                        kde_mean = gaussian_kde(values)
+                        x_vals_mean = np.linspace(np.min(values), np.max(values)*1.1, 1000)
+                        y_vals_mean = kde_mean(x_vals_mean)
+                        ax_right.set_ylim([y_lim_min, y_lim_max])
+                        ax_right.plot(y_vals_mean, x_vals_mean, color='blue')
+                        
+                    # ----- stats: threshold (mean+2std of all 500 values)
+                    values = np.mean(feature_test, axis=0) + 2*np.std(feature_test, axis=0)     # (units,)
+                    if np.std(values) == 0:
+                        pass
+                    else:
+                        kde = gaussian_kde(values)
+                        x_vals = np.linspace(np.min(values), np.max(values)*1.1, 1000)
+                        y_vals = kde(x_vals)
+                        ax_right.plot(y_vals, x_vals, color='red')
+                    
+                        y_vals_max = np.max(y_vals)
+                        x_vals_max = x_vals[np.where(y_vals==y_vals_max)[0].item()]
+                        
+                        ax_left.hlines(x_vals_max, 0, 50, colors='red', alpha=0.75, linestyle='--')
+                        ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='red', alpha=0.75, linestyle='--')
+                    
+                    # ----- stats: ref (mean+2std of all 50 mean values)
+                    values = np.mean(feature_test_mean, axis=0) + 2*np.std(feature_test_mean, axis=0)     # (units,)
+                    
+                    if np.std(values) == 0:
+                        pass
+                    else:
+                        kde = gaussian_kde(values)
+                        x_vals = np.linspace(np.min(values), np.max(values)*1.1, 1000)
+                        y_vals = kde(x_vals)
+                        ax_right.plot(y_vals, x_vals, color='teal')
+                    
+                        y_vals_max = np.max(y_vals)
+                        x_vals_max = x_vals[np.where(y_vals==y_vals_max)[0].item()]
+                        
+                        ax_left.hlines(x_vals_max, 0, 50, colors='teal', alpha=0.75, linestyle='--')
+                        ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='teal', alpha=0.75, linestyle='--')
+                    
+                    ax_left.set_ylim([y_lim_min, y_lim_max])
+                    ax_right.set_ylim([y_lim_min, y_lim_max])
+                    ax_right.set_title('th')
+                    
+                    i_ += 1
+                tqdm_bar.update(1)
+               
+        ax.axis('off')
+        ax.plot([],[],color='blue',label='mean')
+        ax.plot([],[],color='teal',label='ref')
+        ax.plot([],[],color='red',label='threshold')
+        
+        fig.suptitle(f'{layer} [{self.model_structure}]', y=0.97, fontsize=20)
+        fig.legend(loc='lower center', bbox_to_anchor=(0.5, -0.05), ncol=3, bbox_transform=plt.gcf().transFigure)
+        
+        plt.tight_layout()
+        fig.savefig(os.path.join(fig_folder, f'{layer}.png'), bbox_inches='tight')
+        #fig.savefig(os.path.join(fig_folder, f'{layer}.eps'), bbox_inches='tight', format='eps')
+        #fig.savefig(os.path.join(fig_folder, f'{layer}.svg'), bbox_inches='tight', format='svg', transparent=True)
+        plt.close()
+    
     def layer_response_single_boxplot(self, random_select_units=10):
         
         """
             this function provides boxplot of example units of different types
         """
+        print('[Codinfo] Executing layer_response_single_boxplot')
         
         if not hasattr(self, 'Sort_dict'):
             self.Sort_dict = utils_.pickle_load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
             
-        plt.rcParams.update({"font.family": "Times New Roman"})
-        plt.rcParams.update({'font.size': 14})
-        
         fig_folder = os.path.join(self.dest_Encode, 'Layer_units_samples')
         utils_.make_dir(fig_folder)
         
         colorpool_jet = plt.get_cmap('jet', 50)
         colors = [colorpool_jet(i) for i in range(50)]
-    
-        for layer in self.layers:
+        
+        layers = self.layers[49:50]
+        
+        for layer in layers:
             
             layer_fig_folder = os.path.join(fig_folder, f'{layer}')
             utils_.make_dir(layer_fig_folder)
@@ -982,271 +1120,65 @@ class Encode_feaquency_analyzer():
                         test_idces = random.sample(list(test_type), random_select_units)
                     else:
                         test_idces = test_type
-                    
-                    for idx in test_idces:     # for each unit
-                    
-                        fig, ax = plt.subplots(1, 2, figsize=(20,10))
-                    
-                        x = np.array([[_]*10 for _ in range(1,51)])
-                        y = feature[:, idx]
-                        c = np.repeat(np.array(colors), 10, axis=0)
-                        
-                        test_feature = [y.reshape(self.num_classes, self.num_samples)[_] for _ in range(self.num_classes)]
-                        test_feature_mean = np.array([np.mean(test_feature[_]) for _ in range(self.num_classes)])
-                        
-                        ax[0].scatter(x, y, color=c, s=10)
-                        ax[0].scatter(np.arange(1,51), test_feature_mean, color=colors, marker='d')
-                        for _ in range(self.num_classes):
-                            ax[0].vlines(_+1, np.min(y), test_feature_mean[_], linestyle='--')
-                        ax[0].hlines(np.mean(y)+2*np.std(y), 1, 50, colors='red', linestyle='--', label=r'$V_{th}=\bar{x}+\sqrt{\frac{1}{500}\sum(x_i-\bar{x})^2}$')
-                        ax[0].hlines(np.mean(test_feature_mean)+2*np.std(test_feature_mean), 1, 50, colors='teal', linestyle='--', label=r'$ref=\bar{x}+\sqrt{\frac{1}{50}\sum(x_i-\bar{x_i})^2}, \bar{x_i} = \frac{1}{10}\sum{x_i}$')
-                        ax[0].set_title('scatters')
-                        ax[0].legend(framealpha=0.75)
-  
-                        ax[0].set_ylim([y_lim_min, y_lim_max])
-                        
-                        boxes = ax[1].boxplot(test_feature, patch_artist=True, sym='+')
-                        ax[1].hlines(np.mean(np.array(test_feature))+2*np.std(np.array(test_feature)), 1, 50, colors='red', linestyle='--')
-                        ax[1].hlines(np.mean(test_feature_mean)+2*np.std(test_feature_mean), 1, 50, colors='teal', linestyle='--')
-                        
-                        ax[1].scatter(np.arange(1,51), test_feature_mean, color=colors, marker='d')
-                        for _ in range(self.num_classes):
-                            ax[1].vlines(_+1, np.min(y), test_feature_mean[_], linestyle='--')
-                        
-                        for i, _ in enumerate(boxes['boxes']):
-                            _.set(color=colors[i], alpha=0.5)
-                        for i, _ in enumerate(boxes['fliers']):
-                            _.set(marker='+', markerfacecolor=colors[i], markeredgecolor=colors[i], markersize=10, alpha=0.75)
-                        ax[1].set_title('boxplots')
-                        
-                        ax[1].set_ylim([y_lim_min, y_lim_max])
-                        
-                        fig.suptitle(f'[{layer}] unit: {idx}', y=0.98)
-                        plt.tight_layout()
-                        
-                        fig.savefig(os.path.join(type_layer_fig_folder, f'{key}_{idx}.png'), bbox_inches='tight')
-                        #fig.savefig(os.path.join(fig_folder, f'{layer}.eps'), bbox_inches='tight', format='eps')
-                        #fig.savefig(os.path.join(fig_folder, f'{layer}.svg'), bbox_inches='tight', format='svg', transparent=True)
-                        plt.close()
-                        
-                        gc.collect()
-                    
+                       
+                    with Parallel(n_jobs=-1) as parallel:     # for 10 units of one type
+                        parallel(delayed(self.layer_response_single_boxplot_single)(type_layer_fig_folder, key, layer, feature, idx, colors, y_lim_min, y_lim_max) for idx in test_idces)  
     
-    def layer_response_assemble(self,):
-        
-        if not hasattr(self, 'Sort_dict'):
-            self.Sort_dict = utils_.pickle_load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
+                    gc.collect()
+                    
+    def layer_response_single_boxplot_single(self, type_layer_fig_folder, key, layer, feature, idx, colors, y_lim_min, y_lim_max):
         
         plt.rcParams.update({"font.family": "Times New Roman"})
         plt.rcParams.update({'font.size': 14})
         
-        fig_folder = os.path.join(self.dest_Encode, 'Layer_units_stats')
-        utils_.make_dir(fig_folder)
+        fig, ax = plt.subplots(1, 2, figsize=(20,10))
+    
+        x = np.array([[_]*10 for _ in range(1,51)])
+        y = feature[:, idx]
+        c = np.repeat(np.array(colors), 10, axis=0)
         
-        colorpool_jet = plt.get_cmap('jet', 50)
-        colors = [colorpool_jet(i) for i in range(50)]
+        test_feature = [y.reshape(self.num_classes, self.num_samples)[_] for _ in range(self.num_classes)]
+        test_feature_mean = np.array([np.mean(test_feature[_]) for _ in range(self.num_classes)])
         
-        layers = self.layers[1:2]
-        
-        for layer in layers:
-            
-            Sort_dict = self.Sort_dict[layer]
-            feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
-            
-            y_lim_min = np.min(feature)
-            y_lim_max = np.max(feature)
-            
-            idx_dict = {
-                's_si': Sort_dict['advanced_type']['sensitive_si_idx'],
-                's_mi': Sort_dict['advanced_type']['sensitive_mi_idx'],
-                's_non_encode': Sort_dict['advanced_type']['sensitive_non_encode_idx'],
-                'ns_si': Sort_dict['advanced_type']['non_sensitive_si_idx'],
-                'ns_mi': Sort_dict['advanced_type']['non_sensitive_mi_idx'],
-                'ns_non_encode': Sort_dict['advanced_type']['non_sensitive_non_encode_idx']
-                }
-            
-            fig, ax = plt.subplots(figsize=(16,8))
-            gs_main = gridspec.GridSpec(2, 3, figure=fig)
-            
-            tqdm_bar = tqdm(total=6, desc=f'{layer}')
-            
-            i_ = 0
-            for i in range(2):
-                for j in range(3):
-                    # Define a sub-grid within the current cell of the main grid
-                    gs_sub = gridspec.GridSpecFromSubplotSpec(1, 2, width_ratios=[4, 1], subplot_spec=gs_main[i, j])
+        ax[0].scatter(x, y, color=c, s=10)
+        ax[0].scatter(np.arange(1,51), test_feature_mean, color=colors, marker='d')
+        for _ in range(self.num_classes):
+            ax[0].vlines(_+1, np.min(y), test_feature_mean[_], linestyle='--')
+        ax[0].hlines(np.mean(y)+2*np.std(y), 1, 50, colors='red', linestyle='--', label=r'$V_{th}=\bar{x}+\sqrt{\frac{1}{500}\sum(x_i-\bar{x})^2}$')
+        ax[0].hlines(np.mean(test_feature_mean)+2*np.std(test_feature_mean), 1, 50, colors='teal', linestyle='--', label=r'$ref=\bar{x}+\sqrt{\frac{1}{50}\sum(x_i-\bar{x_i})^2}, \bar{x_i} = \frac{1}{10}\sum{x_i}$')
+        ax[0].set_title('scatters')
+        ax[0].legend(framealpha=0.75)
 
-                    ax_left = fig.add_subplot(gs_sub[0])
-                    ax_right = fig.add_subplot(gs_sub[1])
-                    
-                    if i_ != 0:
-                        ax_left.set_xticks([])
-                        ax_left.set_yticks([])
-    
-                    ax_right.set_xticks([])
-                    ax_right.set_yticks([])
-                    
-                    if idx_dict[list(idx_dict.keys())[i_]].size == 0:
-                        pct = len(idx_dict[list(idx_dict.keys())[i_]])/feature.shape[1]*100
-                        ax_left.set_title(list(idx_dict.keys())[i_] + f' {pct:.2f}%')
-                        ax_right.set_title('th')
-                        i_ +=1
-                    else:
-                        feature_test = feature[:,idx_dict[list(idx_dict.keys())[i_]]]     # (500, num_units)
-                        feature_test_mean = feature_test.reshape(self.num_classes, self.num_samples, -1)     # (50, 10, num_units)
-                        
-                        # -----
-                        x = np.array([[[_] for _ in range(self.num_classes)]*feature_test_mean.shape[2]]).reshape(-1)
-                        y = np.mean(feature_test_mean, axis=1).reshape(-1)
-                        
-                        c = np.array(colors)
-                        c = np.tile(c, [feature_test_mean.shape[2], 1])
-                        #c = np.repeat(c, 10, axis=0)     # <- for each img
-                        
-                        # -----
-                        ax_left.scatter(x, y, color=c, alpha=0.1, marker='.', s=1)     # use small size to replace adjustable alpha
-                        # -----
-                        
-                        pct = len(idx_dict[list(idx_dict.keys())[i_]])/feature.shape[1]*100
-                        ax_left.set_title(list(idx_dict.keys())[i_] + f' [{pct:.2f}%]')
-                        # -----
-                        
-                        feature_test_mean = np.mean(feature_test_mean, axis=1)     # (50, num_units)
-                        # ----- stats: mean for each ID
-                        test_mean = feature_test_mean.reshape(-1)    # (50*num_units)
-                        if np.std(test_mean) == 0:
-                            pass
-                        else:
-                            kde_mean = gaussian_kde(test_mean)
-                            x_vals_mean = np.linspace(np.min(test_mean), np.max(test_mean)*1.1, 1000)
-                            y_vals_mean = kde_mean(x_vals_mean)
-                            ax_right.set_ylim([y_lim_min, y_lim_max])
-                            ax_right.plot(y_vals_mean, x_vals_mean, color='blue')
-                            
-                        # ----- stats: mean for each img
-                        test = np.mean(feature_test, axis=0) + 2*np.std(feature_test, axis=0)
-                        if np.std(test) == 0:
-                            pass
-                        else:
-                            kde = gaussian_kde(test)
-                            x_vals = np.linspace(np.min(test), np.max(test)*1.1, 1000)
-                            y_vals = kde(x_vals)
-                            ax_right.plot(y_vals, x_vals, color='teal')
-                        
-                            y_vals_max = np.max(y_vals)
-                            x_vals_max = x_vals[np.where(y_vals==y_vals_max)[0].item()]
-                            
-                            ax_left.hlines(x_vals_max, 0, 50, colors='teal', alpha=0.75, linestyle='--')
-                            ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='teal', alpha=0.75, linestyle='--')
-                        
-                        # ----- stats: mean+2std for each ID
-                        test = np.mean(feature_test_mean, axis=0) + 2*np.std(feature_test_mean, axis=0)
-                        if np.std(test) == 0:
-                            pass
-                        else:
-                            kde = gaussian_kde(test)
-                            x_vals = np.linspace(np.min(test), np.max(test)*1.1, 1000)
-                            y_vals = kde(x_vals)
-                            ax_right.plot(y_vals, x_vals, color='red')
-                        
-                            y_vals_max = np.max(y_vals)
-                            x_vals_max = x_vals[np.where(y_vals==y_vals_max)[0].item()]
-                            
-                            ax_left.hlines(x_vals_max, 0, 50, colors='red', alpha=0.75, linestyle='--')
-                            ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='red', alpha=0.75, linestyle='--')
-                        
-                        ax_left.set_ylim([y_lim_min, y_lim_max])
-                        ax_right.set_ylim([y_lim_min, y_lim_max])
-                        ax_right.set_title('th')
-                        
-                        i_ += 1
-                    tqdm_bar.update(1)
-                   
-            ax.axis('off')
-            ax.plot([],[],color='blue',label='mean')
-            ax.plot([],[],color='teal',label='ref')
-            ax.plot([],[],color='red',label='threshold')
-            
-            fig.suptitle(f'{layer} [{self.model_structure}]', y=0.97, fontsize=20)
-            fig.legend(loc='lower center', bbox_to_anchor=(0.5, -0.05), ncol=3, bbox_transform=plt.gcf().transFigure)
-            
-            plt.tight_layout()
-            fig.savefig(os.path.join(fig_folder, f'{layer}.png'), bbox_inches='tight')
-            #fig.savefig(os.path.join(fig_folder, f'{layer}.eps'), bbox_inches='tight', format='eps')
-            fig.savefig(os.path.join(fig_folder, f'{layer}.svg'), bbox_inches='tight', format='svg', transparent=True)
-            plt.close()
-            
-            gc.collect()
-    
-    # legacy design - not in use
-    def draw_encode_frequency_for_each_layer(self):         # encoding frequency for each layer
-        print('[Codinfo] Executing draw_encode_frequency_for_each_layer...')
-        encode_class_dict = self.recover_encode_class_dict()  
-        #make dir fo the image batch
-        save_folder = os.path.join(self.dest_Encode, 'Each_Layer_Encoding_Performance/')
-        utils_.make_dir(save_folder)
-        occ_list = []
-        for layer in self.layers:    # for each layer
-            occurrences = []
-            for i in range(self.num_classes):     # for each ID
-                occ = encode_class_dict[layer].count(i + 1)  # calculate the frequency of each ID [one value]
-                occurrences.append(occ) # store frequency for each ID [list of 50]
-            occ_list.append(occurrences)    # merge the frequency info for all layers [list of len(layers)]
-            x = np.arange(self.num_classes)+1
-            plt.figure()
-            plt.bar(x, occurrences, width=0.5)
-            plt.xticks(np.arange(0, self.num_classes+1, step=2))
-            plt.xlabel('IDs')
-            plt.ylabel('Frequrency')
-            plt.title('Encoded ID frequency: '+layer+'\n\u03F4: 2std')
-            plt.savefig(save_folder+layer+'_encoding_performance.png', bbox_inches='tight', dpi=100)
-            plt.close()
-    
-    # legacy design - not in use
-    def draw_merged_encode_frequency_for_each_layer(self):      
-        print('[Codinfo] Executing draw_merged_encode_frequency_for_each_layer...')
-        encode_class_dict = self.recover_encode_class_dict()
+        ax[0].set_ylim([y_lim_min, y_lim_max])
         
-        fig, axs = plt.subplots(self.subplot_row, self.subplot_col, figsize=((self.subplot_col*2, self.subplot_row*2)))
-        plt.subplots_adjust(hspace=0.3, wspace=0.3)
-        x = np.arange(self.num_classes)+1
-        cnt_row = 0
-        cnt_col = 0
+        boxes = ax[1].boxplot(test_feature, patch_artist=True, sym='+')
+        ax[1].hlines(np.mean(np.array(test_feature))+2*np.std(np.array(test_feature)), 1, 50, colors='red', linestyle='--')
+        ax[1].hlines(np.mean(test_feature_mean)+2*np.std(test_feature_mean), 1, 50, colors='teal', linestyle='--')
         
-        for layer in self.layers:    # for each layer
-            occurrences = []
-            for i in range(self.num_classes):     # for each ID
-                occ = encode_class_dict[layer].count(i + 1)
-                occurrences.append(occ)
-            axs[cnt_row, cnt_col].bar(x, occurrences, width=0.5)
-            axs[cnt_row, cnt_col].set_title(layer, fontsize=8)
-            cnt_col += 1        # set subplot location
-            if cnt_col == self.subplot_col:
-                cnt_col = 0
-                cnt_row += 1
-        for ax in axs.flat:
-            ax.label_outer()
-        for ax in axs.flat:
-            ax.set_ylabel(ylabel='Freq', fontsize=8, labelpad=0)
-            ax.set_xlabel(xlabel='IDs', fontsize=8, labelpad=0)
+        ax[1].scatter(np.arange(1,51), test_feature_mean, color=colors, marker='d')
+        for _ in range(self.num_classes):
+            ax[1].vlines(_+1, np.min(y), test_feature_mean[_], linestyle='--')
+        
+        for i, _ in enumerate(boxes['boxes']):
+            _.set(color=colors[i], alpha=0.5)
+        for i, _ in enumerate(boxes['fliers']):
+            _.set(marker='+', markerfacecolor=colors[i], markeredgecolor=colors[i], markersize=10, alpha=0.75)
+        ax[1].set_title('boxplots')
+        
+        ax[1].set_ylim([y_lim_min, y_lim_max])
+        
+        fig.suptitle(f'[{layer}] unit: {idx}', y=0.98)
         plt.tight_layout()
-        plt.savefig(self.dest_Encode+'single_layer_encoding_performance.png', bbox_inches='tight', dpi=100)
-        plt.close()
         
-def single_unit_scatterplot(feature_test, i, ax, colors):
-    tmp = feature_test[:,i]
-    tmp = tmp.reshape(50, 10)
+        fig.savefig(os.path.join(type_layer_fig_folder, f'{key}_{idx}.png'), bbox_inches='tight')
+        #fig.savefig(os.path.join(fig_folder, f'{layer}.eps'), bbox_inches='tight', format='eps')
+        #fig.savefig(os.path.join(fig_folder, f'{layer}.svg'), bbox_inches='tight', format='svg', transparent=True)
+        plt.close()
     
-    #tmp = np.mean(tmp, axis=1)
-    #ax.scatter(np.arange(1,51), tmp, color=colors, alpha=0.1, marker='.', s=5)
-    
-    for i in range(50):
-        ax.scatter(np.ones(10)*i, tmp[i,:], color=colors[i], alpha=0.1, marker='.', s=5)
-
 # define Encode for parallel calculation
 def encode_calculation(feature, i):
     """
-        under construction...
+        parallel computation to obtain encode_dict
     """
     
     feature_of_single_unit = feature[:, i]
@@ -1257,27 +1189,24 @@ def encode_calculation(feature, i):
     
     encode_class = np.where(local_mean>threshold)[0]+1  # '>' prevent all 0
     
-    #plt.bar(range(len(local_mean)), local_mean)
-    #plt.hlines(threshold, 0, 49)
-    
     return encode_class    
 
 if __name__ == "__main__":
     
-    model_name = 'vgg16_bn'
+    model_name = 'vgg16'
     
     model_ = vgg.__dict__[model_name](num_classes=50)
     layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, model_name)
 
     root_dir = '/home/acxyle-workstation/Downloads'
 
-    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T4_CelebA2622/'), 
+    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity VGG16/'), 
                                                      layers=layers, neurons=neurons)
     
     #selectivity_analyzer.obtain_encode_class_dict()
     #selectivity_analyzer.selectivity_encode_layer_percent_plot()
-    #selectivity_analyzer.draw_encode_frequency()
-    #selectivity_analyzer.generate_encoded_id_unit_idx()
-    selectivity_analyzer.SVM_plot()
-    selectivity_analyzer.layer_response_assemble()
-    selectivity_analyzer.layer_response_single_boxplot()
+    selectivity_analyzer.draw_encode_frequency()
+    #selectivity_analyzer.generate_encoded_id_unit_idx()     # <- currently not in use 
+    #selectivity_analyzer.SVM_plot()
+    #selectivity_analyzer.layer_response_assemble()
+    #selectivity_analyzer.layer_response_single_boxplot()

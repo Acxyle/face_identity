@@ -36,8 +36,7 @@ class Selectiviy_Analysis_DR_and_RSA():
     
     def __init__(self, 
                  root='/Identity_Spikingjelly_VGG_Results/',
-                 dest='/Identity_Spikingjelly_VGG_Neuron/',
-                 num_samples=10, num_classes=50, data_name='', layers=None, neurons=None, status=False):
+                 num_samples=10, num_classes=50, layers=None, neurons=None,  data_name=None):
         
         if layers == None or neurons == None:
             raise RuntimeError('[Codwarning] invalid layers and neurons')
@@ -45,15 +44,21 @@ class Selectiviy_Analysis_DR_and_RSA():
         self.layers = layers
         self.neurons = neurons
         
-        self.root = root
-        self.dest = dest
+        self.root = os.path.join(root, 'Features')
+        self.dest = os.path.join(root, 'Analysis')
+        utils_.make_dir(self.dest)
+        
+        self.dest_DR = os.path.join(self.dest, 'Dimension_Reduction')
+        utils_.make_dir(self.dest_DR)
+        
+        self.dest_DSM = os.path.join(self.dest, 'DisSimilarity_Matrix')
+        utils_.make_dir(self.dest_DSM)
+        
         self.num_samples = num_samples
         self.num_classes = num_classes
-        self.data_name = data_name
         
-        if status:     # flag for local test
-            self.selectivity_analysis_Tsne(self)
-            self.selectivity_analysis_distance(self)
+        if data_name != None:
+            self.data_name = data_name
         
     #FIXME
     def selectivity_analysis_tsne(self, parallel=False, verbose=False):
@@ -63,174 +68,140 @@ class Selectiviy_Analysis_DR_and_RSA():
         print('[Codinfo] Executing selectivity_analysis_Tsne...')
         label = utils_.makeLabels(self.num_samples, self.num_classes)
         
-        save_path = os.path.join(self.dest, 'TSNE')
-        utils_.make_dir(save_path)
+        self.save_path_DR = os.path.join(self.dest_DR, 'TSNE')
+        utils_.make_dir(self.save_path_DR)
         
-        save_path_fig = os.path.join(save_path, 'Figures')
-        utils_.make_dir(save_path_fig)
-        save_path_result = os.path.join(save_path, 'Results')
-        utils_.make_dir(save_path_result)
+        self.save_path_fig_DR = os.path.join(self.save_path_DR, 'Figures')
+        utils_.make_dir(self.save_path_fig_DR)
         
-        tsne_x1_list = []
-        tsne_y1_list = []
-        tsne_x2_list = []
-        tsne_y2_list = []
-        tsne_all_list = []
-        tsne_ID_list = []
-        tsne_nonID_list = []
-        title_list = []
-        mask_id_list = []
-        mask_non_id_list = []
         
         valid_markers = ([item[0] for item in mpl.markers.MarkerStyle.markers.items() if not item[1].startswith('not')])
         markers = valid_markers + valid_markers[:self.num_classes - len(valid_markers)]
         
-        #=== under construction
+        # === put calculation here
+        self.tsne_analysis_calculation(label, markers, in_layer_plot=True)
+        
+        # === put plot here
+        self.tsne_analysis_plot(label, markers)
+        
+    def tsne_analysis_calculation(self, label, markers, in_layer_plot):
+        
+        Sort_dict = utils_.pickle_load(os.path.join(self.dest, 'Encode/Sort_dict.pkl'))
+        
+        self.tsne_layer_dict = {}
+        
+        layers = self.layers[:]
+        
         # ----- sequantial calculation
-        for layer in tqdm(self.layers, desc='TSNE Sequential'):
+        # ----- parallel can only be used for later layers because of RAM limit
+        for layer in tqdm(layers, desc='TSNE Sequential'):
             
             feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
             
-            mask_id, mask_non_id = self.generate_masks(self.dest, layer, feature.shape[1])
-            mask_id_list.append(len(mask_id))
-            mask_non_id_list.append(len(mask_non_id))
+            advanced_units_types = Sort_dict[layer]['advanced_type']
             
-            self.tsne_layer_calculation(layer, feature, mask_id, mask_non_id, label, markers, save_path_result, save_path_fig, 
-                                                 tsne_x1_list, tsne_y1_list, tsne_x2_list, tsne_y2_list, 
-                                                 tsne_all_list, tsne_ID_list, tsne_nonID_list, title_list)    
-        # ----- parallel calculation
-        # working...
-        # =====
-        
-        # in-model comparison
-        fig_sup, ax_sup = plt.subplots(len(self.layers), 3, figsize=(18, 6*len(self.layers)), dpi=100)
-        
-        tsne_x1_sup = min(tsne_x1_list)
-        tsne_y1_sup = min(tsne_y1_list)
-        tsne_x2_sup = max(tsne_x2_list)
-        tsne_y2_sup = max(tsne_y2_list)
-        
-        dx1, dy1 = 5, 0.25
-        
-        for idx, layer in enumerate(self.layers):
+            tsne_layer = self.tsne_layer_calculation(layer=layer, 
+                                        feature=feature, 
+                                        mask_dict=advanced_units_types, 
+                                        label=label, 
+                                        markers=markers,
+                                        plot=in_layer_plot)  
             
-            tsne_all = tsne_all_list[idx]
-            tsne_ID = tsne_ID_list[idx]
-            tsne_nonID = tsne_nonID_list[idx]
-            title = title_list[idx]
+            self.tsne_layer_dict.update(tsne_layer)
             
-            if ax_sup.ndim == 1:
-                self.tsne_plot(ax_sup[0], tsne_all, [*mask_id, *mask_non_id], label, markers, title+' all', layer, tsne_x1_sup, tsne_y1_sup, tsne_x2_sup, tsne_y2_sup)
-                self.tsne_plot(ax_sup[1], tsne_ID, mask_id, label, markers, title+' selective', layer, tsne_x1_sup, tsne_y1_sup, tsne_x2_sup, tsne_y2_sup)
-                self.tsne_plot(ax_sup[2], tsne_nonID, mask_non_id, label, markers, title+' non-selective', layer, tsne_x1_sup, tsne_y1_sup, tsne_x2_sup, tsne_y2_sup)
-                
-                trans1 = ax_sup[0].transAxes + ScaledTranslation(dx1, dy1, fig_sup.dpi_scale_trans)
-                trans2 = ax_sup[1].transAxes + ScaledTranslation(dx1, dy1, fig_sup.dpi_scale_trans)
-                
-                ax_sup[0].text(0, 1, '{}/{}'.format(mask_id_list[idx], mask_id_list[idx]+mask_non_id_list[idx]), fontsize=10, bbox={'facecolor':'yellow', 'alpha': 0.2},  
-                         transform=trans1, verticalalignment='top', horizontalalignment='left')
-                ax_sup[1].text(0, 1, '{}/{}'.format(mask_non_id_list[idx], mask_id_list[idx]+mask_non_id_list[idx]), fontsize=10, bbox={'facecolor':'yellow', 'alpha': 0.2}, 
-                         transform=trans2, verticalalignment='top', horizontalalignment='left')
-                
-            else:
-                self.tsne_plot(ax_sup[idx, 0], tsne_all, [*mask_id, *mask_non_id], label, markers, title+' all', layer, tsne_x1_sup, tsne_y1_sup, tsne_x2_sup, tsne_y2_sup)
-                self.tsne_plot(ax_sup[idx, 1], tsne_ID, mask_id, label, markers, title+' selective', layer, tsne_x1_sup, tsne_y1_sup, tsne_x2_sup, tsne_y2_sup)
-                self.tsne_plot(ax_sup[idx, 2], tsne_nonID, mask_non_id, label, markers, title+' non-selective', layer, tsne_x1_sup, tsne_y1_sup, tsne_x2_sup, tsne_y2_sup)
-            
-                trans1 = ax_sup[idx, 0].transAxes + ScaledTranslation(dx1, dy1, fig_sup.dpi_scale_trans)
-                trans2 = ax_sup[idx, 1].transAxes + ScaledTranslation(dx1, dy1, fig_sup.dpi_scale_trans)
-                
-                ax_sup[idx, 0].text(0, 1, '{}/{}'.format(mask_id_list[idx], mask_id_list[idx]+mask_non_id_list[idx]), fontsize=10, bbox={'facecolor':'yellow', 'alpha': 0.2},  
-                         transform=trans1, verticalalignment='top', horizontalalignment='left')
-                ax_sup[idx, 1].text(0, 1, '{}/{}'.format(mask_non_id_list[idx], mask_id_list[idx]+mask_non_id_list[idx]), fontsize=10, bbox={'facecolor':'yellow', 'alpha': 0.2}, 
-                         transform=trans2, verticalalignment='top', horizontalalignment='left')
+        utils_.pickle_dump(os.path.join(self.save_path_DR, 'tsne_all.pkl'), self.tsne_layer_dict)
         
-        fig_sup.savefig(save_path_fig + '/tsne_all.png', bbox_inches='tight', dpi=100)     # change dpi whilst data change
-        fig_sup.savefig(save_path_fig + '/tsne_all.eps', bbox_inches='tight', dpi=100, format='eps')
-        plt.close()
-        
-    def tsne_layer_calculation(self, layer, feature, mask_id, mask_non_id, label, markers, save_path_result, save_path_fig, 
-                                        tsne_x1_list, tsne_y1_list, tsne_x2_list, tsne_y2_list,
-                                        tsne_all_list, tsne_ID_list, tsne_nonID_list, title_list, verbose=False):
-    
-        perplexity_ID = self.calculate_perplexity(mask_id)
-        perplexity_nonID = self.calculate_perplexity(mask_non_id)
-                
-        if verbose:
-            print('layer: {}, mask_id: {}, nonmask_id: {}, perplexity: {:.3f} {:.3f}'.format(layer, len(mask_id), len(mask_non_id), perplexity_ID, perplexity_nonID))
-        
-        # in-layer comparison
-        fig, ax = plt.subplots(1, 3, figsize=(18,6), dpi=100)
-        
-        plt.text(0.4, 0.925, '{}/{}'.format(len(mask_id), feature.shape[1]), fontsize=10, bbox={'facecolor':'yellow', 'alpha': 0.2}, transform=fig.transFigure, verticalalignment='top', horizontalalignment='left')
-        plt.text(0.675, 0.925, '{}/{}'.format(len(mask_non_id), feature.shape[1]), fontsize=10, bbox={'facecolor':'yellow', 'alpha': 0.2}, transform=fig.transFigure, verticalalignment='top', horizontalalignment='left')
-        
-        tsne_x1, tsne_y1, tsne_x2, tsne_y2, tsne_all, tsne_ID, tsne_nonID, title = self.tsne_layer_process(ax, feature, mask_id, perplexity_ID, mask_non_id, perplexity_nonID, label, markers, layer, save_path_result, layer)
-        
-        tsne_x1_list.append(tsne_x1)
-        tsne_y1_list.append(tsne_y1)
-        tsne_x2_list.append(tsne_x2)
-        tsne_y2_list.append(tsne_y2)
-        tsne_all_list.append(tsne_all)
-        tsne_ID_list.append(tsne_ID)
-        tsne_nonID_list.append(tsne_nonID)
-        title_list.append(title)
-        
-        with warnings.catch_warnings():
-            warnings.simplefilter(action='ignore')
-            fig.savefig(save_path_fig + f'/tsne_{layer}.png', bbox_inches='tight', dpi=100)     # change dpi whilst data change
-            fig.savefig(save_path_fig + f'/tsne_{layer}.eps', bbox_inches='tight', dpi=100, format='eps')
-            plt.close()  
-            
-    def obtain_tsne_range(self, tsne):     # return the max and min values of x and y axes
-        return min(tsne[:, 0]), min(tsne[:, 1]), max(tsne[:, 0]), max(tsne[:, 1])
-    
-    def tsne_save(self, save_path, file_name, file):
+    def tsne_layer_calculation(self, layer, feature, mask_dict, label, markers, plot=True):
         """
-            this function saves tsne file in different format,    
-            need to manually modify the code to enable/disable different types of saved file
+            operation for each layer
         """
-        if file is not None:
-            savemat(save_path+f'/tSNE_{file_name}.mat', {f'{file_name}':file})      # for matlab
-            utils_.pickle_dump(save_path+f'/tSNE_{file_name}.pkl', file)     # for python
-    
-    def tsne_layer_process(self, ax, feature, mask_id, perplexity_ID, mask_non_id, perplexity_nonID, label, markers, layer, save_path_result, title):
+        
+        perplexity_dict = self.calculate_perplexity(mask_dict)
+        perplexity_dict.update(self.calculate_perplexity({'all': np.arange(feature.shape[1])}))
+        
+        mask_dict.update({'all': np.arange(feature.shape[1])})
+
+        tsne_dict, tsne_coordinate = self.tsne_layer_process(layer, feature, label, mask_dict, perplexity_dict, markers)
+        
+        tsne_all = {layer: {
+                         'tsne_dict': tsne_dict,
+                         'tsne_coordinate': tsne_coordinate
+                         }}
+
+        if plot:
+            
+            # in-layer comparison
+            fig, ax = plt.subplots(3, 3, figsize=(18,18), dpi=100)
+            
+            row_idx = 0
+            column_idx = 0
+            
+            for idx, type_ in enumerate(list(tsne_dict.keys())):
+                
+                norm_lim = True
+                
+                self.tsne_in_layer_plot(ax=ax[row_idx, column_idx], 
+                               tsne=tsne_dict[type_], 
+                               mask=mask_dict[type_], 
+                               label=label, 
+                               markers=markers, 
+                               title=type_, 
+                               layer=layer, 
+                               tsne_coordinate=tsne_coordinate,
+                               norm_lim=norm_lim)
+                
+                column_idx += 1
+                if column_idx == 3:
+                    row_idx += 1
+                    column_idx = 0
+            
+            with warnings.catch_warnings():
+                warnings.simplefilter(action='ignore')
+                
+                fig.savefig(self.save_path_fig_DR + f'/tsne_{layer}.png', bbox_inches='tight', dpi=100)     # change dpi whilst data change
+                fig.savefig(self.save_path_fig_DR + f'/tsne_{layer}.eps', bbox_inches='tight', dpi=100, format='eps')
+                plt.close()  
+                
+        return tsne_all
+            
+    def tsne_layer_process(self, layer, feature, label, mask_dict, perplexity_dict, markers):
         """
             this function calculate the tSNE and saved results, also plot the reduced feature map
         """
-        tsne_all = self.tsne_layer_process_single(feature, max(perplexity_ID, perplexity_nonID))      # tSNE from all units
-        self.tsne_save(save_path_result, layer+'_all', tsne_all)
         
-        tsne_ID = self.tsne_layer_process_single(feature, perplexity_ID, mask_id)     # tSNE from id_selective unit only
-        self.tsne_save(save_path_result, layer+'_id_selective', tsne_ID)
+        tsne_dict = {}
         
-        tsne_nonID = self.tsne_layer_process_single(feature, perplexity_nonID, mask_non_id)     # tSNE from non_id_selective unit only
-        self.tsne_save(save_path_result, layer+'_non_id_selective', tsne_nonID)
+        for type_ in perplexity_dict.keys():
+            
+            mask = mask_dict[type_]
+            
+            if mask.size == 0:
+                tsne_dict.update({type_: None})
+                
+            else:
+                feature_ = feature[:, mask]
+                perplexity = perplexity_dict[type_]
+                tsne = self.tsne_layer_process_single(feature_, perplexity)
+                tsne_dict.update({type_: tsne})
+            
+        # --- obtain tsne_coordinate: 4 corner points
+        tsne_values_all = list(tsne_dict.values())
         
-        if tsne_ID is not None and tsne_nonID is not None:
-            if tsne_ID.shape[1] == 2 and tsne_nonID.shape[1] == 2:
-                tsne_x1 = min(min(tsne_ID[:, 0]), min(tsne_nonID[:, 0]))
-                tsne_y1 = min(min(tsne_ID[:, 1]), min(tsne_nonID[:, 1]))
-                tsne_x2 = max(max(tsne_ID[:, 0]), max(tsne_nonID[:, 0]))
-                tsne_y2 = max(max(tsne_ID[:, 1]), max(tsne_nonID[:, 1]))
-            elif tsne_ID.shape[1] == 2 and tsne_nonID.shape[1] == 1:
-                tsne_x1, tsne_y1, tsne_x2, tsne_y2 = self.obtain_tsne_range(tsne_ID)
-            elif tsne_ID.shape[1] == 1 and tsne_nonID.shape[1] == 2:
-                tsne_x1, tsne_y1, tsne_x2, tsne_y2 = self.obtain_tsne_range(tsne_nonID)
-        elif tsne_nonID is None:
-            tsne_x1, tsne_y1, tsne_x2, tsne_y2 = self.obtain_tsne_range(tsne_ID)
-        elif tsne_ID is None:
-            tsne_x1, tsne_y1, tsne_x2, tsne_y2 = self.obtain_tsne_range(tsne_nonID)
-        else:
-            raise RuntimeError('[Codinfo] some unexpected cases happened')
+        tsne_x = [_[:,0] for _ in tsne_values_all if _ is not None]
+        tsne_y = [_[:,1] for _ in tsne_values_all if _ is not None]
+        tsne_x = np.hstack(tsne_x)
+        tsne_y = np.hstack(tsne_y)
+
+        tsne_coordinate = {
+            'x_min': np.min(tsne_x),
+            'x_max': np.max(tsne_x),
+            'y_min': np.min(tsne_y),
+            'y_max': np.max(tsne_y)
+            }
         
-        self.tsne_plot(ax[0], tsne_all, [*mask_id, *mask_non_id], label, markers, title+' all', layer, tsne_x1, tsne_y1, tsne_x2, tsne_y2)
-        self.tsne_plot(ax[1], tsne_ID, mask_id, label, markers, title+' selective', layer, tsne_x1, tsne_y1, tsne_x2, tsne_y2)
-        self.tsne_plot(ax[2], tsne_nonID, mask_non_id, label, markers, title+' non-selective', layer, tsne_x1, tsne_y1, tsne_x2, tsne_y2)
-        
-        return tsne_x1, tsne_y1, tsne_x2, tsne_y2, tsne_all, tsne_ID, tsne_nonID, title
-        
-    def tsne_layer_process_single(self, feature, perplexity, mask=None):
+        return tsne_dict, tsne_coordinate
+  
+    def tsne_layer_process_single(self, feature: np.array, perplexity):
         """
             this function calculates the tsne dimension reduction.
             on behalf of TSNE, need to increase SWAP for shallow layer NC_Lab_desktop and NC_Lab_Workstation, both 128G Memory
@@ -271,39 +242,52 @@ class Selectiviy_Analysis_DR_and_RSA():
         #    tsne = TSNE(perplexity=perplexity, n_jobs=-1).fit_transform(x)
                 
         # --- method 3, manually change the SWAP for large data load
-        if mask == None:
-            if np.std(np.array(feature)) != 0.:     # make sure all faetures are not identical
-                return TSNE(perplexity=perplexity, n_jobs=-1).fit_transform(feature)
-            else:     # all values in different units are identical
-                raise RuntimeError('[Coderror] all values in feature map are identical')
+        if feature.size == 0:     # no value
+            return
+        elif feature.shape[1] == 1:     # dim=1
+            tsne = np.repeat(feature, 2, axis=1)
+            return tsne
         else:
-            if len(mask) == 0:
-                return
-            elif len(mask) == 1:
-                tsne = feature[:, mask]
+            if np.std(feature) != 0.:     # [notice] make sure all faetures are not identical
+                tsne = TSNE(perplexity=perplexity, n_jobs=-1).fit_transform(feature) 
                 return tsne
-            else:
-                if np.std(np.array(feature[:, mask])) != 0.:     # [notice] make sure all faetures are not identical
-                    tsne = TSNE(perplexity=perplexity, n_jobs=-1).fit_transform(feature[:,mask]) 
-                    return tsne
-                else:     # all values in different units are identical
-                    return
+            else:     # all values in different units are identical
+                return
         
-    def tsne_plot(self, ax, tsne, mask, label, markers, title, layer, tsne_x1, tsne_y1, tsne_x2, tsne_y2):
-        
-        width = tsne_x2-tsne_x1
-        height = tsne_y2-tsne_y1
-        for i in range(self.num_classes):
-            self.tsne_plot_scatter(ax, tsne, i, label, markers, mask, tsne_x1, tsne_y1, tsne_x2, tsne_y2)
+    def tsne_in_layer_plot(self, ax, tsne, mask, label, markers, title, layer, tsne_coordinate, norm_lim=True):
+    
+        if tsne is not None:
             
-        ax.set_title(self.data_name + f' {title}')
-        ax.grid(True)
-        ax.vlines(0, tsne_x1-0.5*width, tsne_x1+1.5*width, colors='gray',  linestyles='--', linewidth=2.0)
-        ax.hlines(0, tsne_y1-0.5*height, tsne_y1+1.5*height, colors='gray',  linestyles='--', linewidth=2.0)
-        ax.set_xlim((tsne_x1-0.025*width, tsne_x1+1.025*width))
-        ax.set_ylim((tsne_y1-0.025*height, tsne_y1+1.025*height))
+            if norm_lim == True:
+                tsne_x_min = tsne_coordinate['x_min']
+                tsne_x_max = tsne_coordinate['x_max']
+                tsne_y_min = tsne_coordinate['y_min']
+                tsne_y_max = tsne_coordinate['y_max']
+            else:
+                tsne_x_min = np.min(tsne[:,0])
+                tsne_x_max = np.max(tsne[:,0])
+                tsne_y_min = np.min(tsne[:,1])
+                tsne_y_max = np.max(tsne[:,1])
+                
+            width = tsne_x_max - tsne_x_min
+            height = tsne_y_max - tsne_y_min
+
+            for i in range(self.num_classes):     # for each class
+                self.tsne_in_layer_plot_scatter(ax, tsne, i, label, markers)
+                
+            ax.set_xlim((tsne_x_min-0.025*width, tsne_x_min+1.025*width))
+            ax.set_ylim((tsne_y_min-0.025*height, tsne_y_min+1.025*height))
+            
+            ax.vlines(0, tsne_x_min-0.5*width, tsne_x_min+1.5*width, colors='gray',  linestyles='--', linewidth=2.0)
+            ax.hlines(0, tsne_y_min-0.5*height, tsne_y_min+1.5*height, colors='gray',  linestyles='--', linewidth=2.0)
         
-    def tsne_plot_scatter(self, ax, tsne, i, label, markers, mask, tsne_x1, tsne_y1, tsne_x2, tsne_y2):
+        ax.set_title(f'{title} \n {mask.size}/{self.neurons[self.layers.index(layer)]}({mask.size/self.neurons[self.layers.index(layer)]*100:.2f}%)')
+        ax.grid(False)
+        
+        
+        
+        
+    def tsne_in_layer_plot_scatter(self, ax, tsne, i, label, markers):
         
         try:
             if tsne.shape[1]==1:
@@ -320,25 +304,75 @@ class Selectiviy_Analysis_DR_and_RSA():
             else:
                 raise
     
-    def generate_masks(self, dest, layer, feature_col):
+    def calculate_perplexity(self, mask_dict):
         
-        sensitive_unit_idx = np.loadtxt(dest + layer + '-neuronIdx.csv', delimiter=',')     # [warning] simple call
-        if sensitive_unit_idx.size == 1:
-            sensitive_unit_idx = np.array([sensitive_unit_idx])
-        sensitive_unit_idx = list(map(int, sensitive_unit_idx))
-        all_idx = [i for i in range(feature_col)]
-        non_sensitive_unit_idx = list(set(all_idx)-set(sensitive_unit_idx))
+        mask_types = list(mask_dict.keys())
+        perplexity_dict = {}
         
-        return sensitive_unit_idx, non_sensitive_unit_idx
+        for key in mask_types:
+            
+            mask = mask_dict[key]
+            
+            if len(mask) > 0:     # if units number > 0
+                perplexity = min(math.sqrt(len(mask)), self.num_classes*self.num_samples-1)     # min(square_root(unit numbers), 499)
+            else:     # no unit
+                perplexity = 1e-9
+            
+            perplexity_dict.update({key: perplexity})
+            
+        return perplexity_dict
     
-    def calculate_perplexity(self, mask):
+    # -----
+    def tsne_analysis_plot(self, label, markers, ):   
         
-        if len(mask) >= 1:     # if units number > 0
-            perplexity = min(math.sqrt(len(mask)), self.num_classes*self.num_samples-1)     # min(square_root(unit numbers), 499)
-        else:     # no unit
-            perplexity = 1e-9
-        return perplexity
+        if not hasattr(self, 'tsne_layer_dict'):
+            self.tsne_layer_dict = utils_.pickle_load(os.path.join(self.save_path_DR, 'tsne_all.pkl'))
+        
+        row_idx = 0
+        column_idx = 0
+        
+        Sort_dict = utils_.pickle_load(os.path.join(self.dest, 'Encode/Sort_dict.pkl'))
+        
+        idces, layers, _ = utils_.imaginary_neurons_vgg(self.layers)
+        
+        fig, ax = plt.subplots(len(layers), 7, figsize=(6*7, 6*len(layers)), dpi=100)
+        
+        for idx, layer in zip(idces, layers):
 
+            tsne_dict = self.tsne_layer_dict[layer]['tsne_dict']
+            tsne_coordinate = self.tsne_layer_dict[layer]['tsne_coordinate']
+            
+            mask_dict = Sort_dict[layer]['advanced_type']
+            mask_dict.update({'all': np.arange(self.neurons[idx])})
+            
+            if layer == 'neuron_1' or layer == 'neuron_2':
+                norm_lim = False
+            else:
+                norm_lim = True
+            
+            for idx, type_ in enumerate(['all', 'sensitive_si_idx', 'sensitive_mi_idx', 'sensitive_non_encode_idx',
+                                         'non_sensitive_si_idx', 'non_sensitive_mi_idx', 'non_sensitive_non_encode_idx']):
+                
+                self.tsne_in_layer_plot(ax=ax[row_idx, column_idx], 
+                               tsne=tsne_dict[type_], 
+                               mask=mask_dict[type_], 
+                               label=label, 
+                               markers=markers, 
+                               title=layer+' '+type_, 
+                               layer=layer, 
+                               tsne_coordinate=tsne_coordinate,
+                               norm_lim=norm_lim)
+                
+                column_idx += 1
+                if column_idx == 7:
+                    row_idx += 1
+                    column_idx = 0
+        
+        fig.savefig(self.save_path_DR + f'/tsne_all_neurons.png', bbox_inches='tight', dpi=100)     # change dpi whilst data change
+        fig.savefig(self.save_path_DR + f'/tsne_all_neurons.eps', bbox_inches='tight', dpi=100, format='eps')
+        plt.close() 
+    
+    # ==================================================================================================================
     #FIXME distance scale
     def selectivity_analysis_distance(self):
         print('[Codinfo] Executing selectivity_analysis_distance...')
@@ -523,26 +557,18 @@ if __name__ == '__main__':
 #     selectivity_additional_analyzer.selectivity_analysis_tsne()
 # =============================================================================
 
-    neuron_ = neuron.LIFNode
-
-    spiking_model = spiking_resnet.__dict__['spiking_resnet18'](spiking_neuron=neuron_, num_classes=50, surrogate_function=surrogate.ATan(), detach_reset=True, mode='feature')
-    functional.set_step_mode(spiking_model, step_mode='m') 
-    layers, neurons, shapes = utils_.generate_resnet_layers_list(spiking_model, 'spiking_resnet18')
+    model_name = 'vgg16_bn'
     
-    layers_ = [i for i in layers if 'neuron' in i or 'fc' in i or 'pool' in i]
-    index_ = [layers.index(i) for i in layers_]
-    neurons_ = [neurons[i] for i in index_]
-    layers = layers_
-    neurons = neurons_
-    
-    root_dir = '/media/acxyle/Data/ChromeDownload/'
+    model_ = vgg.__dict__[model_name](num_classes=50)
+    layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, model_name)
 
-    selectivity_additional_analyzer = Selectiviy_Analysis_DR_and_RSA(
-                root=os.path.join(root_dir, 'Identity_SpikingResnet18_LIF_CelebA2622_Results/'), 
-                dest=os.path.join(root_dir, 'Identity_SpikingResnet18_LIF_CelebA2622_Neuron/'), 
+    root_dir = '/home/acxyle-workstation/Downloads/'
+
+    selectivity_additional_analyzer = Selectiviy_Analysis_DR_and_RSA(root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622/'), 
                 layers=layers, neurons=neurons)
-    #selectivity_additional_analyzer.selectivity_analysis_tsne()
+    selectivity_additional_analyzer.selectivity_analysis_tsne()
     #selectivity_additional_analyzer.selectivity_analysis_distance()
-    selectivity_additional_analyzer.selectivity_analysis_correlation()
-    
+    #selectivity_additional_analyzer.selectivity_analysis_correlation()
+                                                                                         
+
 

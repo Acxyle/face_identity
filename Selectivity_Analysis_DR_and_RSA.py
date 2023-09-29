@@ -32,7 +32,7 @@ from spikingjelly.activation_based import surrogate, neuron, functional
 import utils_
 
 
-class Selectiviy_Analysis_DR_and_RSA():
+class Selectiviy_Analysis_DR():
     
     def __init__(self, 
                  root='/Identity_Spikingjelly_VGG_Results/',
@@ -51,14 +51,13 @@ class Selectiviy_Analysis_DR_and_RSA():
         self.dest_DR = os.path.join(self.dest, 'Dimension_Reduction')
         utils_.make_dir(self.dest_DR)
         
-        self.dest_DSM = os.path.join(self.dest, 'DisSimilarity_Matrix')
-        utils_.make_dir(self.dest_DSM)
-        
         self.num_samples = num_samples
         self.num_classes = num_classes
         
         if data_name != None:
             self.data_name = data_name
+            
+        self.model_structure = root.split('/')[-2].split(' ')[2]
         
     #FIXME
     def selectivity_analysis_tsne(self, parallel=False, verbose=False):
@@ -86,30 +85,38 @@ class Selectiviy_Analysis_DR_and_RSA():
         
     def tsne_analysis_calculation(self, label, markers, in_layer_plot):
         
-        Sort_dict = utils_.pickle_load(os.path.join(self.dest, 'Encode/Sort_dict.pkl'))
+        save_path = os.path.join(self.save_path_DR, 'tsne_all.pkl')
         
-        self.tsne_layer_dict = {}
+        if os.path.exists(save_path):
+            
+            self.tsne_layer_dict = utils_.pickle_load(save_path)
         
-        layers = self.layers[:]
+        else:
         
-        # ----- sequantial calculation
-        # ----- parallel can only be used for later layers because of RAM limit
-        for layer in tqdm(layers, desc='TSNE Sequential'):
+            Sort_dict = utils_.pickle_load(os.path.join(self.dest, 'Encode/Sort_dict.pkl'))
             
-            feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
+            self.tsne_layer_dict = {}
             
-            advanced_units_types = Sort_dict[layer]['advanced_type']
+            layers = self.layers[:]
             
-            tsne_layer = self.tsne_layer_calculation(layer=layer, 
-                                        feature=feature, 
-                                        mask_dict=advanced_units_types, 
-                                        label=label, 
-                                        markers=markers,
-                                        plot=in_layer_plot)  
-            
-            self.tsne_layer_dict.update(tsne_layer)
-            
-        utils_.pickle_dump(os.path.join(self.save_path_DR, 'tsne_all.pkl'), self.tsne_layer_dict)
+            # ----- sequantial calculation
+            # ----- parallel can only be used for later layers because of RAM limit
+            for layer in tqdm(layers, desc='TSNE Sequential'):
+                
+                feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
+                
+                advanced_units_types = Sort_dict[layer]['advanced_type']
+                
+                tsne_layer = self.tsne_layer_calculation(layer=layer, 
+                                            feature=feature, 
+                                            mask_dict=advanced_units_types, 
+                                            label=label, 
+                                            markers=markers,
+                                            plot=in_layer_plot)  
+                
+                self.tsne_layer_dict.update(tsne_layer)
+                
+            utils_.pickle_dump(save_path, self.tsne_layer_dict)
         
     def tsne_layer_calculation(self, layer, feature, mask_dict, label, markers, plot=True):
         """
@@ -255,7 +262,9 @@ class Selectiviy_Analysis_DR_and_RSA():
                 return
         
     def tsne_in_layer_plot(self, ax, tsne, mask, label, markers, title, layer, tsne_coordinate, norm_lim=True):
-    
+        
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
         if tsne is not None:
             
             if norm_lim == True:
@@ -325,17 +334,28 @@ class Selectiviy_Analysis_DR_and_RSA():
     # -----
     def tsne_analysis_plot(self, label, markers, ):   
         
+        print('[Codinfo] Executing tsne_analysis_plot...')
+        
         if not hasattr(self, 'tsne_layer_dict'):
             self.tsne_layer_dict = utils_.pickle_load(os.path.join(self.save_path_DR, 'tsne_all.pkl'))
-        
-        row_idx = 0
-        column_idx = 0
         
         Sort_dict = utils_.pickle_load(os.path.join(self.dest, 'Encode/Sort_dict.pkl'))
         
         idces, layers, _ = utils_.imaginary_neurons_vgg(self.layers)
         
+        self.tsne_analysis_plot_single(layers, idces, Sort_dict, label, markers, norm_lim=True, suptitle='neuron_norm_lim')
+
+        self.tsne_analysis_plot_single(layers, idces, Sort_dict, label, markers, norm_lim=False, suptitle='neuron')
+        
+        
+    def tsne_analysis_plot_single(self, layers, idces, Sort_dict, label, markers, norm_lim, suptitle):
+        
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
         fig, ax = plt.subplots(len(layers), 7, figsize=(6*7, 6*len(layers)), dpi=100)
+        
+        row_idx = 0
+        column_idx = 0
         
         for idx, layer in zip(idces, layers):
 
@@ -344,11 +364,6 @@ class Selectiviy_Analysis_DR_and_RSA():
             
             mask_dict = Sort_dict[layer]['advanced_type']
             mask_dict.update({'all': np.arange(self.neurons[idx])})
-            
-            if layer == 'neuron_1' or layer == 'neuron_2':
-                norm_lim = False
-            else:
-                norm_lim = True
             
             for idx, type_ in enumerate(['all', 'sensitive_si_idx', 'sensitive_mi_idx', 'sensitive_non_encode_idx',
                                          'non_sensitive_si_idx', 'non_sensitive_mi_idx', 'non_sensitive_non_encode_idx']):
@@ -368,65 +383,174 @@ class Selectiviy_Analysis_DR_and_RSA():
                     row_idx += 1
                     column_idx = 0
         
-        fig.savefig(self.save_path_DR + f'/tsne_all_neurons.png', bbox_inches='tight', dpi=100)     # change dpi whilst data change
-        fig.savefig(self.save_path_DR + f'/tsne_all_neurons.eps', bbox_inches='tight', dpi=100, format='eps')
+        fig.suptitle(f'{self.model_structure}', y=0.895, fontsize=28)
+        
+        fig.savefig(self.save_path_DR + f'/tsne_all_{suptitle}.png', bbox_inches='tight', dpi=100)     # change dpi whilst data change
+        #fig.savefig(self.save_path_DR + f'/tsne_all_{suptitle}.eps', bbox_inches='tight', dpi=100, format='eps')
         plt.close() 
     
     # ==================================================================================================================
-    #FIXME distance scale
-    def selectivity_analysis_distance(self):
-        print('[Codinfo] Executing selectivity_analysis_distance...')
+    #FIXME
+    """
+        in my expectation, the EU distance and Pearsons' Correlation should be merged in one function but with different 
+        args to produce different metrics, so that in future can add other values for RSA
+    """
+class Selectiviy_Analysis_SM():
+    
+    def __init__(self, 
+                 root='/Identity_Spikingjelly_VGG_Results/',
+                 num_samples=10, num_classes=50, layers=None, neurons=None,  data_name=None):
+        
+        if layers == None or neurons == None:
+            raise RuntimeError('[Codwarning] invalid layers and neurons')
+            
+        self.layers = layers
+        self.neurons = neurons
+        
+        self.root = os.path.join(root, 'Features')
+        self.dest = os.path.join(root, 'Analysis')
+        utils_.make_dir(self.dest)
+        
+        self.dest_DSM = os.path.join(self.dest, '(Dis)Similarity_Matrix')
+        utils_.make_dir(self.dest_DSM)
+        
+        self.num_samples = num_samples
+        self.num_classes = num_classes
+        
+        if data_name != None:
+            self.data_name = data_name
+            
+        self.model_structure = root.split('/')[-2].split(' ')[2]
+        
+    
+    def selectivity_analysis_similarity_metrics(self, metrics: list[str]):
+        """
+            metrics should be a list of metrics,
+            now have: (1) Euclidean Distance; (2) Pearson Correlation Coefficient
+        """
+        print('[Codinfo] Executing similarity_metrics...')
+        
+        for metric in metrics:
+            
+            self.metric_folder = os.path.join(os.path.join(self.dest_DSM, f'{metric}'))
+            utils_.make_dir(self.metric_folder)
+            
+            dict_path = os.path.join(self.metric_folder, f'{metric}.pkl')
+            
+            if os.path.exists(dict_path):
+                metric_dict = utils_.pickle_load(dict_path)
+            
+            else:
+                metric_dict = self.selectivity_analysis_similarity(metric, in_layer_plot=True)
+                utils_.pickle_dump(dict_path, metric_dict)
+            
+            # ----- plot
+            metric_dict = {_:{__: metric_dict[_][__]['matrix'] for __ in metric_dict[_].keys()} for _ in metric_dict.keys()}
+            
+            # ----- not applicable for all metrics
+            #metric_dict_pool = np.array([np.array(list(metric_dict[key].values())) for key in metric_dict.keys()])
+            #vmax = np.max(metric_dict_pool)
+            #vmin = np.min(metric_dict_pool)
+            
+            fig,ax = plt.subplots(39,7,figsize=(35,195))
+
+            for idx, layer in enumerate(layers):
+                
+                metric_layer_pool = np.array(list(metric_dict[layer].values()))
+                vmin = np.min(metric_layer_pool)
+                vmax = np.max(metric_layer_pool)
+                
+                vnorm = vmax-vmin
+                
+                for idx_, type_ in enumerate(metric_dict[layer].keys()):
+                    
+                    ax[idx, idx_].imshow((metric_dict[layer][type_]-vmin)/vnorm, origin='lower', vmin=vmin, vmax=vmax, cmap='turbo')
+                    ax[idx, idx_].set_xticks([])
+                    ax[idx, idx_].set_yticks([])
+            
+            fig.tight_layout()
+            fig.savefig(os.path.join(self.metric_folder, 'all.png'), bbox_inches='tight', dpi=100)
+            plt.close()
+            
+            print('6')
+            
+        
+    def selectivity_analysis_similarity(self, metric:str, in_layer_plot:bool=False):
+        
+        print(f'[Codinfo] Executing selectivity_analysis_metric [{metric}]...')
         
         logging.getLogger('matplotlib').setLevel(logging.ERROR)
         
-        dest = self.dest+'Distance/'
-        utils_.make_dir(dest)  
+        self.dest_metric = os.path.join(self.dest_DSM, f'{metric}')
+        utils_.make_dir(self.dest_metric)
         
-        dis_dict = {}
+        metric_dict = {}     # use a dict to store the info of each layer
         
-        for layer in tqdm(self.layers):     # for each layer
+        # ----- load different types of units
+        Sort_dict = utils_.pickle_load(os.path.join(self.dest, 'Encode/Sort_dict.pkl'))
         
-            feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
-
+        layers = self.layers[:]
+        
+        for layer in tqdm(layers):     # for each layer
+            
+            feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))     # (500, num_units)
+            
             mean_FR = self.calculate_mean_FR(feature)
-            sorted_idx = utils_.lexicographic_order(self.num_classes)
-            mean_FR = self.restore_order(mean_FR, sorted_idx)
+            sorted_idx = utils_.lexicographic_order(self.num_classes)     # correct labels
+            mean_FR = self.restore_order(mean_FR, sorted_idx)     # (50, num_units)
             
-            mask_id, mask_non_id = self.generate_masks(self.dest, layer, feature.shape[1])
-        
-            dist_avg = pdist(mean_FR, 'euclidean')
-            m = squareform(dist_avg)
+            # -----
+            units_type_dict = Sort_dict[layer]['advanced_type']
+            units_type_dict.update({'all': np.arange(mean_FR.shape[1])})
+            # -----
+    
+            # ----- generate similarity metrics
+            metric_type_dict = {}
             
-            dist_avg_ID = pdist(mean_FR[:, mask_id], 'euclidean')
-            m_i = squareform(dist_avg_ID)
+            for type_ in [_ for _ in units_type_dict.keys() if 'sensitive_encode_idx' not in _]:
             
-            dist_avg_NonID = pdist(mean_FR[:, mask_non_id], 'euclidean')
-            m_n = squareform(dist_avg_NonID)
+                similarity_dict = selectivity_analysis_calculation(metric, mean_FR[:, units_type_dict[type_].astype(int)])
+                metric_type_dict[type_] = similarity_dict
+            # -----
             
-            dis_dict[layer]={'all': m, 
-                             'id_selective': m_i,
-                             'non_id_selective': m_n}
-        
-            vmax = max(m.max(), m_i.max(), m_n.max())
-            vmin = min(m.min(), m_i.min(), m_n.min())
+            metric_dict[layer] = metric_type_dict
             
-            fig, axes = plt.subplots(1, 3, figsize=((30, 10)))
-            cbar_ax = fig.add_axes([.91, .1, .03, .8])
+            if in_layer_plot:
+                
+                self.selectivity_analysis_similarity_in_layer_plot(layer, metric_type_dict)
+            
+        return metric_dict
+    
+    def selectivity_analysis_similarity_in_layer_plot(self, layer, metric_type_dict):
         
-            sn.heatmap(m, ax=axes[0], cbar=0, vmin=vmin, vmax=vmax, cbar_ax=cbar_ax)
-            axes[0].set_title('all neurons')
-            sn.heatmap(m_i, ax=axes[1], cbar=1, vmin=vmin, vmax=vmax, cbar_ax=cbar_ax)
-            axes[1].set_title('identity selective neurons')
-            sn.heatmap(m_n, ax = axes[2], cbar=2, vmin=vmin, vmax=vmax, cbar_ax=cbar_ax)
-            axes[2].set_title('non identity selective neurons')
+        plot_folder = os.path.join(self.metric_folder, 'Figures')
+        utils_.make_dir(plot_folder)
         
-            with warnings.catch_warnings():
-                warnings.simplefilter(action='ignore')
-                fig.tight_layout(rect=[0, 0, .9, 1])
-                plt.title(layer)
-                plt.savefig(dest + layer+'-EDistance.png', bbox_inches='tight', dpi=100)
-                plt.close()
+        metric_values_pool = np.array([metric_type_dict[_]['matrix'] for _ in metric_type_dict.keys()])
         
+        vmax = np.max(metric_values_pool)
+        vmin = np.min(metric_values_pool)
+        
+        fig, ax = plt.subplots(1,7,figsize=(35,5))
+
+        for idx, key in enumerate(metric_type_dict.keys()):
+            ax[idx].imshow(metric_type_dict[key]['matrix'], origin='lower', vmin=vmin, vmax=vmax)
+            ax[idx].set_title(f'{key}')
+            ax[idx].set_xticks([])
+            ax[idx].set_yticks([])
+        #sn.heatmap(similarity_matrix, ax=axes[0], cbar=0, vmin=vmin, vmax=vmax, cbar_ax=cbar_ax)
+ 
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore')
+            fig.tight_layout(rect=[0, 0, .9, 1])
+            fig.suptitle(layer, y=1.025)
+            fig.savefig(os.path.join(plot_folder, f'{layer}.png'), bbox_inches='tight', dpi=100)
+            plt.close()
+
+    def selectivity_analysis_distance(self):
+        
+        ...
+                
         # [notice] in fact, the Correlation uses the results of pdist()
         savemat(os.path.join(dest, 'distance.mat'), dis_dict)
         utils_.pickle_dump(os.path.join(dest, 'distance.pkl'), dis_dict)
@@ -542,6 +666,28 @@ class Selectiviy_Analysis_DR_and_RSA():
         return np.array([matrix[_*self.num_samples:(_+1)*self.num_samples, :] for _ in range(self.num_classes)]).mean(axis=1)
    
     
+#FIXME
+def selectivity_analysis_calculation(metric: str, feature: np.array):
+    """
+        based on [metric] to calculate
+    """
+    if 'euclidean' in metric.lower():
+        similarity_value = pdist(feature, 'euclidean')     # (1225,)
+        similarity_value_matrix = squareform(similarity_value)     # (50, 50)
+    
+    elif 'pearson' in metric.lower():
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore')
+            similarity_value = np.corrcoef(feature)
+    
+    similarity_dict = {
+        'vector': similarity_value,     # for RSA
+        'matrix': similarity_value_matrix     # for plot
+        }
+    
+    return similarity_dict
+
+    
 if __name__ == '__main__':
     
 # =============================================================================
@@ -557,18 +703,18 @@ if __name__ == '__main__':
 #     selectivity_additional_analyzer.selectivity_analysis_tsne()
 # =============================================================================
 
-    model_name = 'vgg16_bn'
+    model_name = 'vgg16'
     
     model_ = vgg.__dict__[model_name](num_classes=50)
     layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, model_name)
 
     root_dir = '/home/acxyle-workstation/Downloads/'
 
-    selectivity_additional_analyzer = Selectiviy_Analysis_DR_and_RSA(root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622/'), 
+    selectivity_additional_analyzer = Selectiviy_Analysis_SM(root=os.path.join(root_dir, 'Face Identity Baseline/'), 
                 layers=layers, neurons=neurons)
-    selectivity_additional_analyzer.selectivity_analysis_tsne()
-    #selectivity_additional_analyzer.selectivity_analysis_distance()
-    #selectivity_additional_analyzer.selectivity_analysis_correlation()
+    
+    metrics_list = ['euclidean']
+    
+    selectivity_additional_analyzer.selectivity_analysis_similarity_metrics(metrics_list)
                                                                                          
-
 

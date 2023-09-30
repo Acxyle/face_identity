@@ -389,12 +389,12 @@ class Selectiviy_Analysis_DR():
         #fig.savefig(self.save_path_DR + f'/tsne_all_{suptitle}.eps', bbox_inches='tight', dpi=100, format='eps')
         plt.close() 
     
-    # ==================================================================================================================
-    #FIXME
-    """
-        in my expectation, the EU distance and Pearsons' Correlation should be merged in one function but with different 
-        args to produce different metrics, so that in future can add other values for RSA
-    """
+# ==================================================================================================================
+#FIXME
+"""
+    in my expectation, the EU distance and Pearsons' Correlation should be merged in one function but with different 
+    args to produce different metrics, so that in future can add other values for RSA
+"""
 class Selectiviy_Analysis_SM():
     
     def __init__(self, 
@@ -430,64 +430,40 @@ class Selectiviy_Analysis_SM():
         """
         print('[Codinfo] Executing similarity_metrics...')
         
-        for metric in metrics:
+        # ----- load different types of units
+        self.Sort_dict = utils_.pickle_load(os.path.join(self.dest, 'Encode/Sort_dict.pkl'))
+        
+        plt.rcParams.update({"font.family": "Times New Roman"})
+
+        for self.metric in metrics:
             
-            self.metric_folder = os.path.join(os.path.join(self.dest_DSM, f'{metric}'))
+            self.metric_folder = os.path.join(os.path.join(self.dest_DSM, f'{self.metric}'))
             utils_.make_dir(self.metric_folder)
             
-            dict_path = os.path.join(self.metric_folder, f'{metric}.pkl')
+            dict_path = os.path.join(self.metric_folder, f'{self.metric}.pkl')
             
             if os.path.exists(dict_path):
                 metric_dict = utils_.pickle_load(dict_path)
             
             else:
-                metric_dict = self.selectivity_analysis_similarity(metric, in_layer_plot=True)
+                metric_dict = self.selectivity_analysis_similarity(in_layer_plot=True)
+                
                 utils_.pickle_dump(dict_path, metric_dict)
+                #savemat(os.path.join(self.metric_folder, f'{self.metric}.mat'), metric_dict)
             
             # ----- plot
-            metric_dict = {_:{__: metric_dict[_][__]['matrix'] for __ in metric_dict[_].keys()} for _ in metric_dict.keys()}
-            
-            # ----- not applicable for all metrics
-            #metric_dict_pool = np.array([np.array(list(metric_dict[key].values())) for key in metric_dict.keys()])
-            #vmax = np.max(metric_dict_pool)
-            #vmin = np.min(metric_dict_pool)
-            
-            fig,ax = plt.subplots(39,7,figsize=(35,195))
-
-            for idx, layer in enumerate(layers):
-                
-                metric_layer_pool = np.array(list(metric_dict[layer].values()))
-                vmin = np.min(metric_layer_pool)
-                vmax = np.max(metric_layer_pool)
-                
-                vnorm = vmax-vmin
-                
-                for idx_, type_ in enumerate(metric_dict[layer].keys()):
-                    
-                    ax[idx, idx_].imshow((metric_dict[layer][type_]-vmin)/vnorm, origin='lower', vmin=vmin, vmax=vmax, cmap='turbo')
-                    ax[idx, idx_].set_xticks([])
-                    ax[idx, idx_].set_yticks([])
-            
-            fig.tight_layout()
-            fig.savefig(os.path.join(self.metric_folder, 'all.png'), bbox_inches='tight', dpi=100)
-            plt.close()
-            
-            print('6')
-            
+            self.selectivity_analysis_plot(metric_dict, sup_v=(0,2))
+               
+    def selectivity_analysis_similarity(self, in_layer_plot:bool=False):
         
-    def selectivity_analysis_similarity(self, metric:str, in_layer_plot:bool=False):
-        
-        print(f'[Codinfo] Executing selectivity_analysis_metric [{metric}]...')
+        print(f'[Codinfo] Executing selectivity_analysis_metric [{self.metric}]...')
         
         logging.getLogger('matplotlib').setLevel(logging.ERROR)
         
-        self.dest_metric = os.path.join(self.dest_DSM, f'{metric}')
+        self.dest_metric = os.path.join(self.dest_DSM, f'{self.metric}')
         utils_.make_dir(self.dest_metric)
         
         metric_dict = {}     # use a dict to store the info of each layer
-        
-        # ----- load different types of units
-        Sort_dict = utils_.pickle_load(os.path.join(self.dest, 'Encode/Sort_dict.pkl'))
         
         layers = self.layers[:]
         
@@ -500,7 +476,7 @@ class Selectiviy_Analysis_SM():
             mean_FR = self.restore_order(mean_FR, sorted_idx)     # (50, num_units)
             
             # -----
-            units_type_dict = Sort_dict[layer]['advanced_type']
+            units_type_dict = self.Sort_dict[layer]['advanced_type']
             units_type_dict.update({'all': np.arange(mean_FR.shape[1])})
             # -----
     
@@ -508,8 +484,8 @@ class Selectiviy_Analysis_SM():
             metric_type_dict = {}
             
             for type_ in [_ for _ in units_type_dict.keys() if 'sensitive_encode_idx' not in _]:
-            
-                similarity_dict = selectivity_analysis_calculation(metric, mean_FR[:, units_type_dict[type_].astype(int)])
+                
+                similarity_dict = selectivity_analysis_calculation(self.metric, mean_FR[:, units_type_dict[type_].astype(int)])
                 metric_type_dict[type_] = similarity_dict
             # -----
             
@@ -517,44 +493,172 @@ class Selectiviy_Analysis_SM():
             
             if in_layer_plot:
                 
-                self.selectivity_analysis_similarity_in_layer_plot(layer, metric_type_dict)
+                if self.metric == 'euclidean':     # for any values
+                    self.selectivity_analysis_similarity_in_layer_plot(layer, metric_type_dict)     
+                else:     # for similarity values
+                    self.selectivity_analysis_similarity_in_layer_plot(layer, metric_type_dict, v=(0,2))    
             
         return metric_dict
     
-    def selectivity_analysis_similarity_in_layer_plot(self, layer, metric_type_dict):
+    #FIXME
+    def selectivity_analysis_similarity_in_layer_plot(self, layer, metric_type_dict, v:tuple=None):
         
-        plot_folder = os.path.join(self.metric_folder, 'Figures')
+        plot_folder = os.path.join(self.metric_folder, 'in_layer_Figures')
         utils_.make_dir(plot_folder)
         
-        metric_values_pool = np.array([metric_type_dict[_]['matrix'] for _ in metric_type_dict.keys()])
+        metric_values_pool = np.array([metric_type_dict[_]['matrix'] for _ in metric_type_dict.keys() if metric_type_dict[_] != None])
         
-        vmax = np.max(metric_values_pool)
-        vmin = np.min(metric_values_pool)
+        if v == None:
+            vmin = np.min(metric_values_pool)
+            vmax = np.max(metric_values_pool)
+        else:
+            vmin = v[0]
+            vmax = v[1]
         
         fig, ax = plt.subplots(1,7,figsize=(35,5))
 
         for idx, key in enumerate(metric_type_dict.keys()):
-            ax[idx].imshow(metric_type_dict[key]['matrix'], origin='lower', vmin=vmin, vmax=vmax)
+            
             ax[idx].set_title(f'{key}')
+            
+            if metric_type_dict[key] != None:
+                ax[idx].imshow(metric_type_dict[key]['matrix'], origin='lower', vmin=vmin, vmax=vmax)
+                #sn.heatmap(similarity_matrix, ax=ax[idx]], cbar=0, vmin=vmin, vmax=vmax, cbar_ax=cbar_ax)     # legacy use
+                
+                if metric_type_dict[key]['contains_nan'] == True:
+                    ax[idx].set_title(f'{key} [contains NaN]')
+                
+                ax[idx].set_xlabel(f"{metric_type_dict[key]['num_units']/(self.neurons[self.layers.index(layer)])*100:.2f}%")
+            
+            else:
+                
+                ax[idx].set_xlabel("0.00%")
+                
             ax[idx].set_xticks([])
             ax[idx].set_yticks([])
-        #sn.heatmap(similarity_matrix, ax=axes[0], cbar=0, vmin=vmin, vmax=vmax, cbar_ax=cbar_ax)
- 
+
+
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore')
             fig.tight_layout(rect=[0, 0, .9, 1])
             fig.suptitle(layer, y=1.025)
             fig.savefig(os.path.join(plot_folder, f'{layer}.png'), bbox_inches='tight', dpi=100)
             plt.close()
-
-    def selectivity_analysis_distance(self):
         
-        ...
-                
-        # [notice] in fact, the Correlation uses the results of pdist()
-        savemat(os.path.join(dest, 'distance.mat'), dis_dict)
-        utils_.pickle_dump(os.path.join(dest, 'distance.pkl'), dis_dict)
+    def selectivity_analysis_plot(self, metric_dict, sup_v:tuple=None):
+
+        plt.rcParams.update({"font.size": 30})
+        
+        # ----- not applicable for all metrics
+        metric_dict_ = {_:{__: metric_dict[_][__]['matrix'] if metric_dict[_][__] != None else None for __ in metric_dict[_].keys()} for _ in metric_dict.keys()}
+        metric_dict_pool = np.concatenate([_ for _ in [np.concatenate([metric_dict_[key][__] for __ in metric_dict_[key].keys() if metric_dict_[key][__] is not None]).reshape(-1) for key in metric_dict_.keys()]])   # in case of inhomogeneous shape
+        
+        if sup_v is None:
+            sup_vmin = np.min(metric_dict_pool)
+            sup_vmax = np.max(metric_dict_pool)
+        else:
+            sup_vmin = sup_v[0]
+            sup_vmax = sup_v[1]
+        
+        tqdm_bar = tqdm(total=6, desc='Plot')
+        
+        # -----
+        self.selectivity_analysis_plot_single(metric_dict, sup_vmin, sup_vmax, layer_type='imaginary_neuron', plot_type='')
+        tqdm_bar.update(1)
+        
+        # -----
+        self.selectivity_analysis_plot_single(metric_dict, sup_vmin, sup_vmax, layer_type='imaginary_neuron', plot_type='suplim')
+        tqdm_bar.update(1)
+        
+        # -----
+        self.selectivity_analysis_plot_single(metric_dict, sup_vmin, sup_vmax, layer_type='imaginary_neuron', plot_type='norm')
+        tqdm_bar.update(1)
+        
+        # -----
+        self.selectivity_analysis_plot_single(metric_dict, sup_vmin, sup_vmax, layer_type='all', plot_type='')
+        tqdm_bar.update(1)
+        
+        # -----
+        self.selectivity_analysis_plot_single(metric_dict, sup_vmin, sup_vmax, layer_type='all', plot_type='suplim')
+        tqdm_bar.update(1)
+        
+        # -----
+        self.selectivity_analysis_plot_single(metric_dict, sup_vmin, sup_vmax, layer_type='all', plot_type='norm')
+        tqdm_bar.update(1)
     
+    def selectivity_analysis_plot_single(self, metric_dict, sup_vmin, sup_vmax, cmap='turbo', layer_type:str=None, plot_type:str=None):
+        
+        plot_folder = os.path.join(self.metric_folder, 'Figures')
+        utils_.make_dir(plot_folder)
+        
+        logging.getLogger('matplotlib').setLevel(logging.ERROR)
+        
+        if layer_type == None or 'all' in layer_type.lower():
+            layers = self.layers
+        elif 'neuron' in layer_type.lower() or 'unit' in layer_type.lower():
+            _, layers, _ = utils_.imaginary_neurons_vgg(self.layers)
+        
+        fig,ax = plt.subplots(7, len(layers), figsize=(5*len(layers), 35))
+
+        for idx, layer in enumerate(layers):
+            
+            metric_layer_pool = np.concatenate([_['vector'] for _ in metric_dict[layer].values() if _ is not None])
+            vmin = np.min(metric_layer_pool)
+            vmax = np.max(metric_layer_pool)
+            vnorm = vmax-vmin
+            
+            for idx_, type_ in enumerate(metric_dict[layer].keys()):
+                
+                if idx_ == 0:
+                    ax[idx_, idx].set_title(layer)
+                    
+                if idx == 0:
+                    ax[idx_, idx].set_ylabel(type_)
+                
+                if plot_type == None or plot_type == '':
+                    if metric_dict[layer][type_] is not None:
+                        ax[idx_, idx].imshow(metric_dict[layer][type_]['matrix'], origin='lower', vmin=vmin, vmax=vmax, cmap=cmap)
+                        ax[idx_, idx].set_xlabel(f"{metric_dict[layer][type_]['num_units']/(self.neurons[self.layers.index(layer)])*100:.2f}%")
+                    else:
+                        ax[idx_, idx].set_xlabel("0.00%")
+                        
+                elif plot_type == 'suplim':
+                    if metric_dict[layer][type_] is not None:
+                        ax[idx_, idx].imshow(metric_dict[layer][type_]['matrix'], origin='lower', vmin=sup_vmin, vmax=sup_vmax, cmap=cmap)
+                        ax[idx_, idx].set_xlabel(f"{metric_dict[layer][type_]['num_units']/(self.neurons[self.layers.index(layer)])*100:.2f}%")
+                        
+                        cax = fig.add_axes([1.01, 0.1, 0.01, 0.75])
+                        norm = plt.Normalize(vmin=sup_vmin, vmax=sup_vmax)
+                        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
+                        
+                    else:
+                        ax[idx_, idx].set_xlabel("0.00%")
+                        
+                elif plot_type == 'norm':
+                    if metric_dict[layer][type_] is not None:
+                        ax[idx_, idx].imshow((metric_dict[layer][type_]['matrix']-vmin)/vnorm, origin='lower', vmin=vmin, vmax=vmax, cmap=cmap)
+                        ax[idx_, idx].set_xlabel(f"{metric_dict[layer][type_]['num_units']/(self.neurons[self.layers.index(layer)])*100:.2f}%")
+                        
+                        cax = fig.add_axes([1.01, 0.1, 0.01, 0.75])
+                        norm = plt.Normalize(vmin=0, vmax=1)
+                        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
+                        
+                    else:
+                        ax[idx_, idx].set_xlabel("0.00%")
+                
+                ax[idx_, idx].set_xticks([])
+                ax[idx_, idx].set_yticks([])
+
+        
+        fig.suptitle(f'{self.model_structure} | {self.metric} | {layer_type} | {plot_type}', y=1.015, fontsize=50)
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore')
+            
+            fig.tight_layout()
+            fig.savefig(os.path.join(plot_folder, f'{layer_type}_{plot_type}.png'), bbox_inches='tight', dpi=100)
+            plt.close()
+
     #FIXME parellel process
     def selectivity_analysis_correlation(self):
         
@@ -671,19 +775,49 @@ def selectivity_analysis_calculation(metric: str, feature: np.array):
     """
         based on [metric] to calculate
     """
+    
+    similarity_dict = {}
+    
     if 'euclidean' in metric.lower():
         similarity_value = pdist(feature, 'euclidean')     # (1225,)
-        similarity_value_matrix = squareform(similarity_value)     # (50, 50)
+        similarity_matrix = squareform(similarity_value)     # (50, 50)
+        
+        similarity_dict.update({
+            'vector': similarity_value,     # for RSA
+            'matrix': similarity_matrix,     # for plot
+            'contains_nan': False,     # by default, pdist() can receive null input and generate 0 rather NaN as output
+            'num_units': feature.shape[1]
+            })
     
     elif 'pearson' in metric.lower():
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore')
-            similarity_value = np.corrcoef(feature)
+            
+            if feature.shape[1] == 0:
+                similarity_dict = None
+            
+            else:
+                similarity_matrix = np.corrcoef(feature)
+                
+                if np.any(np.isnan(similarity_matrix)):     # when detecting NaN value, i.e.,  the values of one class are identical
+                    similarity_dict.update({'contains_nan': True})
+                    similarity_matrix[np.isnan(similarity_matrix)] = 0
+                    
+                else:
+                    similarity_dict.update({'contains_nan': False})
+                    
+                similarity_matrix = 1 - similarity_matrix     # SM [-1, 1] -> DSM [0, 2]
+                similarity_matrix = (similarity_matrix + similarity_matrix.T)/2     # correct as symmetric
+                for _ in range(similarity_matrix.shape[0]):     # correct diagnal values as 0
+                    similarity_matrix[_,_] = 0
+                    
+                similarity_value = squareform(similarity_matrix)     # (1225,)
     
-    similarity_dict = {
-        'vector': similarity_value,     # for RSA
-        'matrix': similarity_value_matrix     # for plot
-        }
+                similarity_dict.update({
+                    'vector': similarity_value,     # for RSA
+                    'matrix': similarity_matrix,     # for plot
+                    'num_units': feature.shape[1]
+                    })
     
     return similarity_dict
 

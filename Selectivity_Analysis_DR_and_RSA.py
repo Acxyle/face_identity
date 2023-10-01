@@ -428,14 +428,15 @@ class Selectiviy_Analysis_SM():
             metrics should be a list of metrics,
             now have: (1) Euclidean Distance; (2) Pearson Correlation Coefficient
         """
-        print('[Codinfo] Executing similarity_metrics...')
+        print(f'[Codinfo] Executing similarity_metrics | {self.model_structure}...')
         
         # ----- load different types of units
         self.Sort_dict = utils_.pickle_load(os.path.join(self.dest, 'Encode/Sort_dict.pkl'))
         
         plt.rcParams.update({"font.family": "Times New Roman"})
-
-        for self.metric in metrics:
+        
+        # =====
+        for self.metric in metrics:     # for each metric
             
             self.metric_folder = os.path.join(os.path.join(self.dest_DSM, f'{self.metric}'))
             utils_.make_dir(self.metric_folder)
@@ -452,7 +453,10 @@ class Selectiviy_Analysis_SM():
                 #savemat(os.path.join(self.metric_folder, f'{self.metric}.mat'), metric_dict)
             
             # ----- plot
-            self.selectivity_analysis_plot(metric_dict, sup_v=(0,2))
+            if self.metric == 'euclidean':
+                self.selectivity_analysis_plot(metric_dict, sup_v=None)
+            elif self.metric == 'pearson':
+                self.selectivity_analysis_plot(metric_dict, sup_v=(0,2))
                
     def selectivity_analysis_similarity(self, in_layer_plot:bool=False):
         
@@ -495,8 +499,8 @@ class Selectiviy_Analysis_SM():
                 
                 if self.metric == 'euclidean':     # for any values
                     self.selectivity_analysis_similarity_in_layer_plot(layer, metric_type_dict)     
-                else:     # for similarity values
-                    self.selectivity_analysis_similarity_in_layer_plot(layer, metric_type_dict, v=(0,2))    
+                elif self.metric == 'pearson':     # for similarity values
+                    self.selectivity_analysis_similarity_in_layer_plot(layer, metric_type_dict, (0,2))    
             
         return metric_dict
     
@@ -837,17 +841,17 @@ if __name__ == '__main__':
 #     selectivity_additional_analyzer.selectivity_analysis_tsne()
 # =============================================================================
 
-    model_name = 'vgg16'
+    model_name = 'vgg16_bn'
     
     model_ = vgg.__dict__[model_name](num_classes=50)
     layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, model_name)
 
     root_dir = '/home/acxyle-workstation/Downloads/'
 
-    selectivity_additional_analyzer = Selectiviy_Analysis_SM(root=os.path.join(root_dir, 'Face Identity Baseline/'), 
+    selectivity_additional_analyzer = Selectiviy_Analysis_SM(root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_vggface/'), 
                 layers=layers, neurons=neurons)
     
-    metrics_list = ['euclidean']
+    metrics_list = ['euclidean', 'pearson']
     
     selectivity_additional_analyzer.selectivity_analysis_similarity_metrics(metrics_list)
                                                                                          

@@ -25,6 +25,10 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from collections import Counter
 from joblib import Parallel, delayed
+from matplotlib import gridspec
+from scipy.stats import gaussian_kde, norm, skew, lognorm, kstest
+
+from scipy.integrate import quad
 
 import utils_
 
@@ -115,7 +119,7 @@ class Human_Neuron_Records_Process():
         
         print('[Codinfo] Calculating sorted meanFR...')
         
-        meanFR_path = os.path.join(self.human_neuron_stats, 'meanFR_.pkl')
+        meanFR_path = os.path.join(self.human_neuron_stats, 'meanFR.pkl')
         
         if os.path.exists(meanFR_path):
             
@@ -147,8 +151,8 @@ class Human_Neuron_Records_Process():
                 
                 # ----- build [im_code] img_idces and img_idces_new dict
                 CelebA_img_idces = sio.loadmat(os.path.join(self.root_data, 'SingleNeuron/Code/CelebA_Image_Code.mat'))
-                img_idces = CelebA_img_idces['im_code'].reshape(-1)     # img_idx linked ID, 53 IDs in total, 3 unwanted
-                adjust_idx = CelebA_img_idces['AdjustInd'].reshape(-1).astype(np.int16) - 1   # [notice] what the adjust_idx is?
+                img_idces = CelebA_img_idces['im_code'].reshape(-1)     # [idx as right number: ID]
+                adjust_idx = CelebA_img_idces['AdjustInd'].reshape(-1).astype(np.int16) - 1   # [idx as right number: wrong number]
                 
                 self.img_idces_dict = {_:img_idces[_] for _ in range(len(img_idces))}     # {right number: ID}
                 self.adjust_idx_dict = {adjust_idx[_].astype(int): _ for _ in range(len(adjust_idx)) if adjust_idx[_] > -1}     # {wrong number: right number}
@@ -163,12 +167,8 @@ class Human_Neuron_Records_Process():
                 self.id_img_idces_dict = {_:id_img_idces[_] for _ in range(len(id_img_idces))}     # {ID: 10 img numbers}     0-based
                 
                 # ----- start meanFR calculation [notice] this process is for all 2082 cells, including the filtered cells
-                """
-                    no sort based on ID
-                    
-                    [task] consider to merge this with below FR process in raster plot section
-                """
                 meanFR = np.full((len(FR_stats), 500), np.nan)     # empty response map waited to receive values
+                meanFR_PSTH = np.full((len(FR_stats), 500, 31), np.nan)
                 
                 for cell_idx in tqdm(range(len(FR_stats))):     # for each neuron
                     
@@ -192,94 +192,137 @@ class Human_Neuron_Records_Process():
                     displayed_image_sequence = np.delete(displayed_image_sequence, back_id) - 1     # img idx, 0-based
 
                     FR = np.delete(FR, back_id)   # remove back_id in neuron response
+                    FR_PSTH = np.delete(FR_PSTH, back_id, axis=0)
                     
-                    # ==================================================================================================
-                    # ----- the sort based on ID should be placed here
-                    #self.session_idx = neuron_session_idces[cell_idx]  # session_idx
-                    
-                    # ----- im_code: key is the img label, value is the corresponding ID label
-                    #if self.session_idx < 10:
-                    #    im_code = self.img_idces_dict
-                    #else:
-                    #    im_code = self.img_idces_new_dict
-
-                    #FR = np.delete(FR, back_id)
-                    #FR_PSTH = np.delete(FR_PSTH, back_id, axis=0)
-                    
-                    #displayed_ID_sequence = np.array([im_code[_] for _ in displayed_image_sequence])      # id of each image
-                    
-                    # ---
-                    #FR_ID = []
-                    #PSTH_ID = []
-                    #for ID in range(1, 51):
-                    #    FR_ID.append(FR[np.where(displayed_ID_sequence==ID)[0]])
-                    #    PSTH_ID.append(FR_PSTH[np.where(displayed_ID_sequence==ID)[0], :])
-                    
-                    # ---
-                    # ==================================================================================================
+                    # --- manually set the responses of error image as np.nan
+                    if session_idx < 10:
+                        error_image_idces = []
+                        for _ in [51, 52, 53]:
+                            error_image_idces.append(np.where(img_idces==_)[0].item())     # [77, 97, 122], 0-based
+                            
+                        for _ in error_image_idces:
+                            error_position = [_ for _ in np.where(displayed_image_sequence==_)[0]]
+                            for __ in error_position:
+                                FR[__] = np.nan
+                                FR_PSTH[__, :] = np.full(FR_PSTH.shape[1], np.nan)
                     
                     # --- 2.3 sort displayed_image_sequence and corresponding responses
                     sort_idx = np.argsort(displayed_image_sequence)     # the index of 'Code' in ascending order
-                    sorted_image_idces = displayed_image_sequence[sort_idx]     # 1-based
+                    sorted_image_idces = displayed_image_sequence[sort_idx]     
                     FR = FR[sort_idx]     # sorted FR based on the index of 'Code', make the responses align with the image idces
+                    FR_PSTH = FR_PSTH[sort_idx, :]
                     
                     # --- 3 correction and store into FR matrix
-                    """
-                        [notice] 
-                        this step has no sorting based on ID, instead, this process sort cells based on the image index
-                    """
                     if session_idx < 10:     # for the first 10 sessions
                         
-                        adjustFR = np.zeros(500)
+                        adjustFR = np.full(500, np.nan)  
+                        adjustFR_PSTH = np.full((500, 31), np.nan)
                         
                         if len(displayed_image_sequence) != 500:     # 3: (498); 7 (645); 8: (499)
     
                             new_FR = np.full(500, np.nan)  
+                            new_FR_PSTH = np.full((500, 31), np.nan)
                             
-                            for _ in range(500):     # for each img_idx
-                                used_imgs = np.where(sorted_image_idces == (_+1))[0]     # for most of the cases, 1 record for 1 img
+                            for _ in range(500):     # for each img_idx, wrong_label
+                                used_imgs = np.where(sorted_image_idces == _)[0]     # for most of the cases, 1 record for 1 img
                                 if len(used_imgs) != 0:
-                                    new_FR[_] = np.mean(FR[used_imgs])   # take average 
+                                    new_FR[_] = np.mean(FR[used_imgs])   
+                                    new_FR_PSTH[_, :] = np.mean(FR_PSTH[used_imgs, :], axis=0)
                                     
-                            for _ in range(500):     # for each img
-                                if adjust_idx[_] >= 0:     # leave the unwanted imgs
-                                    adjustFR[_] = new_FR[adjust_idx[_]]
+                            for _ in range(500):    
+                                if adjust_idx[_] >= 0:    
+                                    adjustFR[_] = new_FR[adjust_idx[_]]     # put the firing rate of wrong labeled img to the right position
+                                    adjustFR_PSTH[_, :] = new_FR_PSTH[adjust_idx[_], :]
                         else:
                             
                             for _ in range(500):
                                 if adjust_idx[_] >= 0:
                                     adjustFR[_] = FR[adjust_idx[_]]
+                                    adjustFR_PSTH[_, :] = FR_PSTH[adjust_idx[_], :]
                         
                         meanFR[cell_idx, :] = adjustFR  # Note: Python uses 0-based indexing
+                        meanFR_PSTH[cell_idx, :, :] = adjustFR_PSTH
                         
                     else:     # for the rest 30 sessions
+                        
+                        adjustFR = np.full(500, np.nan)
+                        adjustFR_PSTH = np.full((500, 31), np.nan)
                     
                         if len(displayed_image_sequence) != 500:     # 11: (161); 13: (452)
-                            new_FR = np.full(500, np.nan)
-                            
+
                             for _ in range(500):
                                 used_imgs = np.where(sorted_image_idces == (_+1))[0]
                                 if len(used_imgs) != 0:
-                                    new_FR[_] = np.mean(FR[used_imgs])
+                                    adjustFR[_] = np.mean(FR[used_imgs])
+                                    adjustFR_PSTH[_, :] = np.mean(FR_PSTH[used_imgs, :], axis=0)
                                     
-                            meanFR[cell_idx, :] = new_FR
+                            meanFR[cell_idx, :] = adjustFR
+                            meanFR_PSTH[cell_idx, :, :] = adjustFR_PSTH
                             
                         else:
                             meanFR[cell_idx, :] = FR
+                            meanFR_PSTH[cell_idx, :, :] = FR_PSTH
                                
+                # --- plot the raw response map, follow the order of cell and img along x and y axis
+                # --- [notice] please refer [meanFR figs] to check the figs
+                #plt.rcParams.update({"font.family": "Times New Roman"})
+                #fig, ax = plt.subplots(figsize=(20,10))
+                #meanFR_ = meanFR.copy()
+                #c = ax.imshow(meanFR_.T, aspect='auto', cmap='turbo')
+                #fig.colorbar(c)
+                #ax.set_ylabel('img idx', fontsize=18)
+                #ax.set_xlabel('cell idx', fontsize=18)
+                #ax.set_title('raw response map', fontsize=20)
+                #title = 'raw response map (with nan values)'
+                #plt.savefig(f'{title}.png', bbox_inches='tight')
+                #plt.savefig(f'{title}.pdf', format='pdf', bbox_inches='tight')
+                
                 # --- 4. repair because of image errors
+                print('[Codinfo] Start images repair...')
                 # --- 4.1. face 121 is a mis-identified photo of identity 6, replace the FR to average FR of other 9 faces
                 meanFR[:, 120] = np.nanmean(meanFR[:, self.id_img_idces_dict[5][:-1]], 1)
+                meanFR_PSTH[:, 120, :] = np.nanmean(meanFR_PSTH[:, self.id_img_idces_dict[5][:-1], :], 1)
                 
                 # --- 4.2. replace the problemd face with mean of that ID for the problemed ID (only for the first 381 neurons),in
                 # which another 2 faces(2 trials) were mis-identified, results are similar when replaced with Nan
                 defective_ids = [17, 39]
                 for _ in defective_ids:
-                    useful_idces = self.id_img_idces_dict[_][-1]
-                    meanFR[:381, useful_idces] = np.nanmean(meanFR[:381, self.id_img_idces_dict[_][:-1]], 1)
+                     defective_imgs = self.id_img_idces_dict[_][-1]
+                     meanFR[:381, defective_imgs] = np.nanmean(meanFR[:381, self.id_img_idces_dict[_][:-1]], 1)
+                     meanFR_PSTH[:381, defective_imgs, :] = np.nanmean(meanFR_PSTH[:381, self.id_img_idces_dict[_][:-1], :], 1)
+                
+                # --- 4.3 update
+                # looks like there's a lot of nan values for session 12 (cell 415 to 432) (1-based)
+                # [notice] consider to remove session 12
+                
+                # ----- [notice] for the MATLAB version feturemap, ignore below opration
+                # --- 5. sort the feature map based on ID
+                print('[Codinfo] Start sorting based on ID...')
+                for cell_idx in tqdm(range(meanFR.shape[0]), desc='Sorting'):
                     
+                    FR = meanFR[cell_idx, :].copy()
+                    FR_PSTH = meanFR_PSTH[cell_idx, :, :].copy()
+                    
+                    FR_ID = []
+                    FR_PSTH_ID = []
+                    
+                    for ID in range(50):
+                        sorted_FR = [FR[_] for _ in sorted(self.id_img_idces_dict[ID])]
+                        FR_ID.append(sorted_FR)
+                        
+                        sorted_FR_PSTH = [FR_PSTH[_, :] for _ in sorted(self.id_img_idces_dict[ID])]
+                        FR_PSTH_ID.append(sorted_FR_PSTH)
+                    
+                    FR_ID = np.array(FR_ID).reshape(-1)
+                    meanFR[cell_idx, :] = FR_ID
+                    
+                    FR_PSTH_ID = np.array(FR_PSTH_ID).reshape(-1, 31)
+                    meanFR_PSTH[cell_idx, :, :] = FR_PSTH_ID
+                    
+                #-------------------------------------------------------------------------------------------------------
                 meanFR_dict = {
                     'meanFR': meanFR,
+                    'meanFR_PSTH': meanFR_PSTH,
                     'qualified_cells': qualified_cells,
                     }
                 
@@ -292,9 +335,9 @@ class Human_Neuron_Records_Process():
                 # [notice] legacy from MATLAB code, not in use for current task
                 #FR = np.array([])
                 #for _ in range(1, imgNum+1):
-                #    useful_idces = np.where(sorted_image_idces ==_)
-                #    if not useful_idces:
-                #        FR = np.concatenate((FR, FR[useful_idces]))
+                #    defective_imgs = np.where(sorted_image_idces ==_)
+                #    if not defective_imgs:
+                #        FR = np.concatenate((FR, FR[defective_imgs]))
                 #meanFR[cell_idx-1,:] = FR;
 
         return meanFR_dict
@@ -331,6 +374,9 @@ class Human_Neuron_Records_Process():
                 2 - channel ID, 
                 3 and 4 - IDs for a cluster pair, 
                 5 - pairwise distance between two clusters.
+            
+            -----
+            the name of saved variables does not include the parameters configuration
         """
         
         print('[Codinfo] Calculating original firing rates...')
@@ -376,6 +422,48 @@ class Human_Neuron_Records_Process():
         
         return FR_stats
         
+    def human_neuron_FR_stats_plot(self, ):
+        """
+            this function plots the log gaussian hist and PDF of human neuron data
+        """
+        
+        FR_stats = self.human_neuron_get_firing_rate()
+        
+        complete_feature = [FR_stats[_]['spike_count_0_2000'] for _ in range(len(FR_stats))]
+        complete_feature = np.array([np.mean(_[~np.isnan(_)]) for _ in complete_feature])
+        
+        feature_log = np.log10(complete_feature[complete_feature>0])
+        
+        kde = gaussian_kde(feature_log)
+        
+        x = np.linspace(np.min(feature_log), np.max(feature_log)*1.2, 1000)
+        y = kde(x)
+        
+        feature_log_mean = np.mean(feature_log)
+        feature_log_std = np.std(feature_log)
+        
+        pct1 = quad(kde, -np.inf, np.log10(0.15))[0]*100
+        pct2 = quad(kde, -np.inf, feature_log_mean-feature_log_std)[0]*100
+        
+        fig,ax = plt.subplots(figsize=(10,6))
+        
+        ax.hist(feature_log, bins=100, density=True)
+        ax.plot(x,y,linestyle='--', color='r')
+        ax.grid()
+        ax.set_title('log10 hist and gaussian kde regression')
+        ax.vlines(np.mean(feature_log), 0, 0.6, color='red', label='mean')
+
+        ax.vlines(np.log10(0.15), 0, 0.6, linestyle='dotted', color='gold', label=f'manual value of [0.15] ({pct1:.2f}%)')
+        ax.vlines(feature_log_mean-feature_log_std, 0, 0.6, linestyle='dotted', color='tomato', label=f'1 std ({pct2:.2f}%)')
+
+        ax.fill_between(x, y, where= (x < np.log10(0.15)), color='gray', alpha=0.5)
+        x_radius = np.max(np.abs(feature_log))
+        ax.set_xlim([-x_radius, x_radius])
+
+        ax.legend(framealpha=0.5)
+        
+        plt.show()
+    
     def human_neuron_get_beh(self, ):
         """
             Behavioral data for each patient is stored in the ‘behaviorData/p*WV/CelebA/Sess*/’ directory (* indicates the 
@@ -853,15 +941,7 @@ class Human_Neuron_Records_Process():
         """
             [task] this function should provide the 
         """
-        
-        save_path = os.path.join(self.human_neuron_stats, 'cell_types.pkl')
-        
-        if not os.path.exists(save_path):
-            raise RuntimeError(f'[Coderror] can not find {save_path}, please calculate it by use self.humane_identity_cell_selection() first.')
-            
-        else:
-            cell_stats = utils_.pickle_load(save_path)
-            
+           
         # ---
         plt.rcParams.update({"font.family": "Times New Roman"})
         plt.rcParams.update({'font.size': 14})
@@ -869,21 +949,29 @@ class Human_Neuron_Records_Process():
         colorpool_jet = plt.get_cmap('jet', 50)
         colors = [colorpool_jet(i) for i in range(50)]
         
+        # --- load cell_types
+        cell_stats = self.humane_identity_cell_selection()
+        idx_dict = cell_stats['cell_types_dict']
+        
         # --- load feature
-
+        meanFR_dict = self.human_neuron_sort_FR()
+        meanFR = meanFR_dict['meanFR']
+        
+        feature = meanFR.T
+        feature[np.isnan(feature)] = 0
         
         # --- 
         y_lim_min = np.min(feature)
         y_lim_max = np.max(feature)
         
-        fig, ax = plt.subplots(figsize=(16,8))
-        gs_main = gridspec.GridSpec(2, 3, figure=fig)
+        fig, ax = plt.subplots(figsize=(26, 10))
+        gs_main = gridspec.GridSpec(2, 5, figure=fig)
         
-        tqdm_bar = tqdm(total=6, desc=f'{layer}')
+        tqdm_bar = tqdm(total=10, desc='Human Neurons')
         
         i_ = 0
         for i in range(2):
-            for j in range(3):
+            for j in range(5):
                 # Define a sub-grid within the current cell of the main grid
                 gs_sub = gridspec.GridSpecFromSubplotSpec(1, 2, width_ratios=[4, 1], subplot_spec=gs_main[i, j])
 
@@ -899,27 +987,27 @@ class Human_Neuron_Records_Process():
                 
                 if idx_dict[list(idx_dict.keys())[i_]].size == 0:
                     pct = len(idx_dict[list(idx_dict.keys())[i_]])/feature.shape[1]*100
-                    ax_left.set_title(list(idx_dict.keys())[i_] + f' {pct:.2f}%')
+                    ax_left.set_title(list(idx_dict.keys())[i_] + f'[{pct:.2f}% | {len(idx_dict[list(idx_dict.keys())[i_]])}/{feature.shape[1]}]')
                     ax_right.set_title('th')
-                    i_ +=1
+                    i_ += 1
                 else:
-                    feature_test = feature[:,idx_dict[list(idx_dict.keys())[i_]]]     # (500, num_units)
-                    feature_test_mean = feature_test.reshape(self.num_classes, self.num_samples, -1)     # (50, 10, num_units)
+                    feature_test = feature[:, idx_dict[list(idx_dict.keys())[i_]]]     # (500, num_units)
+                    feature_test_mean = feature_test.reshape(50, 10, -1)     # (50, 10, num_units)
                     
                     # -----
-                    x = np.array([[[_] for _ in range(self.num_classes)]*feature_test_mean.shape[2]]).reshape(-1)
-                    y = np.mean(feature_test_mean, axis=1).reshape(-1)
+                    x = np.array([[[_] for _ in range(50)]*feature_test_mean.shape[2]]).reshape(-1)
+                    y = np.mean(feature_test_mean, axis=1).T.reshape(-1)     # (50, num_classes)
                     
                     c = np.array(colors)
                     c = np.tile(c, [feature_test_mean.shape[2], 1])
                     #c = np.repeat(c, 10, axis=0)     # <- for each img
                     
                     # -----
-                    ax_left.scatter(x, y, color=c, alpha=0.1, marker='.', s=1)     # use small size to replace adjustable alpha
+                    ax_left.scatter(x, y, color=c, alpha=0.7, marker='.', s=10)     # use small size to replace adjustable alpha
                     # -----
                     
                     pct = len(idx_dict[list(idx_dict.keys())[i_]])/feature.shape[1]*100
-                    ax_left.set_title(list(idx_dict.keys())[i_] + f' [{pct:.2f}%]')
+                    ax_left.set_title(list(idx_dict.keys())[i_] + f' [{pct:.2f}% | {len(idx_dict[list(idx_dict.keys())[i_]])}/{feature.shape[1]}]')
                     # -----
                     
                     feature_test_mean = np.mean(feature_test_mean, axis=1)     # (50, num_units)
@@ -931,7 +1019,6 @@ class Human_Neuron_Records_Process():
                         kde_mean = gaussian_kde(values)
                         x_vals_mean = np.linspace(np.min(values), np.max(values)*1.1, 1000)
                         y_vals_mean = kde_mean(x_vals_mean)
-                        ax_right.set_ylim([y_lim_min, y_lim_max])
                         ax_right.plot(y_vals_mean, x_vals_mean, color='blue')
                         
                     # ----- stats: threshold (mean+2std of all 500 values)
@@ -967,8 +1054,8 @@ class Human_Neuron_Records_Process():
                         ax_left.hlines(x_vals_max, 0, 50, colors='teal', alpha=0.75, linestyle='--')
                         ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='teal', alpha=0.75, linestyle='--')
                     
-                    ax_left.set_ylim([y_lim_min, y_lim_max])
-                    ax_right.set_ylim([y_lim_min, y_lim_max])
+                    ax_left.set_ylim([y_lim_min, y_lim_max/2])
+                    ax_right.set_ylim([y_lim_min, y_lim_max/2])
                     ax_right.set_title('th')
                     
                     i_ += 1
@@ -979,13 +1066,13 @@ class Human_Neuron_Records_Process():
         ax.plot([],[],color='teal',label='ref')
         ax.plot([],[],color='red',label='threshold')
         
-        fig.suptitle(f'{layer} [{self.model_structure}]', y=0.97, fontsize=20)
+        fig.suptitle('Human MTL Neuron Responses for Human Faces', y=0.97, fontsize=20)
         fig.legend(loc='lower center', bbox_to_anchor=(0.5, -0.05), ncol=3, bbox_transform=plt.gcf().transFigure)
         
         plt.tight_layout()
-        fig.savefig(os.path.join(fig_folder, f'{layer}.png'), bbox_inches='tight')
-        #fig.savefig(os.path.join(fig_folder, f'{layer}.eps'), bbox_inches='tight', format='eps')
-        #fig.savefig(os.path.join(fig_folder, f'{layer}.svg'), bbox_inches='tight', format='svg', transparent=True)
+        fig.savefig(os.path.join(self.human_neuron_stats, 'Human MTL Neuron Responses for Human Faces.png'), bbox_inches='tight')
+        fig.savefig(os.path.join(self.human_neuron_stats, 'Human MTL Neuron Responses for Human Faces.eps'), bbox_inches='tight', format='eps')
+        fig.savefig(os.path.join(self.human_neuron_stats, 'Human MTL Neuron Responses for Human Faces.pdf'), bbox_inches='tight', format='pdf', transparent=True)
         plt.close()
 
     # ===== module 3. raster plot
@@ -1461,9 +1548,12 @@ if __name__ == "__main__":
 
     test = Human_Neuron_Records_Process()
     
-    test.human_neuron_sort_FR()
+    #test.human_neuron_sort_FR()
     
     #test.humane_identity_cell_selection()
     
     #test.human_neuron_raster_plot()
     
+    #test.human_neuron_stacked_encode_map()
+    
+    test.human_neuron_FR_stats_plot()

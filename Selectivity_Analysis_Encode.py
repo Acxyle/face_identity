@@ -1414,7 +1414,7 @@ class Encode_feaquency_analyzer():
         colorpool_jet = plt.get_cmap('jet', 50)
         colors = [colorpool_jet(i) for i in range(50)]
         
-        layers = self.layers[:5]
+        layers = self.layers[5:]
         
         #with Parallel(n_jobs=1) as parallel:     
         #    parallel(delayed(self.layer_response_assemble_sinlge_layer)(fig_folder, layer, colors) for layer in layers)  
@@ -1540,7 +1540,7 @@ class Encode_feaquency_analyzer():
                         ax_left.hlines(x_vals_max, 0, 50, colors='teal', alpha=0.75, linestyle='--')
                         ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='teal', alpha=0.75, linestyle='--')
                     
-                    scaling_factor = 0.6
+                    scaling_factor = 1.2
                     
                     ax_left.set_ylim([y_lim_min, y_lim_max*scaling_factor])
                     ax_right.set_ylim([y_lim_min, y_lim_max*scaling_factor])
@@ -1714,7 +1714,7 @@ if __name__ == "__main__":
 
     root_dir = '/home/acxyle-workstation/Downloads'
 
-    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity VGG16bn/'), 
+    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622/'), 
                                                      layers=layers, neurons=neurons)
     
     #selectivity_analyzer.obtain_encode_class_dict()
@@ -1726,8 +1726,8 @@ if __name__ == "__main__":
     #selectivity_analyzer.generate_encoded_id_unit_idx()     # <- currently not in use 
     # ---
     
-    selectivity_analyzer.SVM()
+    #selectivity_analyzer.SVM()
     #selectivity_analyzer.SVM_plot()
     
-    #selectivity_analyzer.layer_response_assemble()
+    selectivity_analyzer.layer_response_assemble()
     #selectivity_analyzer.layer_response_single_boxplot()

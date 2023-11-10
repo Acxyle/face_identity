@@ -9,8 +9,8 @@ Created on Wed Apr 12 18:47:12 2023
     all function with variable 'inds' and writing style like 'AaaBbbCcc' are not modified yet
     
 [action required]
-    simplify/optimize this code  - Jul 17, 2023
-    1. save the constructed Bio data for re-use, avoid recalculation when calls
+    Nov 10:
+        restructure the monkey data and plot
     
 """
 

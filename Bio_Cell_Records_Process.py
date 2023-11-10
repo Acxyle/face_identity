@@ -1595,9 +1595,127 @@ def compare_beh_and_behm(behavior):
                     for key_ in behavior[i][key].keys():
                         if not behavior[i][key][key_]==beh_m[i][key][key_]:
                             print(i, key, key_, behavior[i][key][key_]==beh_m[i][key][key_])
-                    
-# ======================================================================================================================
+              
+class Monkey_Neuron_Records_Process():
+    
+    """
+        considering the monkey data is a well sealed one, this dunction only (1) select the information used for this 
+        work; (2) change the save format from .mat to .pkl 
+    """
+    
+    def __init__(self, 
+                 root='/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Monkey/',  
+                 ):      
+        
+        self.root = root
+        
+        self.ts = np.arange(-50,201,10)     # target time steps, manually selected from original [-100, 380] 
+            
+        self.label = sio.loadmat(os.path.join(root, 'Original Data/Label.mat'))['label'].reshape(-1)
+        
+        monkey_neuron_data_path = os.path.join(root, 'Original Data/IT_FR_CA_Range70-180.mat')     # processed monkey neural data
+        #print(sio.whosmat(monkey_neuron_data_path))
+        
+        monkey_neuron_data = sio.loadmat(monkey_neuron_data_path)
 
+        monkey_dict_keys = [i for i in monkey_neuron_data.keys() if '__' not in i]
+        monkey_dict = {_:monkey_neuron_data[_] for _ in monkey_dict_keys}     # rebuild the dict to store monkey IT MUA data
+        
+        self.FR = monkey_dict['FR']     # [warning] no approach from 'FR' to 'meanFR'  
+        self.FR_countAll = self.FR['countAll'][0][0]     
+        self.FR_countBase = self.FR['countBase'][0][0]
+        self.FR_countVis = self.FR['countVis'][0][0]
+        
+        # -----
+        self.meanFR = monkey_dict['meanFR']     # (53, 500)
+        self.meanBase = monkey_dict['meanBase']     # (53, 500)
+        self.meanGray = monkey_dict['meanGray'].reshape(-1)     # (53, )
+        self.meanVis = monkey_dict['meanVis']     # (53, 500)
+        # -----
+        
+        self.psthTime = monkey_dict['psthTime'].reshape(-1)     # (49,)
+        
+        # [notice] meanPSTHID is not identical with values calculated from meanPSTH
+        self.meanPSTH = monkey_dict['meanPSTH']     # (500, 49, 53), [disordered img idx, time steps, channels], normalized value
+        self.meanPSTHID = monkey_dict['meanPSTHID']     # (50, 49, 53), [id idx, time steps, channels], normalized value
+        
+
+    def Monkey_restructure(self, ):
+        
+        data_path = os.path.join(self.root, 'data.pkl')
+        
+        if os.path.exists(data_path):
+            
+            data = utils_.pickle_load(data_path)
+            
+        else:
+            
+            data = {
+                'FR_count_all': self.FR_countAll,
+                'FR_count_base': self.FR_countBase,
+                'FR_count_vis': self.FR_countVis,
+                'meanFR': self.meanFR,
+                'meanBase': self.meanBase,
+                'meanGray': self.meanGray,
+                'meanVis': self.meanVis,
+                'psthTime': self.psthTime,
+                'meanPSTH': self.meanPSTH,
+                'meanPSTHID': self.meanPSTHID
+                }
+            
+            utils_.pickle_dump(data_path, data)
+            
+        return data
+        
+    def Monkey_plot_sample_response(self):
+        
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        plt.rcParams.update({'font.size': 18})
+        
+        # --- normalized
+        
+        norm_factor = np.nanmean(self.meanBase, axis=1)     # (1,53)
+        
+        meanPSTHIDNorm = np.array([self.meanPSTHID[:,t,:]/norm_factor for t in range(self.meanPSTHID.shape[1])])
+        meanPSTHIDNorm = np.mean(meanPSTHIDNorm, axis=2).T      # (ID, )
+        
+        fig, ax = plt.subplots(figsize=(10,10))
+        title = 'Monkey normalized channel-average PSTH'
+        plot_PSTH(fig, ax, meanPSTHIDNorm, title, self.psthTime, -50, 200)
+        
+        plt.tight_layout()
+        fig.savefig(os.path.join(self.root, title+'.png'))
+        fig.savefig(os.path.join(self.root, title+'.eps'))
+    
+    
+# ======================================================================================================================    
+def plot_PSTH(fig, ax, PSTH, title=None, time_point=None, time_start=None, time_end=None):
+    """
+        
+    """
+    img = ax.imshow(PSTH, aspect='auto', origin='lower', cmap='viridis')
+    fig.colorbar(img)
+    
+    if time_point is not None:
+        
+        ax.vlines(np.where(time_point==time_start)[0][0], 0, PSTH.shape[0], linestyle='--', color='red', linewidth=3)
+        ax.vlines(np.where(time_point==time_end)[0][0], 0, PSTH.shape[0], linestyle='--', color='red', linewidth=3)
+        
+        loc = np.arange(np.where(time_point==time_start)[0][0], np.where(time_point==time_end)[0][0])
+        loc = np.append(loc, max(loc)+1)
+        
+        loc = np.where(time_point%50==0)[0]
+        ax.set_xticks(loc, time_point[loc], fontsize=14)
+        
+    ax.set_xlabel('Time', fontsize=20)
+    ax.set_ylabel('ID',fontsize=20)
+    
+    ax.set_ylim([0, PSTH.shape[0]-1])
+    ax.set_title(title)
+    
+    #plt.close()
+            
+# ======================================================================================================================
 def calculate_firing_rate(time_stamps, session_idx, all_periods, time_window, num_frames, PSTH_start, time_step=50):
     """
         - time_stamps: timing of spikes
@@ -1667,14 +1785,15 @@ def extract_period_counts(time_stamps, periods, from_, to_):
     
 if __name__ == "__main__":
 
-    test = Human_Neuron_Records_Process()
+    #human_record_process = Human_Neuron_Records_Process()
     
-    #test.human_neuron_sort_FR()
+    #human_record_process.human_neuron_sort_FR()
+    #human_record_process.humane_identity_cell_selection()
+    #human_record_process.human_neuron_raster_plot()
+    #human_record_process.human_neuron_stacked_encode_map()
+    #human_record_process.human_neuron_FR_stats_plot()
     
-    #test.humane_identity_cell_selection()
+    monkey_record_process = Monkey_Neuron_Records_Process()
     
-    #test.human_neuron_raster_plot()
-    
-    #test.human_neuron_stacked_encode_map()
-    
-    test.human_neuron_FR_stats_plot()
+    monkey_record_process.Monkey_restructure()
+    monkey_record_process.Monkey_plot_sample_response()

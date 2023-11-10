@@ -35,6 +35,7 @@ import random
 import argparse
 import gc
 import logging
+import warnings
 #from functools import reduce
 
 import spiking_vgg, spiking_resnet, sew_resnet
@@ -50,7 +51,7 @@ from matplotlib import gridspec
 
 import vgg, resnet
 import utils_
-
+from Human_Neuron_Records_Process import Human_Neuron_Records_Process
 
 class Encode_feaquency_analyzer():
     """
@@ -1678,6 +1679,31 @@ class Encode_feaquency_analyzer():
         #fig.savefig(os.path.join(fig_folder, f'{layer}.eps'), bbox_inches='tight', format='eps')
         #fig.savefig(os.path.join(fig_folder, f'{layer}.svg'), bbox_inches='tight', format='svg', transparent=True)
         plt.close()
+        
+    def NN_unit_FR_stats_plot(self, ):
+        
+        save_path = os.path.join(self.dest_Encode, 'unit_FR_stats')
+        utils_.make_dir(save_path)
+        
+        feature_path_list = [os.path.join(self.root, layer+'.pkl') for layer in self.layers]
+        
+        Parallel(n_jobs=-1)(delayed(NN_unit_FR_stats_plot_single)(layer, save_path, feature_path_list[idx], self.model_structure+f' {layer}') for idx, layer in tqdm(enumerate(self.layers), desc=f'[{self.model_structure}] unit PDF'))
+ 
+            
+def NN_unit_FR_stats_plot_single(layer, save_path, feature_path, model_structure):
+    
+    logging.getLogger('matplotlib').setLevel(logging.ERROR)
+    
+    feature = utils_.pickle_load(feature_path)
+    
+    fig = Human_Neuron_Records_Process.neuron_FR_stats_plot(model_structure=model_structure, target='unit', feature=feature)
+    
+    with warnings.catch_warnings():
+        warnings.simplefilter(action='ignore')
+        fig.savefig(os.path.join(save_path, layer+'.png'))
+        fig.savefig(os.path.join(save_path, layer+'.eps'))
+    
+    plt.close()
     
 # define Encode for parallel calculation
 def encode_calculation(feature, i):
@@ -1714,8 +1740,7 @@ if __name__ == "__main__":
 
     root_dir = '/home/acxyle-workstation/Downloads'
 
-    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622/'), 
-                                                     layers=layers, neurons=neurons)
+    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_vggface/'), layers=layers, neurons=neurons)
     
     #selectivity_analyzer.obtain_encode_class_dict()
     #selectivity_analyzer.selectivity_encode_layer_percent_plot()
@@ -1729,5 +1754,12 @@ if __name__ == "__main__":
     #selectivity_analyzer.SVM()
     #selectivity_analyzer.SVM_plot()
     
-    selectivity_analyzer.layer_response_assemble()
+    #selectivity_analyzer.layer_response_assemble()
     #selectivity_analyzer.layer_response_single_boxplot()
+    
+    selectivity_analyzer.NN_unit_FR_stats_plot()
+    
+    selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622/'), layers=layers, neurons=neurons)
+    selectivity_analyzer.NN_unit_FR_stats_plot()
+    
+    

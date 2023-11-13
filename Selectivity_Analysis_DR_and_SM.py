@@ -17,6 +17,7 @@ import logging
 import numpy as np
 import seaborn as sn
 from tqdm import tqdm
+from joblib import Parallel, delayed
 import matplotlib as mpl
 from scipy.io import savemat
 import matplotlib.pyplot as plt
@@ -400,6 +401,7 @@ class Selectiviy_Analysis_SM():
     def __init__(self, 
                  root='/Identity_Spikingjelly_VGG_Results/',
                  num_samples=10, num_classes=50, layers=None, neurons=None,  data_name=None):
+        #super().__init__()
         
         if layers == None or neurons == None:
             raise RuntimeError('[Codwarning] invalid layers and neurons')
@@ -420,7 +422,7 @@ class Selectiviy_Analysis_SM():
         if data_name != None:
             self.data_name = data_name
             
-        self.model_structure = root.split('/')[-2].split(' ')[2]
+        self.model_structure = root.split('/')[-1].split(' ')[-1]
         
     
     def selectivity_analysis_similarity_metrics(self, metrics: list[str]):
@@ -479,20 +481,22 @@ class Selectiviy_Analysis_SM():
             sorted_idx = utils_.lexicographic_order(self.num_classes)     # correct labels
             mean_FR = self.restore_order(mean_FR, sorted_idx)     # (50, num_units)
             
-            # -----
+            # --- select all neuron
             units_type_dict = self.Sort_dict[layer]['advanced_type']
             units_type_dict.update({'all': np.arange(mean_FR.shape[1])})
-            # -----
-    
+
             # ----- generate similarity metrics
             metric_type_dict = {}
             
-            for type_ in [_ for _ in units_type_dict.keys() if 'sensitive_encode_idx' not in _]:
+            #for type_ in [_ for _ in units_type_dict.keys()]:
+            #    metric_type_dict[type_] = selectivity_analysis_calculation(self.metric, mean_FR[:, units_type_dict[type_].astype(int)])
                 
-                similarity_dict = selectivity_analysis_calculation(self.metric, mean_FR[:, units_type_dict[type_].astype(int)])
-                metric_type_dict[type_] = similarity_dict
-            # -----
+            pl = Parallel(n_jobs=int(os.cpu_count()/3))(delayed(selectivity_analysis_calculation)(self.metric, mean_FR[:, units_type_dict[type_].astype(int)])for type_ in tqdm([_ for _ in units_type_dict.keys()]))
             
+            for idx, type_ in enumerate([_ for _ in units_type_dict.keys()]):
+                metric_type_dict[type_] = pl[idx]
+            
+            # -----
             metric_dict[layer] = metric_type_dict
             
             if in_layer_plot:
@@ -519,7 +523,9 @@ class Selectiviy_Analysis_SM():
             vmin = v[0]
             vmax = v[1]
         
-        fig, ax = plt.subplots(1,7,figsize=(35,5))
+        types = len(metric_type_dict)
+        
+        fig, ax = plt.subplots(1, types, figsize=(types*5,5))
 
         for idx, key in enumerate(metric_type_dict.keys()):
             
@@ -527,7 +533,6 @@ class Selectiviy_Analysis_SM():
             
             if metric_type_dict[key] != None:
                 ax[idx].imshow(metric_type_dict[key]['matrix'], origin='lower', vmin=vmin, vmax=vmax)
-                #sn.heatmap(similarity_matrix, ax=ax[idx]], cbar=0, vmin=vmin, vmax=vmax, cbar_ax=cbar_ax)     # legacy use
                 
                 if metric_type_dict[key]['contains_nan'] == True:
                     ax[idx].set_title(f'{key} [contains NaN]')
@@ -541,7 +546,6 @@ class Selectiviy_Analysis_SM():
             ax[idx].set_xticks([])
             ax[idx].set_yticks([])
 
-
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore')
             fig.tight_layout(rect=[0, 0, .9, 1])
@@ -554,7 +558,7 @@ class Selectiviy_Analysis_SM():
         plt.rcParams.update({"font.size": 30})
         
         # ----- not applicable for all metrics
-        metric_dict_ = {_:{__: metric_dict[_][__]['matrix'] if metric_dict[_][__] != None else None for __ in metric_dict[_].keys()} for _ in metric_dict.keys()}
+        metric_dict_ = {_:{__: metric_dict[_][__]['matrix'] if metric_dict[_][__] != None else None for __ in metric_dict[_].keys()} for _ in metric_dict.keys()}     # assemble all types of all layers
         metric_dict_pool = np.concatenate([_ for _ in [np.concatenate([metric_dict_[key][__] for __ in metric_dict_[key].keys() if metric_dict_[key][__] is not None]).reshape(-1) for key in metric_dict_.keys()]])   # in case of inhomogeneous shape
         
         if sup_v is None:
@@ -602,16 +606,13 @@ class Selectiviy_Analysis_SM():
         elif 'neuron' in layer_type.lower() or 'unit' in layer_type.lower():
             _, layers, _ = utils_.imaginary_neurons_vgg(self.layers)
         
-        fig,ax = plt.subplots(7, len(layers), figsize=(5*len(layers), 35))
+        num_types = len(metric_dict[list(metric_dict.keys())[0]])
+        
+        fig, ax = plt.subplots(num_types, len(layers), figsize=(3*len(layers), 35))
 
-        for idx, layer in enumerate(layers):
+        for idx, layer in enumerate(layers):     # for each layer
             
-            metric_layer_pool = np.concatenate([_['vector'] for _ in metric_dict[layer].values() if _ is not None])
-            vmin = np.min(metric_layer_pool)
-            vmax = np.max(metric_layer_pool)
-            vnorm = vmax-vmin
-            
-            for idx_, type_ in enumerate(metric_dict[layer].keys()):
+            for idx_, type_ in enumerate(metric_dict[layer].keys()):     # for each type of cells
                 
                 if idx_ == 0:
                     ax[idx_, idx].set_title(layer)
@@ -619,43 +620,74 @@ class Selectiviy_Analysis_SM():
                 if idx == 0:
                     ax[idx_, idx].set_ylabel(type_)
                 
+                # 1. by default, the vmin and vmax normalize the vlim of different types of units
                 if plot_type == None or plot_type == '':
                     if metric_dict[layer][type_] is not None:
-                        ax[idx_, idx].imshow(metric_dict[layer][type_]['matrix'], origin='lower', vmin=vmin, vmax=vmax, cmap=cmap)
-                        ax[idx_, idx].set_xlabel(f"{metric_dict[layer][type_]['num_units']/(self.neurons[self.layers.index(layer)])*100:.2f}%")
+                        if metric_dict[layer][type_]['num_units'] != 0:
+                            
+                            # FIXME, looks like this method is not reasonable
+                            metric_layer_pool = np.concatenate([_['vector'] for _ in metric_dict[layer].values() if _ is not None])
+                            vmin = np.min(metric_layer_pool)
+                            vmax = np.max(metric_layer_pool)
+                            
+                            ax[idx_, idx].imshow(metric_dict[layer][type_]['matrix'], origin='lower', aspect='auto', vmin=vmin, vmax=vmax, cmap=cmap)
+                            ax[idx_, idx].set_xlabel(f"{metric_dict[layer][type_]['num_units']/(self.neurons[self.layers.index(layer)])*100:.2f}%")
+                        else:
+                            ax[idx_, idx].axis('off')
                     else:
-                        ax[idx_, idx].set_xlabel("0.00%")
+                        ax[idx_, idx].axis('off')
                         
+                # 2. ylim setted by exterier values
                 elif plot_type == 'suplim':
                     if metric_dict[layer][type_] is not None:
-                        ax[idx_, idx].imshow(metric_dict[layer][type_]['matrix'], origin='lower', vmin=sup_vmin, vmax=sup_vmax, cmap=cmap)
-                        ax[idx_, idx].set_xlabel(f"{metric_dict[layer][type_]['num_units']/(self.neurons[self.layers.index(layer)])*100:.2f}%")
-                        
-                        cax = fig.add_axes([1.01, 0.1, 0.01, 0.75])
-                        norm = plt.Normalize(vmin=sup_vmin, vmax=sup_vmax)
-                        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
-                        
+                        if metric_dict[layer][type_]['num_units'] != 0:
+                            ax[idx_, idx].imshow(metric_dict[layer][type_]['matrix'], origin='lower', aspect='auto', vmin=sup_vmin, vmax=sup_vmax, cmap=cmap)
+                            ax[idx_, idx].set_xlabel(f"{metric_dict[layer][type_]['num_units']/(self.neurons[self.layers.index(layer)])*100:.2f}%")
+                            
+                            cax = fig.add_axes([1.01, 0.1, 0.01, 0.75])
+                            norm = plt.Normalize(vmin=sup_vmin, vmax=sup_vmax)
+                            fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
+                        else:
+                            ax[idx_, idx].axis('off')
                     else:
-                        ax[idx_, idx].set_xlabel("0.00%")
+                        ax[idx_, idx].axis('off')
                         
+                # 3. only care about one type and the relationship between classes
                 elif plot_type == 'norm':
                     if metric_dict[layer][type_] is not None:
-                        ax[idx_, idx].imshow((metric_dict[layer][type_]['matrix']-vmin)/vnorm, origin='lower', vmin=vmin, vmax=vmax, cmap=cmap)
-                        ax[idx_, idx].set_xlabel(f"{metric_dict[layer][type_]['num_units']/(self.neurons[self.layers.index(layer)])*100:.2f}%")
-                        
-                        cax = fig.add_axes([1.01, 0.1, 0.01, 0.75])
-                        norm = plt.Normalize(vmin=0, vmax=1)
-                        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
-                        
+                        if metric_dict[layer][type_]['num_units'] != 0:
+                            
+                            vmin = np.min(metric_dict[layer][type_]['vector'])
+                            vmax = np.max(metric_dict[layer][type_]['vector'])
+                            vnorm = vmax - vmin    
+                            
+                            if vnorm == 0:     # when vmin = vmin -> all values are equal -> (usually) all distance values = 0 -> all raw values = 0
+                                ax[idx_, idx].set_xlabel(f"{metric_dict[layer][type_]['num_units']/(self.neurons[self.layers.index(layer)])*100:.2f}%")
+                                
+                            else:
+                                ax[idx_, idx].imshow((metric_dict[layer][type_]['matrix']-vmin)/vnorm, origin='lower', aspect='auto', vmin=vmin, vmax=vmax, cmap=cmap)
+                                ax[idx_, idx].set_xlabel(f"{metric_dict[layer][type_]['num_units']/(self.neurons[self.layers.index(layer)])*100:.2f}%")
+                                
+                            cax = fig.add_axes([1.01, 0.1, 0.01, 0.75])
+                            norm = plt.Normalize(vmin=0, vmax=1)
+                            fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
+                        else:
+                            ax[idx_, idx].axis('off')
                     else:
-                        ax[idx_, idx].set_xlabel("0.00%")
+                        ax[idx_, idx].axis('off')
                 
                 ax[idx_, idx].set_xticks([])
                 ax[idx_, idx].set_yticks([])
-
+                
+        fig.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0.1, hspace=0.1)
         
-        fig.suptitle(f'{self.model_structure} | {self.metric} | {layer_type} | {plot_type}', y=1.015, fontsize=50)
-        
+        if plot_type == None or plot_type == '':
+            fig.suptitle(f'{self.model_structure} | {self.metric} | {layer_type} | normalized for all types in one layer', y=1.015, fontsize=50)
+        elif plot_type == 'suplim':
+            fig.suptitle(f'{self.model_structure} | {self.metric} | {layer_type} | normalized for all types in all layer', y=1.015, fontsize=50)
+        elif plot_type == 'norm':
+            fig.suptitle(f'{self.model_structure} | {self.metric} | {layer_type} | normalized for each type in each layer (only care classes similarity) | balnk: all values = 0', y=1.015, fontsize=50)
+            
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore')
             
@@ -774,7 +806,7 @@ class Selectiviy_Analysis_SM():
         return np.array([matrix[_*self.num_samples:(_+1)*self.num_samples, :] for _ in range(self.num_classes)]).mean(axis=1)
    
     
-#FIXME
+#FIXME - consider the sclading problem of Euclidean distance, also the probolem of multi-save
 def selectivity_analysis_calculation(metric: str, feature: np.array):
     """
         based on [metric] to calculate
@@ -803,29 +835,42 @@ def selectivity_analysis_calculation(metric: str, feature: np.array):
             else:
                 similarity_matrix = np.corrcoef(feature)
                 
-                if np.any(np.isnan(similarity_matrix)):     # when detecting NaN value, i.e.,  the values of one class are identical
+                if np.any(np.isnan(similarity_matrix)):     # when detecting NaN value, i.e. the values of one class are identical
                     similarity_dict.update({'contains_nan': True})
                     similarity_matrix[np.isnan(similarity_matrix)] = 0
                     
                 else:
                     similarity_dict.update({'contains_nan': False})
                     
-                similarity_matrix = 1 - similarity_matrix     # SM [-1, 1] -> DSM [0, 2]
-                similarity_matrix = (similarity_matrix + similarity_matrix.T)/2     # correct as symmetric
-                for _ in range(similarity_matrix.shape[0]):     # correct diagnal values as 0
-                    similarity_matrix[_,_] = 0
-                    
-                similarity_value = squareform(similarity_matrix)     # (1225,)
+                DSM = (1 - similarity_matrix)/2     # SM [-1, 1] -> DSM [0, 1]
+                similarity_value = Square2Tri(DSM)     # (1225,)
     
                 similarity_dict.update({
                     'vector': similarity_value,     # for RSA
-                    'matrix': similarity_matrix,     # for plot
+                    'matrix': DSM,     # for plot
                     'num_units': feature.shape[1]
                     })
     
+    else:
+        raise RuntimeError(f'[Coderror] {metric} not supported')
+    
     return similarity_dict
 
+
+def Square2Tri(DSM):
+    """
+        DSM range: (0, 1)
+    """
     
+    DSM_z = np.arctanh(DSM)
+    DSM_z = (DSM_z+DSM_z.T)/2
+    for _ in range(DSM.shape[0]):
+        DSM_z[_,_]=0
+    V = squareform(DSM_z)
+    # -----
+    
+    return V
+
 if __name__ == '__main__':
     
 # =============================================================================
@@ -841,14 +886,14 @@ if __name__ == '__main__':
 #     selectivity_additional_analyzer.selectivity_analysis_tsne()
 # =============================================================================
 
-    model_name = 'vgg16_bn'
+    model_name = 'vgg16'
     
     model_ = vgg.__dict__[model_name](num_classes=50)
     layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, model_name)
 
     root_dir = '/home/acxyle-workstation/Downloads/'
 
-    selectivity_additional_analyzer = Selectiviy_Analysis_SM(root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_vggface/'), 
+    selectivity_additional_analyzer = Selectiviy_Analysis_SM(root=os.path.join(root_dir, 'Face Identity Baseline'), 
                 layers=layers, neurons=neurons)
     
     metrics_list = ['euclidean', 'pearson']

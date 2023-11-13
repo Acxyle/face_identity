@@ -27,6 +27,7 @@ from collections import Counter
 from joblib import Parallel, delayed
 from matplotlib import gridspec
 from scipy.stats import gaussian_kde, norm, skew, lognorm, kstest
+from scipy.spatial.distance import pdist, squareform
 
 from scipy.integrate import quad
 
@@ -1604,16 +1605,17 @@ class Monkey_Neuron_Records_Process():
     """
     
     def __init__(self, 
-                 root='/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Monkey/',  
+                 bio_root='/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Monkey/',  
                  ):      
+        #super().__init__()
         
-        self.root = root
+        self.bio_root = bio_root
         
         self.ts = np.arange(-50,201,10)     # target time steps, manually selected from original [-100, 380] 
             
-        self.label = sio.loadmat(os.path.join(root, 'Original Data/Label.mat'))['label'].reshape(-1)
+        self.label = sio.loadmat(os.path.join(bio_root, 'Original Data/Label.mat'))['label'].reshape(-1)
         
-        monkey_neuron_data_path = os.path.join(root, 'Original Data/IT_FR_CA_Range70-180.mat')     # processed monkey neural data
+        monkey_neuron_data_path = os.path.join(bio_root, 'Original Data/IT_FR_CA_Range70-180.mat')     # processed monkey neural data
         #print(sio.whosmat(monkey_neuron_data_path))
         
         monkey_neuron_data = sio.loadmat(monkey_neuron_data_path)
@@ -1642,7 +1644,7 @@ class Monkey_Neuron_Records_Process():
 
     def Monkey_restructure(self, ):
         
-        data_path = os.path.join(self.root, 'data.pkl')
+        data_path = os.path.join(self.bio_root, 'data.pkl')
         
         if os.path.exists(data_path):
             
@@ -1684,10 +1686,156 @@ class Monkey_Neuron_Records_Process():
         plot_PSTH(fig, ax, meanPSTHIDNorm, title, self.psthTime, -50, 200)
         
         plt.tight_layout()
-        fig.savefig(os.path.join(self.root, title+'.png'))
-        fig.savefig(os.path.join(self.root, title+'.eps'))
+        fig.savefig(os.path.join(self.bio_root, title+'.png'))
+        fig.savefig(os.path.join(self.bio_root, title+'.eps'))
     
+    #FIXME - add the entrence for other types of distance
+    def monkey_neuron_DSM_process(self, time_bin=10, num_perm=1000, metrics:list[str]=['pearson']):
+        """
+            this function returns the correlation matrix and triangle from monkey neural responses.
+            
+            Input
+                psthTime: 49 time steps for PSTH from -100 ms to 380 ms
+                meanPSTH: [500, 49, 53], [img, time steps, channels]
+                label: label for 500 imgs
+                
+            Return
+                monkey_DM_v: condense form of tranformed DSM
+                monkey_DM_v_perm: condense form of transformed DSM with extra dimension of permutation
+                monkey_DM_v_temporal: condense form of transformed DSM with temporal dimension
+                monkey_DM_v_perm_temporal: condense form of transformed DSM with temporal dimension and permutation dimension
+        """
+        
+        print('[Codinfo] Calculating monkey neuron stats...')
+        
+        file_path = os.path.join(self.bio_root, f'monkey_spikes_corr_Tbin_{time_bin}_Nperm_{num_perm}.pkl')
+        
+        if os.path.exists(file_path):
+            
+            results = utils_.pickle_load(file_path)
+            
+        else:
+            # -----
+            if time_bin == 10:
+                used_psth = self.meanPSTH[:, [np.where(self.psthTime==_)[0][0] for _ in self.ts], :]
+                
+            else:
+                used_psth = np.zeros((self.meanPSTH.shape[0], len(self.ts), self.meanPSTH.shape[2]))     # (500, 26, 53) (img, time, unit)
+                for idx, tt in enumerate(self.ts): 
+                    used_psth[:, idx, :] = np.mean(self.meanPSTH[:, np.where(((tt-time_bin/2)<=self.psthTime) & (self.psthTime<=(tt+time_bin/2)))[0], :], axis=1)
+            
+            used_psth_id = np.array([np.mean(used_psth[np.where(self.label==_)[0], :, :], axis=0) for _ in  range(1, 51)])     
+            used_psth_id = np.transpose(used_psth_id, (1,0,2))     # (time, ID, unit)
+            
+            # [notice] meanGray != np.mean(meanBase, axis=1)
+            self.FR_id = np.array([np.mean(self.meanFR[:, np.where(self.label==_)[0]], axis=1)/self.meanGray for _ in range(1, 51)])
+            
+            scaling_factor = np.mean(self.meanBase,axis=1)
+            #sacling_factor = self.meanGray
+            
+            self.psth_id = np.array([np.array([used_psth_id[i, j, :]/scaling_factor for j in range(50)]) for i in range(used_psth.shape[1])])     # (26, 50, 53)
+            
+            results = {}
+            
+            for metric in metrics:
+                
+                # --- [notice] in order to make the results stable for each experiments, can make the permutation constant here
+                # for static meanFR
+                self.monkey_DM_v = selectivity_analysis_calculation(metric, self.FR_id)['vector']
+                self.monkey_DM_v_perm = np.array([selectivity_analysis_calculation(metric, self.FR_id[np.random.permutation(self.FR_id.shape[0]),:])['vector'] for _ in range(num_perm)])
+        
+                # for temporal PSTH
+                self.monkey_DM_v_temporal = np.array([selectivity_analysis_calculation(metric, self.psth_id[_, :, :])['vector'] for _ in range(self.psth_id.shape[0])])
+                self.monkey_DM_v_perm_temporal = np.array([np.array([selectivity_analysis_calculation(metric, self.psth_id[t, np.random.permutation(self.FR_id.shape[0]), :])['vector'] for _ in range(num_perm)]) for t in range(self.psth_id.shape[0])])
     
+                results.update({
+                    metric: {
+                    'monkey_DM_v': self.monkey_DM_v,     # (1225,)
+                    'monkey_DM_v_perm': self.monkey_DM_v_perm,      # (1000, 1225)
+                    'monkey_DM_v_temporal': self.monkey_DM_v_temporal,     # (26, 1225)
+                    'monkey_DM_v_perm_temporal': self.monkey_DM_v_perm_temporal,     # (26, 1000, 1225)
+                    'FR_id': self.FR_id,
+                    'psth_id': self.psth_id
+                    }
+                    })
+            
+            utils_.pickle_dump(file_path, results)
+            
+        return results
+        
+    def monkey_neuron_DSM_plot(self,):
+        
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        plt.rcParams.update({'font.size': 16})
+        
+        results = self.monkey_neuron_DSM_process()
+        
+        for metric in results.keys():
+            fig, ax = plt.subplots(figsize=(10,10))
+            
+            title = f'Monkey Distance Matrix | {metric}'
+            
+            img = ax.imshow(squareform(results[metric]['monkey_DM_v']), aspect='auto', origin='lower')
+            
+            ax.set_title(title, fontsize=24)
+            
+            fig.colorbar(img)
+            
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.bio_root, f'{title}.png'))
+        
+# ======================================================================================================================    
+#FIXME - consider the sclading problem of Euclidean distance, also the probolem of multi-save
+def selectivity_analysis_calculation(metric: str, feature: np.array):
+    """
+        based on [metric] to calculate
+    """
+    
+    similarity_dict = {}
+    
+    if 'euclidean' in metric.lower():
+        similarity_value = pdist(feature, 'euclidean')     # (1225,)
+        similarity_matrix = squareform(similarity_value)     # (50, 50)
+        
+        similarity_dict.update({
+            'vector': similarity_value,     # for RSA
+            'matrix': similarity_matrix,     # for plot
+            'contains_nan': False,     # by default, pdist() can receive null input and generate 0 rather NaN as output
+            'num_units': feature.shape[1]
+            })
+    
+    elif 'pearson' in metric.lower():
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore')
+            
+            if feature.shape[1] == 0:
+                similarity_dict = None
+            
+            else:
+                similarity_matrix = np.corrcoef(feature)
+                
+                if np.any(np.isnan(similarity_matrix)):     # when detecting NaN value, i.e. the values of one class are identical
+                    similarity_dict.update({'contains_nan': True})
+                    similarity_matrix[np.isnan(similarity_matrix)] = 0
+                    
+                else:
+                    similarity_dict.update({'contains_nan': False})
+                    
+                DSM = (1 - similarity_matrix)/2     # SM [-1, 1] -> DSM [0, 1]
+                similarity_value = Square2Tri(DSM)     # (1225,)
+    
+                similarity_dict.update({
+                    'vector': similarity_value,     # for RSA
+                    'matrix': DSM,     # for plot
+                    'num_units': feature.shape[1]
+                    })
+    
+    else:
+        raise RuntimeError(f'[Coderror] {metric} not supported')
+    
+    return similarity_dict
+        
+        
 # ======================================================================================================================    
 def plot_PSTH(fig, ax, PSTH, title=None, time_point=None, time_start=None, time_end=None):
     """
@@ -1711,9 +1859,28 @@ def plot_PSTH(fig, ax, PSTH, title=None, time_point=None, time_start=None, time_
     ax.set_ylabel('ID',fontsize=20)
     
     ax.set_ylim([0, PSTH.shape[0]-1])
-    ax.set_title(title)
+    ax.set_title(title, fontsize=24)
     
     #plt.close()
+    
+def Square2Tri(DSM):
+    """
+        in python, the squareform() function can convert an array to square or vice versa, 
+        but need to make sure the matrix is symmetrical and 0 diagonal values
+    """
+    # original version
+    #M_z = 1 - np.arctanh(DSM)
+    #V = np.triu(M_z, k=1).T
+    #V = V[V!=0]     # what if the 0 value exists in the upper triangle
+    
+    DSM_z = np.arctanh(DSM)
+    DSM_z = (DSM_z+DSM_z.T)/2
+    for _ in range(DSM.shape[0]):
+        DSM_z[_,_]=0
+    V = squareform(DSM_z)
+    # -----
+    
+    return V
             
 # ======================================================================================================================
 def calculate_firing_rate(time_stamps, session_idx, all_periods, time_window, num_frames, PSTH_start, time_step=50):
@@ -1795,5 +1962,7 @@ if __name__ == "__main__":
     
     monkey_record_process = Monkey_Neuron_Records_Process()
     
-    monkey_record_process.Monkey_restructure()
-    monkey_record_process.Monkey_plot_sample_response()
+    #monkey_record_process.Monkey_restructure()
+    #monkey_record_process.Monkey_plot_sample_response()
+    #monkey_record_process.monkey_neuron_DSM_process(metrics=['euclidean', 'pearson'])
+    monkey_record_process.monkey_neuron_DSM_plot()

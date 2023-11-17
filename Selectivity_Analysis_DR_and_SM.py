@@ -31,6 +31,7 @@ import spiking_vgg, spiking_resnet, sew_resnet
 from spikingjelly.activation_based import surrogate, neuron, functional
 
 import utils_
+import utils_similarity
 
 
 class Selectiviy_Analysis_DR():
@@ -392,12 +393,11 @@ class Selectiviy_Analysis_DR():
     
 # ==================================================================================================================
 #FIXME
-"""
-    in my expectation, the EU distance and Pearsons' Correlation should be merged in one function but with different 
-    args to produce different metrics, so that in future can add other values for RSA
-"""
 class Selectiviy_Analysis_SM():
-    
+    """
+        the Euclidean distance and Pearsons' Correlation should be merged in one function but with different 
+        args to produce different metrics, so that in future can add other values for RSA
+    """
     def __init__(self, 
                  root='/Identity_Spikingjelly_VGG_Results/',
                  num_samples=10, num_classes=50, layers=None, neurons=None,  data_name=None):
@@ -438,80 +438,139 @@ class Selectiviy_Analysis_SM():
         plt.rcParams.update({"font.family": "Times New Roman"})
         
         # =====
-        for self.metric in metrics:     # for each metric
+        for metric in metrics:     # for each metric
             
-            self.metric_folder = os.path.join(os.path.join(self.dest_DSM, f'{self.metric}'))
-            utils_.make_dir(self.metric_folder)
+            metric_folder = os.path.join(self.dest_DSM, f'{metric}')
+            utils_.make_dir(metric_folder)
             
-            dict_path = os.path.join(self.metric_folder, f'{self.metric}.pkl')
-            
-            if os.path.exists(dict_path):
-                metric_dict = utils_.pickle_load(dict_path)
-            
-            else:
-                metric_dict = self.selectivity_analysis_similarity(in_layer_plot=True)
-                
-                utils_.pickle_dump(dict_path, metric_dict)
-                #savemat(os.path.join(self.metric_folder, f'{self.metric}.mat'), metric_dict)
+            metric_dict = self.selectivity_analysis_similarity(metric, in_layer_plot=True)
             
             # ----- plot
-            if self.metric == 'euclidean':
-                self.selectivity_analysis_plot(metric_dict, sup_v=None)
-            elif self.metric == 'pearson':
-                self.selectivity_analysis_plot(metric_dict, sup_v=(0,2))
+            if metric == 'euclidean':
+                self.selectivity_analysis_plot(metric, metric_dict, sup_v=None)
+            elif metric == 'pearson':
+                self.selectivity_analysis_plot(metric, metric_dict, sup_v=(0,1))
                
-    def selectivity_analysis_similarity(self, in_layer_plot:bool=False):
-        
-        print(f'[Codinfo] Executing selectivity_analysis_metric [{self.metric}]...')
+    def selectivity_analysis_similarity(self, metric, in_layer_plot:bool=False):
         
         logging.getLogger('matplotlib').setLevel(logging.ERROR)
         
-        self.dest_metric = os.path.join(self.dest_DSM, f'{self.metric}')
-        utils_.make_dir(self.dest_metric)
-        
-        metric_dict = {}     # use a dict to store the info of each layer
+        metric_folder = os.path.join(self.dest_DSM, f'{metric}')
+        utils_.make_dir(metric_folder)
         
         layers = self.layers[:]
         
-        for layer in tqdm(layers):     # for each layer
+        dict_path = os.path.join(metric_folder, f'{metric}.pkl')
+        
+        if os.path.exists(dict_path):
             
-            feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))     # (500, num_units)
+            metric_dict = utils_.pickle_load(dict_path)
+        
+        else:
             
-            mean_FR = self.calculate_mean_FR(feature)
-            sorted_idx = utils_.lexicographic_order(self.num_classes)     # correct labels
-            mean_FR = self.restore_order(mean_FR, sorted_idx)     # (50, num_units)
+            print(f'[Codinfo] Executing selectivity_analysis_metric [{metric}]...')
             
-            # --- select all neuron
-            units_type_dict = self.Sort_dict[layer]['advanced_type']
-            units_type_dict.update({'all': np.arange(mean_FR.shape[1])})
-
-            # ----- generate similarity metrics
-            metric_type_dict = {}
+            # ----- load different types of units
+            self.Sort_dict = utils_.pickle_load(os.path.join(self.dest, 'Encode/Sort_dict.pkl'))
             
-            #for type_ in [_ for _ in units_type_dict.keys()]:
-            #    metric_type_dict[type_] = selectivity_analysis_calculation(self.metric, mean_FR[:, units_type_dict[type_].astype(int)])
+            metric_dict = {}     # use a dict to store the info of each layer
+            
+            tqdm_bar = tqdm(total=len(layers), desc='NN_DM')
+            
+            for layer in layers:     # for each layer
                 
-            pl = Parallel(n_jobs=int(os.cpu_count()/3))(delayed(selectivity_analysis_calculation)(self.metric, mean_FR[:, units_type_dict[type_].astype(int)])for type_ in tqdm([_ for _ in units_type_dict.keys()]))
-            
-            for idx, type_ in enumerate([_ for _ in units_type_dict.keys()]):
-                metric_type_dict[type_] = pl[idx]
-            
-            # -----
-            metric_dict[layer] = metric_type_dict
-            
-            if in_layer_plot:
+                feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))     # (500, num_units)
                 
-                if self.metric == 'euclidean':     # for any values
-                    self.selectivity_analysis_similarity_in_layer_plot(layer, metric_type_dict)     
-                elif self.metric == 'pearson':     # for similarity values
-                    self.selectivity_analysis_similarity_in_layer_plot(layer, metric_type_dict, (0,2))    
+                mean_FR = self.calculate_mean_FR(feature)
+                sorted_idx = utils_.lexicographic_order(self.num_classes)     # correct labels
+                mean_FR = self.restore_order(mean_FR, sorted_idx)     # (50, num_units)
+                # ----- 0. add type of all neuron into the dict
+                # --- 1 - 10
+                units_type_dict = self.Sort_dict[layer]['advanced_type']
+                # --- 11
+                units_type_dict.update({'all': np.arange(mean_FR.shape[1])})
+                # --- 12 - 13
+                units_type_dict.update({'selective': 
+                                        np.concatenate(np.array([self.Sort_dict[layer]['advanced_type']['sensitive_si'],
+                                        self.Sort_dict[layer]['advanced_type']['sensitive_wsi'],
+                                        self.Sort_dict[layer]['advanced_type']['sensitive_mi'],
+                                        self.Sort_dict[layer]['advanced_type']['sensitive_wmi']], dtype=object))
+                                        })
+                
+                units_type_dict.update({'non_selective': 
+                                        np.concatenate(np.array([self.Sort_dict[layer]['advanced_type']['sensitive_non_encode'],
+                                        self.Sort_dict[layer]['advanced_type']['non_sensitive_si'],
+                                        self.Sort_dict[layer]['advanced_type']['non_sensitive_wsi'],
+                                        self.Sort_dict[layer]['advanced_type']['non_sensitive_mi'],
+                                        self.Sort_dict[layer]['advanced_type']['non_sensitive_wmi'],
+                                        self.Sort_dict[layer]['advanced_type']['non_sensitive_non_encode']], dtype=object))
+                                        })
+                
+                # --- 14 - 15
+                units_type_dict.update({'sensitive': 
+                                        np.concatenate(np.array([self.Sort_dict[layer]['advanced_type']['sensitive_si'],
+                                        self.Sort_dict[layer]['advanced_type']['sensitive_wsi'],
+                                        self.Sort_dict[layer]['advanced_type']['sensitive_mi'],
+                                        self.Sort_dict[layer]['advanced_type']['sensitive_wmi'],
+                                        self.Sort_dict[layer]['advanced_type']['sensitive_non_encode']], dtype=object))
+                                        })
+                
+                units_type_dict.update({'non_sensitive': 
+                                        np.concatenate(np.array([self.Sort_dict[layer]['advanced_type']['non_sensitive_si'],
+                                        self.Sort_dict[layer]['advanced_type']['non_sensitive_wsi'],
+                                        self.Sort_dict[layer]['advanced_type']['non_sensitive_mi'],
+                                        self.Sort_dict[layer]['advanced_type']['non_sensitive_wmi'],
+                                        self.Sort_dict[layer]['advanced_type']['non_sensitive_non_encode']], dtype=object))
+                                        })
+                
+                # --- 16 - 17
+                units_type_dict.update({'encode': 
+                                        np.concatenate(np.array([self.Sort_dict[layer]['basic_type']['si_idx'],
+                                        self.Sort_dict[layer]['basic_type']['wsi_idx'],
+                                        self.Sort_dict[layer]['basic_type']['mi_idx'],
+                                        self.Sort_dict[layer]['basic_type']['wmi_idx']], dtype=object))
+                                        })
+                
+                units_type_dict.update({'non_encode': self.Sort_dict[layer]['basic_type']['non_encode_idx']})
+                
+                # --- 18 -19
+                units_type_dict.update({'all_sensitive_si': 
+                                        np.concatenate(np.array([self.Sort_dict[layer]['advanced_type']['sensitive_si'],
+                                        self.Sort_dict[layer]['advanced_type']['sensitive_wsi']], dtype=object))
+                                        })
+                
+                units_type_dict.update({'all_sensitive_mi': 
+                                        np.concatenate(np.array([self.Sort_dict[layer]['advanced_type']['sensitive_mi'],
+                                        self.Sort_dict[layer]['advanced_type']['sensitive_wmi']], dtype=object))
+                                        })
+    
+                # --- 1. generate similarity metrics
+                pl = Parallel(n_jobs=int(os.cpu_count()/3))(delayed(utils_similarity.selectivity_analysis_calculation)(metric, mean_FR[:, units_type_dict[type_].astype(int)]) for type_ in [_ for _ in units_type_dict.keys()])
+                metric_type_dict = {type_: pl[idx] for idx, type_ in enumerate([_ for _ in units_type_dict.keys()])}
+                metric_dict[layer] = metric_type_dict
+                
+                # --- 2. in layer plot
+                if in_layer_plot:
+                    if metric == 'euclidean':     # for any values
+                        self.selectivity_analysis_similarity_in_layer_plot(layer, metric, metric_type_dict)     
+                    elif metric == 'pearson':     # for similarity values
+                        self.selectivity_analysis_similarity_in_layer_plot(layer, metric, metric_type_dict, (0,1))    
+                
+                tqdm_bar.update(1)
+                # -----
+                
+            utils_.pickle_dump(dict_path, metric_dict)
+            #savemat(os.path.join(metric_folder, f'{metric}.mat'), metric_dict)
             
         return metric_dict
     
     #FIXME
-    def selectivity_analysis_similarity_in_layer_plot(self, layer, metric_type_dict, v:tuple=None):
+    def selectivity_analysis_similarity_in_layer_plot(self, layer, metric, metric_type_dict, v:tuple=None):
         
-        plot_folder = os.path.join(self.metric_folder, 'in_layer_Figures')
+        metric_folder = os.path.join(self.dest_DSM, f'{metric}')
+        utils_.make_dir(metric_folder)
+        
+        plot_folder = os.path.join(metric_folder, 'in_layer_Figures')
         utils_.make_dir(plot_folder)
         
         metric_values_pool = np.array([metric_type_dict[_]['matrix'] for _ in metric_type_dict.keys() if metric_type_dict[_] != None])
@@ -553,7 +612,7 @@ class Selectiviy_Analysis_SM():
             fig.savefig(os.path.join(plot_folder, f'{layer}.png'), bbox_inches='tight', dpi=100)
             plt.close()
         
-    def selectivity_analysis_plot(self, metric_dict, sup_v:tuple=None):
+    def selectivity_analysis_plot(self, metric, metric_dict, sup_v:tuple=None):
 
         plt.rcParams.update({"font.size": 30})
         
@@ -571,32 +630,35 @@ class Selectiviy_Analysis_SM():
         tqdm_bar = tqdm(total=6, desc='Plot')
         
         # -----
-        self.selectivity_analysis_plot_single(metric_dict, sup_vmin, sup_vmax, layer_type='imaginary_neuron', plot_type='')
+        self.selectivity_analysis_plot_single(metric,  metric_dict, sup_vmin, sup_vmax, layer_type='imaginary_neuron', plot_type='')
         tqdm_bar.update(1)
         
         # -----
-        self.selectivity_analysis_plot_single(metric_dict, sup_vmin, sup_vmax, layer_type='imaginary_neuron', plot_type='suplim')
+        self.selectivity_analysis_plot_single(metric,  metric_dict, sup_vmin, sup_vmax, layer_type='imaginary_neuron', plot_type='suplim')
         tqdm_bar.update(1)
         
         # -----
-        self.selectivity_analysis_plot_single(metric_dict, sup_vmin, sup_vmax, layer_type='imaginary_neuron', plot_type='norm')
+        self.selectivity_analysis_plot_single(metric,  metric_dict, sup_vmin, sup_vmax, layer_type='imaginary_neuron', plot_type='norm')
         tqdm_bar.update(1)
         
         # -----
-        self.selectivity_analysis_plot_single(metric_dict, sup_vmin, sup_vmax, layer_type='all', plot_type='')
+        self.selectivity_analysis_plot_single(metric,  metric_dict, sup_vmin, sup_vmax, layer_type='all', plot_type='')
         tqdm_bar.update(1)
         
         # -----
-        self.selectivity_analysis_plot_single(metric_dict, sup_vmin, sup_vmax, layer_type='all', plot_type='suplim')
+        self.selectivity_analysis_plot_single(metric,  metric_dict, sup_vmin, sup_vmax, layer_type='all', plot_type='suplim')
         tqdm_bar.update(1)
         
         # -----
-        self.selectivity_analysis_plot_single(metric_dict, sup_vmin, sup_vmax, layer_type='all', plot_type='norm')
+        self.selectivity_analysis_plot_single(metric,  metric_dict, sup_vmin, sup_vmax, layer_type='all', plot_type='norm')
         tqdm_bar.update(1)
     
-    def selectivity_analysis_plot_single(self, metric_dict, sup_vmin, sup_vmax, cmap='turbo', layer_type:str=None, plot_type:str=None):
+    def selectivity_analysis_plot_single(self, metric, metric_dict, sup_vmin, sup_vmax, cmap='turbo', layer_type:str=None, plot_type:str=None):
         
-        plot_folder = os.path.join(self.metric_folder, 'Figures')
+        metric_folder = os.path.join(self.dest_DSM, f'{metric}')
+        utils_.make_dir(metric_folder)
+        
+        plot_folder = os.path.join(metric_folder, 'Figures')
         utils_.make_dir(plot_folder)
         
         logging.getLogger('matplotlib').setLevel(logging.ERROR)
@@ -608,7 +670,7 @@ class Selectiviy_Analysis_SM():
         
         num_types = len(metric_dict[list(metric_dict.keys())[0]])
         
-        fig, ax = plt.subplots(num_types, len(layers), figsize=(3*len(layers), 35))
+        fig, ax = plt.subplots(num_types, len(layers), figsize=(3*len(layers), 3*num_types))
 
         for idx, layer in enumerate(layers):     # for each layer
             
@@ -682,11 +744,11 @@ class Selectiviy_Analysis_SM():
         fig.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0.1, hspace=0.1)
         
         if plot_type == None or plot_type == '':
-            fig.suptitle(f'{self.model_structure} | {self.metric} | {layer_type} | normalized for all types in one layer', y=1.015, fontsize=50)
+            fig.suptitle(f'{self.model_structure} | {metric} | {layer_type} | normalized for all types in one layer', y=1.015, fontsize=50)
         elif plot_type == 'suplim':
-            fig.suptitle(f'{self.model_structure} | {self.metric} | {layer_type} | normalized for all types in all layer', y=1.015, fontsize=50)
+            fig.suptitle(f'{self.model_structure} | {metric} | {layer_type} | normalized for all types in all layer', y=1.015, fontsize=50)
         elif plot_type == 'norm':
-            fig.suptitle(f'{self.model_structure} | {self.metric} | {layer_type} | normalized for each type in each layer (only care classes similarity) | balnk: all values = 0', y=1.015, fontsize=50)
+            fig.suptitle(f'{self.model_structure} | {metric} | {layer_type} | normalized for each type in each layer (only care classes similarity) | balnk: all values = 0', y=1.015, fontsize=50)
             
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore')
@@ -695,205 +757,27 @@ class Selectiviy_Analysis_SM():
             fig.savefig(os.path.join(plot_folder, f'{layer_type}_{plot_type}.png'), bbox_inches='tight', dpi=100)
             plt.close()
 
-    #FIXME parellel process
-    def selectivity_analysis_correlation(self):
-        
-        print('[Codinfo] Executing selectivity_analysis_correlation...')
-        dest = os.path.join(self.dest,'Correlation/')
-        utils_.make_dir(dest)
-        
-        save_folder_id, cor_meaenFR_dict, cor_meanFR_id_selective_dict, cor_meanFR_non_id_selective_dict = self.correlation_state(dest, 'ID/')
-        #dest_faces, cor_full_dict, cor_full_ID_dict, cor_full_nonID_dict = self.correlation_state(dest, 'faces/')
-        
-        for layer in tqdm(self.layers):
-            
-            feature = utils_.pickle_load(os.path.join(self.root, layer+'.pkl'))
-            
-            mean_FR = self.calculate_mean_FR(feature)     # Order correction
-            sorted_idx = utils_.lexicographic_order(self.num_classes)
-            mean_FR = self.restore_order(mean_FR, sorted_idx)
-            
-            mask_id = np.loadtxt(self.dest  + '/' + layer + '-neuronIdx.csv', delimiter=',')
-            mask_id = list(map(int, mask_id))
-            mask_non_id = sorted(list(set(np.arange(feature.shape[1])) - set(mask_id)))
-            
-            self.correlation_single(mean_FR, layer, mask_id, mask_non_id, cor_meaenFR_dict, cor_meanFR_id_selective_dict, cor_meanFR_non_id_selective_dict, save_folder_id)
-            #[notice] no restore for idx here
-            #cor_full_dict, cor_full_ID_dict, cor_full_nonID_dict = self.correlation_single(feature, layer, mask_id, mask_non_id, cor_full_dict, cor_full_ID_dict, cor_full_nonID_dict, dest_faces)
-            
-        print('[Codinfo] Saving Correlation Matrix...')
-        
-        self.correlation_save('id_all', cor_meaenFR_dict, 'id_id_selective', cor_meanFR_id_selective_dict, 'id_non_id_selective', cor_meanFR_non_id_selective_dict, dest)
-        #self.correlation_save('full', cor_full_dict, 'full_ID', cor_full_ID_dict, 'full_nonID', cor_full_nonID_dict, dest)
-   
-    def correlation_state(self, dest, data_type):
-        save_path = dest+data_type
-        utils_.make_dir(save_path)
-        
-        cor_dict = {}
-        cor_sensitive_dict = {}
-        cor_nonsensitive_dict = {}
-        
-        return save_path, cor_dict, cor_sensitive_dict, cor_nonsensitive_dict
-    
-    def correlation_save(self, cor_name, cor_dict, cor_sensitive_name, cor_sensitive_dict, cor_nonsensitive_name, cor_nonsensitive_dict, dest):
-        
-        savemat(os.path.join(dest, f'correlation_matrix_{cor_name}.mat'), cor_dict)
-        savemat(os.path.join(dest, f'correlation_matrix_{cor_sensitive_name}.mat'), cor_sensitive_dict)
-        savemat(os.path.join(dest, f'correlation_matrix_{cor_nonsensitive_name}.mat'), cor_nonsensitive_dict)
-        
-        #utils_.pickle_dump(os.path.join(dest, f'/correlation_matrix_{cor_name}.pkl'), cor_dict)
-        #utils_.pickle_dump(os.path.join(dest, f'/correlation_matrix_{cor_sensitive_name}.pkl'), cor_sensitive_dict)
-        #utils_.pickle_dump(os.path.join(dest, f'/correlation_matrix_{cor_nonsensitive_name}.pkl'), cor_nonsensitive_dict)
-    
-    def correlation_single(self, feature, layer, mask_id, mask_non_id, cor_dict, cor_sensitive_dict, cor_nonsensitive_dict, dest):
-        cor_all, cor_sensitive, cor_nonsensitive = self.correlation_calculate_single(feature, layer, mask_id, mask_non_id)
-        
-        cor_dict.update({layer: cor_all})
-        cor_sensitive_dict.update({layer: cor_sensitive})
-        cor_nonsensitive_dict.update({layer: cor_nonsensitive})
-        
-        self.correlation_plot_single(cor_all, cor_sensitive, cor_nonsensitive, mask_id, mask_non_id, layer, dest)
-    
     def restore_order(self, mean_FR, sorted_idx):
         mean_FR = [[mean_FR[_,:], sorted_idx[_]] for _ in range(self.num_classes)]
         mean_FR = sorted(mean_FR, key=lambda x:x[1])
         mean_FR = np.array([mean_FR[_][0] for _ in range(self.num_classes)])
         
         return mean_FR
-   
-    def correlation_calculate_single(self, matrix, layer, mask_id, mask_non_id):
-        """
-            this function calculates the correlation coefficient,
-            
-            if np.std(ont_unit_feature) = 0, it will cause corrcoef as nan.
-        """
-        cor_all = np.corrcoef(matrix)
-        cor_id = np.corrcoef(matrix[:, mask_id])
-        
-        with warnings.catch_warnings():
-            warnings.simplefilter(action='ignore')
-            cor_nonID = np.corrcoef(matrix[:, mask_non_id])
-            cor_nonID[np.isnan(cor_nonID)]=0
-        
-        return cor_all, cor_id, cor_nonID
-        
-    def correlation_plot_single(self, cor_all, cor_id, cor_nonID, mask_id, mask_non_id, layer, save_path):
-        
-        logging.getLogger('matplotlib').setLevel(logging.ERROR)
-        
-        fig, axes = plt.subplots(1, 3, figsize=((30, 10)))
-        cbar_ax = fig.add_axes([.91, .1, .03, .8])
     
-        vmax = max(cor_all.max(), cor_id.max(), cor_nonID.max())
-        vmin = min(cor_all.min(), cor_id.min(), cor_nonID.min())
-    
-        sn.heatmap(cor_all, ax=axes[0], cmap='jet', cbar=0, vmin=vmin, vmax=vmax, cbar_ax=cbar_ax)
-        axes[0].set_title(f'all neurons ({len(mask_id)+len(mask_non_id)})')
-        sn.heatmap(cor_id, ax=axes[1], cmap='jet',  cbar=1, vmin=vmin, vmax=vmax, cbar_ax=cbar_ax)
-        axes[1].set_title(f'identity selective neurons ({len(mask_id)})')
-        sn.heatmap(cor_nonID, ax = axes[2], cmap='jet',  cbar=2, vmin=vmin, vmax=vmax, cbar_ax=cbar_ax)
-        axes[2].set_title(f'non identity selective neurons ({len(mask_non_id)})')
-    
-        with warnings.catch_warnings():
-            warnings.simplefilter(action='ignore')
-            fig.tight_layout(rect=[0, 0, .9, 1])
-            plt.title(layer)
-            plt.savefig(save_path+layer+'-Correlation.png', bbox_inches='tight', dpi=100)
-            plt.close()
-
     def calculate_mean_FR(self, matrix):            
         return np.array([matrix[_*self.num_samples:(_+1)*self.num_samples, :] for _ in range(self.num_classes)]).mean(axis=1)
-   
+  
     
-#FIXME - consider the sclading problem of Euclidean distance, also the probolem of multi-save
-def selectivity_analysis_calculation(metric: str, feature: np.array):
-    """
-        based on [metric] to calculate
-    """
-    
-    similarity_dict = {}
-    
-    if 'euclidean' in metric.lower():
-        similarity_value = pdist(feature, 'euclidean')     # (1225,)
-        similarity_matrix = squareform(similarity_value)     # (50, 50)
-        
-        similarity_dict.update({
-            'vector': similarity_value,     # for RSA
-            'matrix': similarity_matrix,     # for plot
-            'contains_nan': False,     # by default, pdist() can receive null input and generate 0 rather NaN as output
-            'num_units': feature.shape[1]
-            })
-    
-    elif 'pearson' in metric.lower():
-        with warnings.catch_warnings():
-            warnings.simplefilter(action='ignore')
-            
-            if feature.shape[1] == 0:
-                similarity_dict = None
-            
-            else:
-                similarity_matrix = np.corrcoef(feature)
-                
-                if np.any(np.isnan(similarity_matrix)):     # when detecting NaN value, i.e. the values of one class are identical
-                    similarity_dict.update({'contains_nan': True})
-                    similarity_matrix[np.isnan(similarity_matrix)] = 0
-                    
-                else:
-                    similarity_dict.update({'contains_nan': False})
-                    
-                DSM = (1 - similarity_matrix)/2     # SM [-1, 1] -> DSM [0, 1]
-                similarity_value = Square2Tri(DSM)     # (1225,)
-    
-                similarity_dict.update({
-                    'vector': similarity_value,     # for RSA
-                    'matrix': DSM,     # for plot
-                    'num_units': feature.shape[1]
-                    })
-    
-    else:
-        raise RuntimeError(f'[Coderror] {metric} not supported')
-    
-    return similarity_dict
-
-
-def Square2Tri(DSM):
-    """
-        DSM range: (0, 1)
-    """
-    
-    DSM_z = np.arctanh(DSM)
-    DSM_z = (DSM_z+DSM_z.T)/2
-    for _ in range(DSM.shape[0]):
-        DSM_z[_,_]=0
-    V = squareform(DSM_z)
-    # -----
-    
-    return V
-
 if __name__ == '__main__':
-    
-# =============================================================================
-#     layers = ['Conv_5_3', 'Pool_5', 'FC_6', 'FC_7']
-#     neurons = [100352, 25088, 4096, 4096]
-# 
-#     root_dir = '/media/acxyle/Data/ChromeDownload/'
-# 
-#     selectivity_additional_analyzer = Selectiviy_Analysis_DR_and_RSA(
-#                 root=os.path.join(root_dir, 'Identity_VGG16bn_ReLU_CelebA2622_Results/'), 
-#                 dest=os.path.join(root_dir, 'Identity_VGG16bn_ReLU_CelebA2622_Neuron/'), 
-#                 layers=layers, neurons=neurons)
-#     selectivity_additional_analyzer.selectivity_analysis_tsne()
-# =============================================================================
 
-    model_name = 'vgg16'
+    model_name = 'vgg16_bn'
     
     model_ = vgg.__dict__[model_name](num_classes=50)
     layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, model_name)
 
     root_dir = '/home/acxyle-workstation/Downloads/'
 
-    selectivity_additional_analyzer = Selectiviy_Analysis_SM(root=os.path.join(root_dir, 'Face Identity Baseline'), 
+    selectivity_additional_analyzer = Selectiviy_Analysis_SM(root=os.path.join(root_dir, 'Face Identity VGG16bn'), 
                 layers=layers, neurons=neurons)
     
     metrics_list = ['euclidean', 'pearson']

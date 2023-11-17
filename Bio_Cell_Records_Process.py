@@ -32,14 +32,16 @@ from scipy.spatial.distance import pdist, squareform
 from scipy.integrate import quad
 
 import utils_
+import utils_similarity
 
-#FIXME
+#FIXME - move the DM process from RSA to here
 # =============================================================================
 class Human_Neuron_Records_Process():
     """
         function: 
         
         1) convert raw records to response map;
+    
         2) plot raster plot;
         
         3) analysis detailed neuron features  
@@ -90,8 +92,7 @@ class Human_Neuron_Records_Process():
             remove repeated neuron responses. Third, place all responses into a (cell_num, img_num) matrix. Finally, make a 
             correction due to experiment errors.
             
-            [note] the output meanFR is still disordered, i.e. following the order of displayed images rather than every 
-            10 images with sequence of ID by ID.
+            [note] the output meanFR is NOT disordered while the original MATLAB code provides disordered meanFR.
             
             for session with code != 500 means the images displayed in the experiments are not standard.
             for session 8, with 711 'code', 67 'back_id', 644 non_back images, in which 500 standard images and 144 
@@ -105,7 +106,7 @@ class Human_Neuron_Records_Process():
             
             output:
             
-            - meanFR: response map with shape (num_cells, num_imgs)
+            - meanFR: response map with shape (num_cells, num_imgs), sorted based on ID
             - cells: 1,577 qualified cell idces from all 2082 cells
             
             involved variables:
@@ -118,8 +119,6 @@ class Human_Neuron_Records_Process():
             
         """
         
-        print('[Codinfo] Calculating sorted meanFR...')
-        
         meanFR_path = os.path.join(self.human_neuron_stats, 'meanFR.pkl')
         
         if os.path.exists(meanFR_path):
@@ -127,6 +126,8 @@ class Human_Neuron_Records_Process():
             meanFR_dict = utils_.pickle_load(meanFR_path)
             
         else:
+            
+            print('[Codinfo] Calculating sorted meanFR...')
             
             if data_set == 'CelebA':
                 
@@ -151,6 +152,7 @@ class Human_Neuron_Records_Process():
                 qualified_cells = np.setdiff1d(np.arange(len(FR_stats)), cell_reject)     # qualified neurons with 2 conditions
                 
                 # ----- build [im_code] img_idces and img_idces_new dict
+                # --- 1.2.1 old (wrong) img_idces and id_img dict
                 CelebA_img_idces = sio.loadmat(os.path.join(self.root_data, 'SingleNeuron/Code/CelebA_Image_Code.mat'))
                 img_idces = CelebA_img_idces['im_code'].reshape(-1)     # [idx as right number: ID]
                 adjust_idx = CelebA_img_idces['AdjustInd'].reshape(-1).astype(np.int16) - 1   # [idx as right number: wrong number]
@@ -158,7 +160,7 @@ class Human_Neuron_Records_Process():
                 self.img_idces_dict = {_:img_idces[_] for _ in range(len(img_idces))}     # {right number: ID}
                 self.adjust_idx_dict = {adjust_idx[_].astype(int): _ for _ in range(len(adjust_idx)) if adjust_idx[_] > -1}     # {wrong number: right number}
                 
-                # ---
+                # --- 1.2.2 new img_idces and id_img dict
                 CelebA_img_idx_new = sio.loadmat(os.path.join(self.root_data, 'SingleNeuron/Code/CelebA_Image_Code_new.mat'))
                 img_idces_new = CelebA_img_idx_new['im_code'].reshape(-1)     # img_idx linked ID, 50 IDs in total
                 
@@ -293,8 +295,9 @@ class Human_Neuron_Records_Process():
                      meanFR_PSTH[:381, defective_imgs, :] = np.nanmean(meanFR_PSTH[:381, self.id_img_idces_dict[_][:-1], :], 1)
                 
                 # --- 4.3 update
-                # looks like there's a lot of nan values for session 12 (cell 415 to 432) (1-based)
-                # [notice] consider to remove session 12
+                # [notice] consider to remove session 12 because here's a lot of nan values for session 12 (cell 415 to 432) (1-based)
+                # [notice] until now the feature map is still based on img_idx, i.e. the adjacent 10 imgs does not belong
+                # to one class, below section sorts feature map based on ID. The finally output has similiar order as NN feature map
                 
                 # ----- [notice] for the MATLAB version feturemap, ignore below opration
                 # --- 5. sort the feature map based on ID
@@ -343,7 +346,6 @@ class Human_Neuron_Records_Process():
 
         return meanFR_dict
         
-    
     def human_neuron_get_firing_rate(self, time_window=250, time_step=50):  
         """
             'Spikes.mat': b'MATLAB 5.0 MAT-file, Platform: MACI64, Created on: Thu Dec 30 12:11:01 2021'
@@ -380,15 +382,15 @@ class Human_Neuron_Records_Process():
             the name of saved variables does not include the parameters configuration
         """
         
-        print('[Codinfo] Calculating original firing rates...')
-        
         file_path = os.path.join(self.human_neuron_stats, 'FR_stats.pkl')
         
         if os.path.exists(file_path):
             FR_stats = utils_.pickle_load(file_path)
             
         else:
-
+            
+            print('[Codinfo] Calculating original firing rates...')
+            
             time_stamps_all_cells = [_.reshape(-1) for _ in self.Spikes['timestampsOfCellAll'].reshape(-1)]
             
             sessions = self.get_session_idces()     # <- stores time periods of each trial (each session_idx)
@@ -423,7 +425,6 @@ class Human_Neuron_Records_Process():
         
         return FR_stats
         
-    
     def human_neuron_FR_stats_plot(self, init:float=0.15):
         
         FR_stats = self.human_neuron_get_firing_rate()
@@ -1042,22 +1043,19 @@ class Human_Neuron_Records_Process():
             
             utils_.pickle_dump(save_path, cell_stats)
         
+        # ----- plot
+        #for cell_idx in np.intersect1d(si, qualified_cells):
+        #    meanFR_id = meanFR_[cell_idx]
+        #    fig, ax = plt.subplots(figsize=(10,10))
+        #    ax.scatter(np.arange(50), np.mean(meanFR_id, axis=1))
+        #    ax.hlines(np.mean(meanFR_id)+2*np.std(meanFR_id), 0, 49, color='red', label='th')
+        #    ax.hlines(np.mean(meanFR_id)+2*np.std(np.mean(meanFR_id, axis=1)), 0, 49, color='teal', label='ref')
+        #    ax.set_title(f'{cell_idx}')
+        #    ax.legend()
+        #    plt.show()
+        
         return cell_stats
         
-    # ----- plot
-# =============================================================================
-#     for cell_idx in np.intersect1d(si, qualified_cells):
-#         meanFR_id = meanFR_[cell_idx]
-#         
-#         fig, ax = plt.subplots(figsize=(10,10))
-#         ax.scatter(np.arange(50), np.mean(meanFR_id, axis=1))
-#         ax.hlines(np.mean(meanFR_id)+2*np.std(meanFR_id), 0, 49, color='red', label='th')
-#         ax.hlines(np.mean(meanFR_id)+2*np.std(np.mean(meanFR_id, axis=1)), 0, 49, color='teal', label='ref')
-#         ax.set_title(f'{cell_idx}')
-#         ax.legend()
-#         plt.show()
-# =============================================================================
-
     def human_neuron_stacked_encode_map(self, ):
         
         """
@@ -1474,7 +1472,7 @@ class Human_Neuron_Records_Process():
         
         """
             [Oct 19, 2023]
-            some of the hyper paramaters are based on this experiments, needed to be changed in future use
+            some of the hyper paramaters are designed only for this experiments, needed to be changed in future use
         """
 
         if len(spikes) != 0:
@@ -1553,50 +1551,285 @@ class Human_Neuron_Records_Process():
             
         return trialTimestamps
 
+    # ===== module 4. corr
+    def human_neuron_DSM_process_sub_id(self, metric, used_cell_type, used_id_num):
+        
+        selected_ids = self.human_corr_select_sub_identities(used_id_num)
+        human_DM_dict = self.human_neuron_DSM_process(metric, used_cell_type, selected_ids)
+        
+        return selected_ids, human_DM_dict
     
-# ======================================================================================================================
-# set the input is the folder
-
-
-
+    def human_neuron_DSM_process(self, metric, used_cell_type, selected_ids:list[int]=list(np.arange(50)), num_perm=1000):
+        """
+            this function calculates the human pairwise distance matrices based on selected_ids and Used_cell_type, 
+            
+            input:
+                selected_ids: default all 50 ids
+                used_cell_type: default qualified 1,577 cells
+        """
+        
+        save_root = os.path.join(self.human_neuron_stats, 'corr')
+        utils_.make_dir(save_root)
+        
+        save_root = os.path.join(save_root, metric)
+        utils_.make_dir(save_root)
+        
+        save_path = os.path.join(save_root, f'Human_DM_dict_{used_cell_type}_{len(selected_ids)}.pkl')
+        
+        # --- init
+        self.meanFR = self.meanFR_dict['meanFR']     # (2082, 500)
+        self.meanFR_PSTH = self.meanFR_dict['meanFR_PSTH']
+        
+        used_cells = self.human_neuron_obtain_used_cells(used_cell_type)
+            
+        if used_cells.size == 0:
+            
+            return None
+    
+        else:
+        
+            # --- normalize firing rates
+            FR_baseline = np.array([np.mean(self.FR_stats[_]['spike_count_250_500']) for _ in used_cells])     
+            
+            # [notice] raw data are jagged and no NaN value but meanFR; consider no order of imgs but overall firing rate
+            self.normalized_meanFR = self.meanFR[used_cells]/FR_baseline.reshape(-1, 1)     # (num_cells, num_imgs)
+            self.normalized_meanFR_PSTH = self.meanFR_PSTH[used_cells, :, :]/FR_baseline.reshape(-1, 1, 1)     # (num_cells, num_imgs, num_time_steps)
+            
+            # --- 
+            self.meanFR_id = np.mean(self.normalized_meanFR.reshape(-1, 50, 10), axis=2)[:, selected_ids].T     # (num_selected_ids, num_cells)
+            self.meanFR_PSTH_id = np.mean(self.normalized_meanFR_PSTH.reshape(-1, 50, 10, 31), axis=2)[:, selected_ids, :].T     # (num_time_steps, num_selected_ids, num_cells)
+            
+            if os.path.exists(save_path):
+                
+                print(f'[Codinfo] Loading Human_neuron_DM for {metric} {used_cell_type}...')
+                
+                human_DM_dict = utils_.pickle_load(save_path)
+                
+            else:
+                
+                print(f'[Codinfo] Calculating Human_neuron_DM for {metric} {used_cell_type}...')
+                
+                # --- for static meanFR
+                human_DM_v = utils_similarity.selectivity_analysis_calculation(metric, self.meanFR_id)['vector']     # (num_selected_ids*(num_selected_ids-1)/2, )
+                human_DM_v_perm = np.array([_['vector'] for _ in Parallel(n_jobs=-1)(delayed(utils_similarity.selectivity_analysis_calculation)(metric, self.meanFR_id[np.random.permutation(len(selected_ids))]) for _ in tqdm(range(num_perm), desc='Human corr'))])
+                
+                # --- for temporal
+                human_DM_v_temporal = np.zeros((self.meanFR_PSTH_id.shape[0], human_DM_v.size))     # (31, 1225)
+                human_DM_v_perm_temporal = np.zeros((self.meanFR_PSTH_id.shape[0], num_perm, human_DM_v.size))     # (31, 1000, 1225)
+                
+                for t in tqdm(range(self.meanFR_PSTH_id.shape[0]), desc='Human corr temporal'):     # for each time point
+    
+                    human_DM_v_temporal[t, :] = utils_similarity.selectivity_analysis_calculation(metric, self.meanFR_PSTH_id[t])['vector']
+                    human_DM_v_perm_temporal[t, :, :] = np.array([_['vector'] for _ in Parallel(n_jobs=-1)(delayed(utils_similarity.selectivity_analysis_calculation)(metric, self.meanFR_PSTH_id[t, np.random.permutation(len(selected_ids))]) for _ in range(num_perm))])
+                    
+                # --- seal data
+                human_DM_dict = {
+                    'human_DM_v': human_DM_v, 
+                    'human_DM_v_perm': human_DM_v_perm,
+                    'human_DM_v_temporal': human_DM_v_temporal,
+                    'human_DM_v_perm_temporal': human_DM_v_perm_temporal
+                    }
+                
+                utils_.pickle_dump(save_path, human_DM_dict)
+            
+            return human_DM_dict
+    
+    def human_corr_select_sub_identities(self, used_id_num:int=None, cell_type='selective_cells'):
+        
+        # --- init
+        self.meanFR_dict = self.human_neuron_sort_FR()
+        self.cell_stats = self.humane_identity_cell_selection()
+        self.FR_stats = self.human_neuron_get_firing_rate()
+        
+        encode_dict = self.cell_stats['encode_id']     # encode_dict
+        cell_types_dict = self.cell_stats['cell_types_dict']     # ID cells
+        
+        # --- rebuild wanted cells
+        all_selective_cells = {_:cell_types_dict[_] for _ in cell_types_dict.keys() if 'non_sensitive' not in _ and 'non_encode' not in _}
+        all_selective_cells = [__ for _ in all_selective_cells.values() for __ in _]
+        
+        # --- calculate
+        if cell_type == 'selective_cells':     # for ID encoded by ID cells
+            encoded_id_pool = np.concatenate(np.array([[__ for _ in encode_dict[cell_idx].values() for __ in _] for cell_idx in all_selective_cells], dtype=object))
+        elif cell_type == 'encode_cells':     # for ID encoded by all Encode cells
+            encoded_id_pool =np.concatenate(np.array([[__ for _ in encode_dict[cell_idx].values() for __ in _] for cell_idx in encode_dict.keys()], dtype=object))
+ 
+        # ----- select used_id_num
+        if used_id_num is None:
+            selected_ids = [6, 10, 14, 15, 23, 24, 28, 36, 38, 40]
+        elif used_id_num is not None and used_id_num > 48:     # [notice] 'selective' human cells only encode 48 ids
+            selected_ids = list(np.arange(50))
+        elif used_id_num is not None:
+            selected_ids = list(self.human_corr_used_ids_selection(encoded_id_pool, used_id_num).keys())[:used_id_num]
+        else:
+            raise RuntimeError('[Coderror] invalid used_id_num')
+        
+        return selected_ids
+    
+    def human_corr_used_ids_selection(self, encoded_id_pool, used_id_num):
+        """
+            Dr CAO provided: [6, 10, 14, 15, 23, 24, 28, 36, 38, 40]
+            Calculated here: [6, 10, 14, 15, 24, 28, 30, 36, 43, 45]
+            
+            return:
+                dict
+        """
+            
+        freq = dict(Counter(encoded_id_pool))
+        freq={int(k):v for k,v in sorted(freq.items(), key=lambda x:x[1], reverse=True)}
+        
+        return {k:v for idx, (k,v) in enumerate(freq.items(), 0) if idx < used_id_num}
+    
+    def human_neuron_obtain_used_cells(self, used_cell_type):
+        
+        # --- 1.
+        if used_cell_type == 'qualified':
+            used_cells = np.array(list(self.cell_stats['encode_id'].keys()))
+            
+        # --- 2-3
+        elif used_cell_type == 'selective':     # 'selective' = 's_si' + 's_wsi' + 's_mi' + 's_wmi'
+            used_cells = np.concatenate(np.array([
+                                        self.cell_stats['cell_types_dict']['sensitive_si'],
+                                        self.cell_stats['cell_types_dict']['sensitive_wsi'],
+                                        self.cell_stats['cell_types_dict']['sensitive_mi'],
+                                        self.cell_stats['cell_types_dict']['sensitive_wmi'], ], dtype=object))
+            
+        elif used_cell_type == 'non_selective':     # 'non_sensitive' = 's_non_encode' + 'ns_si' + 'ns_wsi' + 'ns_mi' + 'ns_wmi' + 'ns_non_encode'
+            used_cells = np.concatenate(np.array([
+                                        self.cell_stats['cell_types_dict']['sensitive_non_encode'],
+                                        self.cell_stats['cell_types_dict']['non_sensitive_si'],
+                                        self.cell_stats['cell_types_dict']['non_sensitive_wsi'],
+                                        self.cell_stats['cell_types_dict']['non_sensitive_mi'],
+                                        self.cell_stats['cell_types_dict']['non_sensitive_wmi'],
+                                        self.cell_stats['cell_types_dict']['non_sensitive_non_encode'], ], dtype=object))
+        
+        # --- 4-13
+        elif used_cell_type == 'sensitive_si':
+            used_cells = self.cell_stats['cell_types_dict']['sensitive_si']
+            
+        elif used_cell_type == 'sensitive_wsi':
+            used_cells = self.cell_stats['cell_types_dict']['sensitive_wsi']
+            
+        elif used_cell_type == 'sensitive_mi':
+            used_cells = self.cell_stats['cell_types_dict']['sensitive_mi']
+            
+        elif used_cell_type == 'sensitive_wmi':
+            used_cells = self.cell_stats['cell_types_dict']['sensitive_wmi']
+            
+        elif used_cell_type == 'sensitive_non_encode':
+            used_cells = self.cell_stats['cell_types_dict']['sensitive_non_encode']
+            
+            
+        elif used_cell_type == 'non_sensitive_si':
+            used_cells = self.cell_stats['cell_types_dict']['non_sensitive_si']
+            
+        elif used_cell_type == 'non_sensitive_wsi':
+            used_cells = self.cell_stats['cell_types_dict']['non_sensitive_wsi']
+            
+        elif used_cell_type == 'non_sensitive_mi':
+            used_cells = self.cell_stats['cell_types_dict']['non_sensitive_mi']
+            
+        elif used_cell_type == 'non_sensitive_wmi':
+            used_cells = self.cell_stats['cell_types_dict']['non_sensitive_wmi']
+        
+        elif used_cell_type == 'non_sensitive_non_encode':
+            used_cells = self.cell_stats['cell_types_dict']['non_sensitive_non_encode']
+            
+        # --- 14-15
+        elif used_cell_type == 'sensitive':
+            used_cells = np.concatenate(np.array([
+                                        self.cell_stats['cell_types_dict']['sensitive_si'],
+                                        self.cell_stats['cell_types_dict']['sensitive_wsi'],
+                                        self.cell_stats['cell_types_dict']['sensitive_mi'],
+                                        self.cell_stats['cell_types_dict']['sensitive_wmi'], 
+                                        self.cell_stats['cell_types_dict']['sensitive_non_encode'], ], dtype=object))
+            
+        elif used_cell_type == 'non_sensitive':
+            used_cells = np.concatenate(np.array([
+                                        self.cell_stats['cell_types_dict']['non_sensitive_si'],
+                                        self.cell_stats['cell_types_dict']['non_sensitive_wsi'],
+                                        self.cell_stats['cell_types_dict']['non_sensitive_mi'],
+                                        self.cell_stats['cell_types_dict']['non_sensitive_wmi'],
+                                        self.cell_stats['cell_types_dict']['non_sensitive_non_encode'], ], dtype=object))
+            
+        # --- 16-17
+        elif used_cell_type == 'encode':
+            used_cells = np.concatenate(np.array([
+                                        self.cell_stats['cell_types_dict']['sensitive_si'],
+                                        self.cell_stats['cell_types_dict']['sensitive_wsi'],
+                                        self.cell_stats['cell_types_dict']['sensitive_mi'],
+                                        self.cell_stats['cell_types_dict']['sensitive_wmi'], 
+                                        
+                                        self.cell_stats['cell_types_dict']['non_sensitive_si'],
+                                        self.cell_stats['cell_types_dict']['non_sensitive_wsi'],
+                                        self.cell_stats['cell_types_dict']['non_sensitive_mi'],
+                                        self.cell_stats['cell_types_dict']['non_sensitive_wmi'], ], dtype=object))
+            
+        elif used_cell_type == 'non_encode':
+            used_cells = np.concatenate(np.array([
+                                        self.cell_stats['cell_types_dict']['sensitive_non_encode'],
+                                        self.cell_stats['cell_types_dict']['non_sensitive_non_encode'], ], dtype=object))
+            
+        # --- 18-19
+        elif used_cell_type == 'all_sensitive_si':
+            used_cells = np.concatenate(np.array([
+                                        self.cell_stats['cell_types_dict']['sensitive_si'],
+                                        self.cell_stats['cell_types_dict']['sensitive_wsi'], ], dtype=object))
+            
+        elif used_cell_type == 'all_sensitive_mi':
+            used_cells = np.concatenate(np.array([
+                                        self.cell_stats['cell_types_dict']['sensitive_mi'],
+                                        self.cell_stats['cell_types_dict']['sensitive_wmi'], ], dtype=object))
+        
+        else:
+            
+            raise RuntimeError(f'[Coderror] invalid used_cell_type [{used_cell_type}]')
+        
+        return used_cells
+    
+    @staticmethod
+    def _compare_beh_and_behm(behavior):
+        """
+            compare the beh_matlab and beh_python
+            [Oct 5, 2023] beh_python is identical with beh_matlab
+        """
+        # --- convert beh_matlab to python friendly structure
+        beh_m = sio.loadmat('/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Human/osfstorage-archive/SingleNeuron/FiringRate/Original Data/SortedFR_CelebA.mat')['beh'].reshape(-1)
+        beh_m = {_: beh_m[_] for _ in beh_m.dtype.names}
+        beh_m = [{__: beh_m[__][_].reshape(-1) for __ in behavior[0].keys()} for _ in range(40)]
+        
+        for i in range(40):
+            beh_m[i]['iT'] = {_: np.array([np.nan if ___.size == 0 else ___.item() for ___ in beh_m[i]['iT'][_]]) for _ in beh_m[i]['iT'].dtype.names}
+            
+        for i in range(40):
+            beh_m[i]['T'] = {_: beh_m[i]['T'][_][0].reshape(-1).item() if beh_m[i]['T'][_][0].size == 1 else ['T'][_][0].reshape(-1) for _ in beh_m[i]['T'].dtype.names}
+        
+        for i in range(40):
+            beh_m[i]['back_id'] = beh_m[i]['back_id'] - 1
+        
+        # --- compare each segment
+        for i in range(40):
+            for key in behavior[i].keys():
+                if isinstance(behavior[i][key], np.ndarray):
+                    if not np.all(behavior[i][key][~np.isnan(behavior[i][key])] == beh_m[i][key][~np.isnan(beh_m[i][key])]):
+                        print(i, key, np.all(behavior[i][key][~np.isnan(behavior[i][key])] == beh_m[i][key][~np.isnan(beh_m[i][key])]))
+                if isinstance(behavior[i][key], dict):
+                    if 'iT' in key:
+                        for key_ in behavior[i][key].keys():
+                            if not np.all( behavior[i][key][key_][~np.isnan(behavior[i][key][key_])] == beh_m[i][key][key_][~np.isnan(beh_m[i][key][key_])] ):
+                                print(i, key, key_, np.all( behavior[i][key][key_][~np.isnan(behavior[i][key][key_])] == beh_m[i][key][key_][~np.isnan(beh_m[i][key][key_])] ))
+                    elif 'T' in key:
+                        for key_ in behavior[i][key].keys():
+                            if not behavior[i][key][key_]==beh_m[i][key][key_]:
+                                print(i, key, key_, behavior[i][key][key_]==beh_m[i][key][key_])
+                                
     
 # ======================================================================================================================
 # ----- 
-def compare_beh_and_behm(behavior):
-    """
-        compare the beh_matlab and beh_python
-        [Oct 5, 2023] beh_python is identical with beh_matlab
-    """
-    # --- convert beh_matlab to python friendly structure
-    beh_m = sio.loadmat('/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Human/osfstorage-archive/SingleNeuron/FiringRate/Original Data/SortedFR_CelebA.mat')['beh'].reshape(-1)
-    beh_m = {_: beh_m[_] for _ in beh_m.dtype.names}
-    beh_m = [{__: beh_m[__][_].reshape(-1) for __ in behavior[0].keys()} for _ in range(40)]
-    
-    for i in range(40):
-        beh_m[i]['iT'] = {_: np.array([np.nan if ___.size == 0 else ___.item() for ___ in beh_m[i]['iT'][_]]) for _ in beh_m[i]['iT'].dtype.names}
-        
-    for i in range(40):
-        beh_m[i]['T'] = {_: beh_m[i]['T'][_][0].reshape(-1).item() if beh_m[i]['T'][_][0].size == 1 else ['T'][_][0].reshape(-1) for _ in beh_m[i]['T'].dtype.names}
-    
-    for i in range(40):
-        beh_m[i]['back_id'] = beh_m[i]['back_id'] - 1
-    
-    # --- compare each segment
-    for i in range(40):
-        for key in behavior[i].keys():
-            if isinstance(behavior[i][key], np.ndarray):
-                if not np.all(behavior[i][key][~np.isnan(behavior[i][key])] == beh_m[i][key][~np.isnan(beh_m[i][key])]):
-                    print(i, key, np.all(behavior[i][key][~np.isnan(behavior[i][key])] == beh_m[i][key][~np.isnan(beh_m[i][key])]))
-            if isinstance(behavior[i][key], dict):
-                if 'iT' in key:
-                    for key_ in behavior[i][key].keys():
-                        if not np.all( behavior[i][key][key_][~np.isnan(behavior[i][key][key_])] == beh_m[i][key][key_][~np.isnan(beh_m[i][key][key_])] ):
-                            print(i, key, key_, np.all( behavior[i][key][key_][~np.isnan(behavior[i][key][key_])] == beh_m[i][key][key_][~np.isnan(beh_m[i][key][key_])] ))
-                elif 'T' in key:
-                    for key_ in behavior[i][key].keys():
-                        if not behavior[i][key][key_]==beh_m[i][key][key_]:
-                            print(i, key, key_, behavior[i][key][key_]==beh_m[i][key][key_])
+
               
+                
+# ======================================================================================================================
 class Monkey_Neuron_Records_Process():
     
     """
@@ -1741,13 +1974,14 @@ class Monkey_Neuron_Records_Process():
                 
                 # --- [notice] in order to make the results stable for each experiments, can make the permutation constant here
                 # for static meanFR
-                self.monkey_DM_v = selectivity_analysis_calculation(metric, self.FR_id)['vector']
-                self.monkey_DM_v_perm = np.array([selectivity_analysis_calculation(metric, self.FR_id[np.random.permutation(self.FR_id.shape[0]),:])['vector'] for _ in range(num_perm)])
+                self.monkey_DM_v = utils_similarity.selectivity_analysis_calculation(metric, self.FR_id)['vector']
+                self.monkey_DM_v_perm = np.array([utils_similarity.selectivity_analysis_calculation(metric, self.FR_id[np.random.permutation(self.FR_id.shape[0]),:])['vector'] for _ in range(num_perm)])
         
                 # for temporal PSTH
-                self.monkey_DM_v_temporal = np.array([selectivity_analysis_calculation(metric, self.psth_id[_, :, :])['vector'] for _ in range(self.psth_id.shape[0])])
-                self.monkey_DM_v_perm_temporal = np.array([np.array([selectivity_analysis_calculation(metric, self.psth_id[t, np.random.permutation(self.FR_id.shape[0]), :])['vector'] for _ in range(num_perm)]) for t in range(self.psth_id.shape[0])])
-    
+                self.monkey_DM_v_temporal = np.array([utils_similarity.selectivity_analysis_calculation(metric, self.psth_id[_, :, :])['vector'] for _ in range(self.psth_id.shape[0])])
+                self.monkey_DM_v_perm_temporal = np.array([np.array([utils_similarity.selectivity_analysis_calculation(metric, self.psth_id[t, np.random.permutation(self.FR_id.shape[0]), :])['vector'] for _ in range(num_perm)]) for t in range(self.psth_id.shape[0])])
+                
+                # --- seal data
                 results.update({
                     metric: {
                     'monkey_DM_v': self.monkey_DM_v,     # (1225,)
@@ -1784,58 +2018,7 @@ class Monkey_Neuron_Records_Process():
             plt.tight_layout()
             plt.savefig(os.path.join(self.bio_root, f'{title}.png'))
         
-# ======================================================================================================================    
-#FIXME - consider the sclading problem of Euclidean distance, also the probolem of multi-save
-def selectivity_analysis_calculation(metric: str, feature: np.array):
-    """
-        based on [metric] to calculate
-    """
-    
-    similarity_dict = {}
-    
-    if 'euclidean' in metric.lower():
-        similarity_value = pdist(feature, 'euclidean')     # (1225,)
-        similarity_matrix = squareform(similarity_value)     # (50, 50)
-        
-        similarity_dict.update({
-            'vector': similarity_value,     # for RSA
-            'matrix': similarity_matrix,     # for plot
-            'contains_nan': False,     # by default, pdist() can receive null input and generate 0 rather NaN as output
-            'num_units': feature.shape[1]
-            })
-    
-    elif 'pearson' in metric.lower():
-        with warnings.catch_warnings():
-            warnings.simplefilter(action='ignore')
-            
-            if feature.shape[1] == 0:
-                similarity_dict = None
-            
-            else:
-                similarity_matrix = np.corrcoef(feature)
-                
-                if np.any(np.isnan(similarity_matrix)):     # when detecting NaN value, i.e. the values of one class are identical
-                    similarity_dict.update({'contains_nan': True})
-                    similarity_matrix[np.isnan(similarity_matrix)] = 0
-                    
-                else:
-                    similarity_dict.update({'contains_nan': False})
-                    
-                DSM = (1 - similarity_matrix)/2     # SM [-1, 1] -> DSM [0, 1]
-                similarity_value = Square2Tri(DSM)     # (1225,)
-    
-                similarity_dict.update({
-                    'vector': similarity_value,     # for RSA
-                    'matrix': DSM,     # for plot
-                    'num_units': feature.shape[1]
-                    })
-    
-    else:
-        raise RuntimeError(f'[Coderror] {metric} not supported')
-    
-    return similarity_dict
-        
-        
+ 
 # ======================================================================================================================    
 def plot_PSTH(fig, ax, PSTH, title=None, time_point=None, time_start=None, time_end=None):
     """
@@ -1862,26 +2045,7 @@ def plot_PSTH(fig, ax, PSTH, title=None, time_point=None, time_start=None, time_
     ax.set_title(title, fontsize=24)
     
     #plt.close()
-    
-def Square2Tri(DSM):
-    """
-        in python, the squareform() function can convert an array to square or vice versa, 
-        but need to make sure the matrix is symmetrical and 0 diagonal values
-    """
-    # original version
-    #M_z = 1 - np.arctanh(DSM)
-    #V = np.triu(M_z, k=1).T
-    #V = V[V!=0]     # what if the 0 value exists in the upper triangle
-    
-    DSM_z = np.arctanh(DSM)
-    DSM_z = (DSM_z+DSM_z.T)/2
-    for _ in range(DSM.shape[0]):
-        DSM_z[_,_]=0
-    V = squareform(DSM_z)
-    # -----
-    
-    return V
-            
+          
 # ======================================================================================================================
 def calculate_firing_rate(time_stamps, session_idx, all_periods, time_window, num_frames, PSTH_start, time_step=50):
     """

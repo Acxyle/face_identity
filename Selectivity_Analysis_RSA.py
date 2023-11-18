@@ -31,11 +31,12 @@ from collections import Counter
 from joblib import Parallel, delayed
 from itertools import chain
 
+
 import spiking_vgg, spiking_resnet, sew_resnet
 from spikingjelly.activation_based import surrogate, neuron, functional
 
 from scipy.spatial.distance import pdist, squareform
-from scipy.stats import pearsonr, spearmanr, kendalltau
+from scipy.stats import pearsonr, spearmanr, kendalltau, ttest_ind
 from scipy.sparse import issparse
 from statsmodels.stats.multitest import multipletests
 
@@ -63,7 +64,6 @@ class Selectiviy_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sele
     #FIXME
     def __init__(self, 
                  NN_root,
-                 metric,
                  layers=None, neurons=None):
         
         Monkey_Neuron_Records_Process.__init__(self, )
@@ -79,52 +79,54 @@ class Selectiviy_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sele
         self.layers = layers
         self.neurons = neurons
         
-        self.metric = metric     # euclidean needs to consider scaling
-        self.correlation_matrix = utils_.pickle_load(os.path.join(self.dest, f'(Dis)Similarity_Matrix/{self.metric}/{self.metric}.pkl'))
-        
         self.RSA_root = os.path.join(self.dest, 'RSA')
         utils_.make_dir(self.RSA_root)
+        utils_.make_dir(os.path.join(self.RSA_root, 'Monkey'))
         
-        self.save_root = os.path.join(self.RSA_root, 'Monkey')
-        utils_.make_dir(self.save_root)
-        
-        self.save_root = os.path.join(self.RSA_root, 'Monkey', f'{self.metric}')
-        utils_.make_dir(self.save_root)
-        
-        
+
     #FIXME
-    def monkey_neuron_analysis(self):
-        
-        print('[Codinfo] Excuting monkey neuron analysis...')
+    def monkey_neuron_analysis(self, metrics:list[str]=None):
         
         #FIXME ----- usful but hard to read
         monkey_DM_dict = self.monkey_neuron_DSM_process()     # inherit from 'Monkey_Neuron_Records_Process'
-        
-        self.monkey_DM_v = monkey_DM_dict[self.metric]['monkey_DM_v']
-        self.monkey_DM_v_perm = monkey_DM_dict[self.metric]['monkey_DM_v_perm']
-        self.monkey_DM_v_temporal = monkey_DM_dict[self.metric]['monkey_DM_v_temporal']
-        self.monkey_DM_v_perm_temporal = monkey_DM_dict[self.metric]['monkey_DM_v_perm_temporal']
-        self.FR_id = monkey_DM_dict[self.metric]['FR_id']
-        self.psth_id = monkey_DM_dict[self.metric]['psth_id']
-        
-        RSA_dict = self.representational_similarity_analysis()
-        
-        extent = [self.ts.min()-5, self.ts.max()+5, -0.5, RSA_dict['similarity_temporal'].shape[0]-0.5]
-        
-        # --- all units
-        self.plot_static_correlation(self.layers, RSA_dict, title=f'RSA Score {self.model_structure} (all layers) {self.metric}')
-        self.plot_temporal_correlation(self.layers, RSA_dict, title=f'RSA Score temporal {self.model_structure} (all layers) {self.metric}', extent=extent)
-        
-        # --- imaginary neurons
-        idx, layer_n, _ = utils_.imaginary_neurons_vgg(self.layers, self.neurons)
-        
-        RSA_dict_neuron = {_:RSA_dict[_][idx] for _ in RSA_dict.keys()}
-        
-        self.plot_static_correlation(layer_n, RSA_dict_neuron, title=f'RSA Score {self.model_structure} (neuron) {self.metric}')
-        self.plot_temporal_correlation(layer_n, RSA_dict_neuron, title=f'RSA Score temporal {self.model_structure} (neuron) {self.metric}', extent=extent)
-        
-        # --- example correlation
-        self.plot_correlation_example(RSA_dict['similarity'])
+
+        for metric in metrics:
+            
+            print(f'[Codinfo] Excuting monkey neuron analysis for [{metric}]...')
+            
+            self.metric = metric     # euclidean needs to consider scaling
+            self.correlation_matrix = utils_.pickle_load(os.path.join(self.dest, f'(Dis)Similarity_Matrix/{self.metric}/{self.metric}.pkl'))
+            
+            self.save_root = os.path.join(self.RSA_root, 'Monkey', f'{self.metric}')
+            utils_.make_dir(self.save_root)
+            
+            # --- init
+            self.monkey_DM_v = monkey_DM_dict[self.metric]['monkey_DM_v']
+            self.monkey_DM_v_perm = monkey_DM_dict[self.metric]['monkey_DM_v_perm']
+            self.monkey_DM_v_temporal = monkey_DM_dict[self.metric]['monkey_DM_v_temporal']
+            self.monkey_DM_v_perm_temporal = monkey_DM_dict[self.metric]['monkey_DM_v_perm_temporal']
+            self.FR_id = monkey_DM_dict[self.metric]['FR_id']
+            self.psth_id = monkey_DM_dict[self.metric]['psth_id']
+            
+            # ---
+            RSA_dict = self.representational_similarity_analysis()
+            extent = [self.ts.min()-5, self.ts.max()+5, -0.5, RSA_dict['similarity_temporal'].shape[0]-0.5]
+            
+            # --- all units
+            self.plot_static_correlation(np.arange(len(self.layers)), self.layers, RSA_dict, title=f'RSA Score {self.model_structure} (all layers) {self.metric}')
+            self.plot_temporal_correlation(np.arange(len(self.layers)), self.layers, RSA_dict, title=f'RSA Score temporal {self.model_structure} (all layers) {self.metric}', extent=extent)
+            
+            # --- imaginary neurons
+            idx, layer_n, _ = utils_.imaginary_neurons_vgg(self.layers, self.neurons)
+            
+            RSA_dict_neuron = {_:RSA_dict[_][idx] for _ in RSA_dict.keys()}
+            extent = [self.ts.min()-5, self.ts.max()+5, -0.5, RSA_dict_neuron['similarity_temporal'].shape[0]-0.5]
+            
+            self.plot_static_correlation(idx, layer_n, RSA_dict_neuron, title=f'RSA Score {self.model_structure} (neuron) {self.metric}')
+            self.plot_temporal_correlation(idx, layer_n, RSA_dict_neuron, title=f'RSA Score temporal {self.model_structure} (neuron) {self.metric}', extent=extent)
+            
+            # --- example correlation
+            self.plot_correlation_example(RSA_dict['similarity'])
         
     def representational_similarity_analysis(self, alpha=0.05, num_perm=1000, FDR_method:str='fdr_bh'):
         """
@@ -221,7 +223,7 @@ class Selectiviy_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sele
         p_perm_temporal[t] = np.mean(r_perm > r)
     
     #FIXME - make it useful for both Human and Monkey
-    def plot_static_correlation(self, layers, RSA_dict, title=None, error_control_measure='sig_FDR', error_area=True, norm_plot:list[float]=None):
+    def plot_static_correlation(self, idx, layers, RSA_dict, title=None, error_control_measure='sig_FDR', error_area=True, legend=False, vlim:list[float]=None):
         
         """
             this function plot static RSA score and save
@@ -251,16 +253,17 @@ class Selectiviy_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sele
                 figsize = (8,5)
                 
             fig, ax = plt.subplots(figsize=figsize)
-            
-            plot_static_correlation(ax, RSA_dict, error_control_measure, title, error_area, norm_plot)
-    
+                
+            plot_static_correlation(layers, ax, RSA_dict, title=title, vlim=vlim, legend=False)
+            utils_similarity.fake_legend_describe_numpy(RSA_dict['similarity'], ax)
+
             plt.tight_layout(pad=1)
             plt.savefig(os.path.join(self.save_root, f'{title}.png'), bbox_inches='tight')
             plt.savefig(os.path.join(self.save_root, f'{title}.eps'), bbox_inches='tight')   
             #plt.show()
             plt.close()
     
-    def plot_temporal_correlation(self, layers, RSA_dict, title=None, error_control_measure='sig_temporal_FDR', vlim:list[float]=None, extent:list[float]=None):
+    def plot_temporal_correlation(self, idx, layers, RSA_dict, title=None, error_control_measure='sig_temporal_FDR', vlim:list[float]=None, extent:list[float]=None):
         """
             function
             
@@ -278,10 +281,11 @@ class Selectiviy_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sele
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore')
             
-            fig, ax = plt.subplots(figsize=(np.array(RSA_dict['similarity_temporal'].T.shape)/5))
+            fig, ax = plt.subplots(figsize=(np.array(RSA_dict['similarity_temporal'].T.shape)/3.7))
             
-            plot_temporal_correlation(fig, ax, RSA_dict, error_control_measure, title, vlim, extent)
-                    
+            plot_temporal_correlation(layers, fig, ax, RSA_dict, title=title, vlim=vlim, extent=extent)
+            utils_similarity.fake_legend_describe_numpy(RSA_dict['similarity_temporal'], ax)
+            
             plt.tight_layout(pad=1)
             
             plt.savefig(os.path.join(self.save_root, f'{title}.png'))
@@ -713,7 +717,7 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
                 
             fig, ax = plt.subplots(figsize=figsize)
             
-            plot_static_correlation(ax, layers, RSA_dict, error_control_measure, title, error_area, False, norm_plot)
+            plot_static_correlation(layers, ax, RSA_dict, title=title, legend=False)
             utils_similarity.fake_legend_describe_numpy(RSA_dict['similarity'], ax)
     
             plt.tight_layout(pad=1)
@@ -746,6 +750,7 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
             fig, ax = plt.subplots(figsize=(np.array(RSA_dict['similarity_temporal'].T.shape)/5))
             
             plot_temporal_correlation(layers, fig, ax, RSA_dict, error_control_measure, title, vlim, extent)
+            utils_similarity.fake_legend_describe_numpy(RSA_dict['similarity_temporal'], ax)
                     
             plt.tight_layout(pad=1)
             
@@ -814,7 +819,7 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
                     utils_similarity.fake_legend_describe_numpy(RSA_dict['similarity'], axes[row_idx, col_idx])
                     # ---
                     
-                    plot_static_correlation(axes[row_idx, col_idx], layers, RSA_dict, norm_vlim=[hyper_vmin-0.1*hyper_radius, hyper_vmax+0.2*hyper_radius])
+                    plot_static_correlation(layers, axes[row_idx, col_idx], RSA_dict, vlim=[hyper_vmin-0.1*hyper_radius, hyper_vmax+0.2*hyper_radius])
 
                     axes[row_idx, col_idx].set_xticks([0, c_to_l_idx, len(layers)-1])
                     axes[row_idx, col_idx].set_xticklabels([0, f'{(c_to_l_idx+1)/len(layers):.1f}', 1], rotation='horizontal')
@@ -969,7 +974,7 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
         return hyper_RSA_dict_metric
 
 # ======================================================================================================================
-def plot_static_correlation(ax, layers, RSA_dict, error_control_measure='sig_FDR', title=None, error_area=True, legend=True, norm_vlim:list[float]=None):
+def plot_static_correlation(layers, ax, RSA_dict, error_control_measure='sig_FDR', title=None, error_area=True, vlim:list[float]=None, legend=True):
     
     plot_x = range(len(layers))
     
@@ -1010,12 +1015,12 @@ def plot_static_correlation(ax, layers, RSA_dict, error_control_measure='sig_FDR
     
     y_radius = np.max(RSA_dict['similarity'][~np.isnan(RSA_dict['similarity'])])
     
-    if not norm_vlim:
+    if not vlim:
         ax.set_ylim([np.min(RSA_dict['similarity'][~np.isnan(RSA_dict['similarity'])])-0.1*y_radius, 1.2*y_radius])
     else:
-        ax.set_ylim(norm_vlim)
+        ax.set_ylim(vlim)
 
-def plot_temporal_correlation(layers, fig, ax, RSA_dict, error_control_measure=None, title=None, vlim:list[float]=None, extent:list[float]=None, colorbar=True):
+def plot_temporal_correlation(layers, fig, ax, RSA_dict, error_control_measure='sig_FDR', title=None, vlim:list[float]=None, extent:list[float]=None, colorbar=True):
     
     if not vlim:
         cax = ax.imshow(RSA_dict['similarity_temporal'], aspect='auto', extent=extent)
@@ -1025,8 +1030,8 @@ def plot_temporal_correlation(layers, fig, ax, RSA_dict, error_control_measure=N
         cax = ax.imshow(RSA_dict['similarity_temporal'], aspect='auto', vmin=vlim[0], vmax=vlim[1], extent=extent)
         if colorbar:
             fig.colorbar(cax, ax=ax)
-    
-    ax.set_yticks(np.arange(RSA_dict[error_control_measure].shape[0]), list(reversed(layers)), fontsize=10)
+            
+    ax.set_yticks(np.arange(RSA_dict['similarity_temporal'].shape[0]), list(reversed(layers)), fontsize=10)
     ax.set_xlabel('Time (ms)')
     ax.tick_params(axis='x', labelsize=12)
     ax.set_title(f'{title}')
@@ -1043,8 +1048,194 @@ def spearmanr_(human_DM_v, NN_DM_v):
         rho = spearmanr(human_DM_v, NN_DM_v, nan_policy='omit').statistic
         
     return rho
+    
+# ======================================================================================================================
+#FIXME 5-folds model training required
+class similarity_scores_comparison_base():
+    
+    """
+        [warning] the file storage is specialized for local RTX4090 machine, need to adjust for other storage format
+    """
+    
+    def __init__(self, root:str=None, method='RSA', folders:list[str]=None, primate:str=None, 
+                 metrics:list[str]=None, cell_types:list[str]=None, used_id_nums:list[str]=None):
+        super().__init__()
+        
+        # ----- init
+        utils_.make_dir(os.path.join(root, 'Face Identity - similarity'))
+        utils_.make_dir(os.path.join(root, 'Face Identity - similarity', f'{method}'))
+        
+        self.similarity_save_root = os.path.join(root, 'Face Identity - similarity', f'{method}', f'{primate}')
+        utils_.make_dir(self.similarity_save_root)
+        
+        self.root = root
+        self.method = method
+        self.folders = folders
+        self.primate = primate
 
+        self.metrics = metrics
+        self.cell_types = cell_types
+        self.used_id_nums = used_id_nums
 
+    def _statistical_calculation(self, ):
+        
+        self.rsa_scores_dicts = {_:self.rsa_dicts[_]['similarity'][self.rsa_dicts[_]['sig_FDR'].astype(bool)].ravel() for _ in self.rsa_dicts.keys()}
+        self.rsa_scores_temporal_dicts = {_:self.rsa_dicts[_]['similarity_temporal'][self.rsa_dicts[_]['sig_temporal_FDR'].astype(bool)].ravel() for _ in self.rsa_dicts.keys()}
+        
+        groups = [[2,0], [2,1], [2,3], [2,4], [2,5], [2,6]]
+        
+        rsa_scores_dicts_merge = {'static': self.rsa_scores_dicts, 'temporal': self.rsa_scores_temporal_dicts}
+        
+        for rsa_scores_dict_key, rsa_scores_dict in rsa_scores_dicts_merge.items():
+            
+            self.ttest_ind_results = [ttest_ind(rsa_scores_dict[list(rsa_scores_dict.keys())[_[0]]], rsa_scores_dict[list(rsa_scores_dict.keys())[_[1]]]) for _ in groups]
+            self.ttest_ind_statistics, self.ttest_ind_p_values, self.ttest_ind_df = [_.statistic for _ in self.ttest_ind_results], [_.pvalue for _ in self.ttest_ind_results], [_.df for _ in self.ttest_ind_results]
+            
+            self._plot(rsa_scores_dict_key, rsa_scores_dict)
+        
+        
+    def _plot(self, ):
+        
+        print('6')
+        
+class Monkey_similarity_scores_comparison(similarity_scores_comparison_base):
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        
+        for self.metric in self.metrics:
+            
+            self.similarity_save_root_comparison = os.path.join(self.similarity_save_root, f'{self.metric}')
+            utils_.make_dir(self.similarity_save_root_comparison)
+            
+            self.rsa_dicts = {}
+            
+            for folder in self.folders:
+            
+                file_path = os.path.join(self.root, f'{folder}/Analysis/RSA/{self.primate}/{self.metric}/RSA_results_{self.metric}.pkl')
+                
+                self.rsa_dicts.update({
+                    folder: utils_.pickle_load(file_path)
+                    })
+            
+            # ---
+            self._statistical_calculation()
+    
+    def _plot(self, rsa_scores_dict_key, rsa_scores_dict):
+        
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        plt.rcParams.update({'font.size': 14})
+        
+        fig, ax = plt.subplots(figsize=(10,6))
+        
+        means = [np.mean(rsa_scores_dict[_]) for _ in rsa_scores_dict.keys()]
+        stds = [np.std(rsa_scores_dict[_]) for _ in rsa_scores_dict.keys()]
+        
+        for idx, _ in enumerate(means):
+            ax.bar(idx+1, _, width=0.5)
+            ax.errorbar(idx+1, _, yerr=stds[idx], fmt='.', capsize=8, linewidth=2, color='black')
+        
+        utils_.sigstar([[3,1], [3,2], [3,4], [3,5], [3,6], [3,7]], self.ttest_ind_p_values, ax)
+        
+        ax.set_xticks(np.arange(1,8), ['Baseline', 'VGG16', 'VGG16bn', 'S 4 IF C', 'S4 LIF C', 'S 4 LIF v', 'S 16 IF C'], rotation='vertical')
+        ax.set_ylabel('Similarity Scores', fontsize=20)
+        
+        title = f'Monkey RSA {rsa_scores_dict_key} Scores Comparison (VGG) {self.metric}'
+        ax.set_title(f'{title}')
+        
+        plt.tight_layout()
+        fig.savefig(os.path.join(self.similarity_save_root_comparison, f'{title}.png'))
+        fig.savefig(os.path.join(self.similarity_save_root_comparison, f'{title}.pdf'))     
+        #plt.show()
+        plt.close()
+        
+
+class Human_similarity_scores_comparison(similarity_scores_comparison_base):
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        
+        for self.metric in self.metrics:
+            
+            utils_.make_dir(os.path.join(self.similarity_save_root, f'{self.metric}'))
+            
+            for self.cell_type in tqdm(self.cell_types, desc=f'{self.metric}'):
+                
+                utils_.make_dir(os.path.join(self.similarity_save_root, f'{self.metric}', self.cell_type))
+                
+                for self.used_id_num in self.used_id_nums:
+                    
+                    self.similarity_save_root_comparison = os.path.join(self.similarity_save_root, f'{self.metric}', self.cell_type, str(self.used_id_num))
+                    
+                    utils_.make_dir(self.similarity_save_root_comparison)
+                    
+                    self.rsa_dicts = {}
+                    
+                    for folder in self.folders:
+                
+                        file_path = os.path.join(self.root, f'{folder}/Analysis/RSA/{self.primate}/{self.metric}/{self.cell_type}/{self.used_id_num}/RSA_results_{self.metric}_{self.cell_type}_{self.used_id_num}.pkl')
+                        
+                        if not os.path.exists(file_path):
+                            self.rsa_dicts.update({
+                                folder: np.nan
+                                })
+                            
+                        else:
+                            self.rsa_dicts.update({
+                                folder: utils_.pickle_load(file_path)
+                                })
+            
+                    # ---
+                    self._statistical_calculation()
+                    
+                    
+    def _statistical_calculation(self, ):
+        
+        self.rsa_scores_dicts = {_:self.rsa_dicts[_]['similarity'][~np.isnan(self.rsa_dicts[_]['similarity'])] if self.rsa_dicts[_] is not np.nan else np.nan for _ in self.rsa_dicts.keys()}
+        self.rsa_scores_temporal_dicts = {_:self.rsa_dicts[_]['similarity_temporal'][~np.isnan(self.rsa_dicts[_]['similarity_temporal'])] if self.rsa_dicts[_] is not np.nan else np.nan for _ in self.rsa_dicts.keys()}
+        
+        groups = [[2,0], [2,1], [2,3], [2,4], [2,5], [2,6]]
+        
+        rsa_scores_dicts_merge = {'static': self.rsa_scores_dicts, 'temporal': self.rsa_scores_temporal_dicts}
+        
+        for rsa_scores_dict_key, rsa_scores_dict in rsa_scores_dicts_merge.items():
+            
+            rdsk = list(rsa_scores_dict.keys())
+            
+            self.ttest_ind_results = [ttest_ind(rsa_scores_dict[rdsk[_[0]]], rsa_scores_dict[rdsk[_[1]]]) if (rsa_scores_dict[rdsk[_[0]]] is not np.nan and rsa_scores_dict[rdsk[_[1]]] is not np.nan) else (np.nan, np.nan) for _ in groups]
+            self.ttest_ind_statistics, self.ttest_ind_p_values = [_[0] for _ in self.ttest_ind_results], [_[1] for _ in self.ttest_ind_results]
+            
+            self._plot(rsa_scores_dict_key, rsa_scores_dict)
+            
+            
+    def _plot(self, rsa_scores_dict_key, rsa_scores_dict):
+        
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        plt.rcParams.update({'font.size': 14})
+        
+        fig, ax = plt.subplots(figsize=(10,6))
+        
+        means = [np.mean(rsa_scores_dict[_]) for _ in rsa_scores_dict.keys()]
+        stds = [np.std(rsa_scores_dict[_]) for _ in rsa_scores_dict.keys()]
+        
+        for idx, _ in enumerate(means):
+            ax.bar(idx+1, _, width=0.5)
+            ax.errorbar(idx+1, _, yerr=stds[idx], fmt='.', capsize=8, linewidth=2, color='black')
+        
+        utils_.sigstar([[3,1], [3,2], [3,4], [3,5], [3,6], [3,7]], self.ttest_ind_p_values, ax)
+        
+        ax.set_xticks(np.arange(1,8), ['Baseline', 'VGG16', 'VGG16bn', 'S 4 IF C', 'S4 LIF C', 'S 4 LIF v', 'S 16 IF C'], rotation='vertical')
+        ax.set_ylabel('Similarity Scores', fontsize=20)
+        
+        title = f'Human RSA {rsa_scores_dict_key} Scores Comparison (VGG) {self.metric} {self.cell_type} {self.used_id_num}'
+        ax.set_title(f'{title}')
+        
+        plt.tight_layout()
+        fig.savefig(os.path.join(self.similarity_save_root_comparison, f'{title}.png'))
+        fig.savefig(os.path.join(self.similarity_save_root_comparison, f'{title}.pdf'))     
+        #plt.show()
+        plt.close()
+    
 # ======================================================================================================================
 def across_channel(layers):
     """
@@ -1097,7 +1288,7 @@ def across_channel(layers):
         
 if __name__ == "__main__":
     
-    model_name = 'vgg16'
+    model_name = 'vgg16_bn'
     
     model_ = vgg.__dict__[model_name](num_classes=50)
     layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, model_name)
@@ -1105,17 +1296,29 @@ if __name__ == "__main__":
     root_dir = '/home/acxyle-workstation/Downloads/'
 
     #for monkey experiments
-    #test = Selectiviy_Analysis_Correlation_Monkey(
-    #    NN_root=os.path.join(root_dir, 'Face Identity Baseline'), metric='pearson',
-    #    layers=layers, neurons=neurons)
-    
-    #test.monkey_neuron_analysis()
+    #test = Selectiviy_Analysis_Correlation_Monkey(NN_root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622'), layers=layers, neurons=neurons)
+    #test.monkey_neuron_analysis(metrics=['euclidean', 'pearson'])
     
     # for human experiments 
-    test = Selectiviy_Analysis_Correlation_Human(
-        NN_root=os.path.join(root_dir, 'Face Identity VGG16'), 
-        layers=layers, neurons=neurons)
+    #test = Selectiviy_Analysis_Correlation_Human(NN_root=os.path.join(root_dir, 'Face Identity VGG16'), layers=layers, neurons=neurons)
     
-    test.human_neuron_analysis()
-    test.human_NN_RSA_plot_assemble()
+    #test.human_neuron_analysis()
+    #test.human_NN_RSA_plot_assemble()
     
+    #for model comparison
+    primate_nn_comparison = Human_similarity_scores_comparison(root=root_dir,
+                                                               primate='Human',
+                                                              folders=['Face Identity Baseline', 'Face Identity VGG16', 'Face Identity VGG16bn', 
+                                                                      'Face Identity SpikingVGG16bn_IF_T4_CelebA2622',
+                                                                      'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622',
+                                                                      'Face Identity SpikingVGG16bn_LIF_T4_vggface',
+                                                                      'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622'],  
+                                                              metrics=['euclidean', 'pearson'], 
+                                                              cell_types=['qualified', 'selective', 'non_selective',
+                                                                          'sensitive', 'non_sensitive', 'encode', 'non_encode', 
+                                                                          'all_sensitive_si', 'all_sensitive_mi',
+                                                                          'sensitive_si', 'sensitive_wsi', 'sensitive_mi', 'sensitive_wmi', 'sensitive_non_encode',
+                                                                          'non_sensitive_si', 'non_sensitive_wsi', 'non_sensitive_mi', 'non_sensitive_wmi', 'non_sensitive_non_encode'],
+                                                              used_id_nums=[50, 10],
+                                                              )
+    #primate_nn_comparison._statistical_calculation()

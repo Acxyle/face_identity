@@ -64,9 +64,9 @@ class Selectiviy_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sele
     #FIXME
     def __init__(self, 
                  NN_root,
-                 layers=None, neurons=None):
+                 layers=None, neurons=None, seed=6):
         
-        Monkey_Neuron_Records_Process.__init__(self, )
+        Monkey_Neuron_Records_Process.__init__(self, seed=seed)
         Selectiviy_Analysis_SM.__init__(self, root=NN_root, layers=layers, neurons=neurons)
         
         self.root = os.path.join(NN_root, 'Features/')     # <- folder for feature maps, which should be generated before analysis
@@ -87,10 +87,9 @@ class Selectiviy_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sele
     #FIXME
     def monkey_neuron_analysis(self, metrics:list[str]=None):
         
-        #FIXME ----- usful but hard to read
-        monkey_DM_dict = self.monkey_neuron_DSM_process()     # inherit from 'Monkey_Neuron_Records_Process'
-
         for metric in metrics:
+
+            monkey_DM_dict = self.monkey_neuron_DSM_process([metric])     # inherit from 'Monkey_Neuron_Records_Process'
             
             print(f'[Codinfo] Excuting monkey neuron analysis for [{metric}]...')
             
@@ -101,12 +100,12 @@ class Selectiviy_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sele
             utils_.make_dir(self.save_root)
             
             # --- init
-            self.monkey_DM_v = monkey_DM_dict[self.metric]['monkey_DM_v']
-            self.monkey_DM_v_perm = monkey_DM_dict[self.metric]['monkey_DM_v_perm']
-            self.monkey_DM_v_temporal = monkey_DM_dict[self.metric]['monkey_DM_v_temporal']
-            self.monkey_DM_v_perm_temporal = monkey_DM_dict[self.metric]['monkey_DM_v_perm_temporal']
-            self.FR_id = monkey_DM_dict[self.metric]['FR_id']
-            self.psth_id = monkey_DM_dict[self.metric]['psth_id']
+            self.monkey_DM_v = monkey_DM_dict['monkey_DM_v']
+            self.monkey_DM_v_perm = monkey_DM_dict['monkey_DM_v_perm']
+            self.monkey_DM_v_temporal = monkey_DM_dict['monkey_DM_v_temporal']
+            self.monkey_DM_v_perm_temporal = monkey_DM_dict['monkey_DM_v_perm_temporal']
+            self.FR_id = monkey_DM_dict['FR_id']
+            self.psth_id = monkey_DM_dict['psth_id']
             
             # ---
             RSA_dict = self.representational_similarity_analysis()
@@ -186,16 +185,25 @@ class Selectiviy_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sele
         return RSA_dict
     
     #FIXME - for different types of units
-    def rsa_computation_layer(self, layer, neuron_type='all', num_perm=1000):    
+    def rsa_computation_layer(self, layer, neuron_type='qualified', num_perm=1000):    
+        
+        """
+            1. constant permutation results (default)
+            2. random permutation each time, need to manually change the seed to None, otherwise it will be similiar with 
+            the first one if the seed was kept
+            
+            Those two merely have tiny differences
+        """
         
         NN_DM_v = self.correlation_matrix[layer][neuron_type]['vector']     # (1225,)
         
         # ----- static
-        corr_coef = spearmanr(self.monkey_DM_v, NN_DM_v, nan_policy='raise').statistic
+        corr_coef = spearmanr(self.monkey_DM_v, NN_DM_v, nan_policy='omit').statistic
         
-        # --- 1st is a constant permutation results; 2nd is for random permutation each time
-        #corr_coef_perm = np.array([spearmanr(self.monkey_DM_v_perm[_, :], NN_DM_v, nan_policy='raise').statistic for _ in range(num_perm)])     # (1000,)
-        corr_coef_perm = np.array([spearmanr(utils_similarity.selectivity_analysis_calculation(self.metric, self.FR_id[np.random.permutation(self.FR_id.shape[0]),:])['vector'], NN_DM_v, nan_policy='raise').statistic for _ in range(num_perm)])
+        # --- 1, default constant permutation results
+        corr_coef_perm = np.array([spearmanr(self.monkey_DM_v_perm[_, :], NN_DM_v, nan_policy='omit').statistic for _ in range(num_perm)])     # (1000,)
+        # --- 2, different permutation indices for layers
+        #corr_coef_perm = np.array([spearmanr(utils_similarity.selectivity_analysis_calculation(self.metric, self.FR_id[np.random.permutation(self.FR_id.shape[0]),:])['vector'], NN_DM_v, nan_policy='omit').statistic for _ in range(num_perm)])
         
         p_perm = np.mean(corr_coef_perm > corr_coef)     # equal to: np.sum(corr_coef_perm > corr_coef)/num_perm
     
@@ -214,10 +222,10 @@ class Selectiviy_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sele
     
     def rsa_computation_layer_dynamic(self, NN_DM_v, t, corr_coef_temporal, corr_coef_perm_temporal, p_perm_temporal, num_perm=1000):
         
-        r = spearmanr(self.monkey_DM_v_temporal[t,:], NN_DM_v, nan_policy='raise').statistic
+        r = spearmanr(self.monkey_DM_v_temporal[t,:], NN_DM_v, nan_policy='omit').statistic
         corr_coef_temporal[t] = r
         
-        r_perm = np.array([spearmanr(self.monkey_DM_v_perm_temporal[t, _, :], NN_DM_v, nan_policy='raise').statistic for _ in range(num_perm)])      # (1000,)
+        r_perm = np.array([spearmanr(self.monkey_DM_v_perm_temporal[t, _, :], NN_DM_v, nan_policy='omit').statistic for _ in range(num_perm)])      # (1000,)
         corr_coef_perm_temporal[t,:] = r_perm
         
         p_perm_temporal[t] = np.mean(r_perm > r)
@@ -294,7 +302,7 @@ class Selectiviy_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sele
             plt.close()
                 
     #FIXME
-    def plot_correlation_example(self, similarity, neuron_type='all', attach_psth:bool=False):
+    def plot_correlation_example(self, similarity, neuron_type='qualified', attach_psth:bool=False):
         """
             this function plot with fig definition and ax addition
         """
@@ -423,7 +431,11 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
         utils_.make_dir(self.save_root)
         
  
-    def human_neuron_analysis(self, metrics=['euclidean', 'pearson'], 
+    def human_neuron_analysis(self, 
+                              metrics=[
+                                          'euclidean', 
+                                          'pearson'
+                                          ], 
                               cell_types=[
                                           'qualified', 'selective', 'non_selective',
                                           'sensitive', 'non_sensitive', 'encode', 'non_encode', 
@@ -431,16 +443,25 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
                                           'sensitive_si', 'sensitive_wsi', 'sensitive_mi', 'sensitive_wmi', 'sensitive_non_encode',
                                           'non_sensitive_si', 'non_sensitive_wsi', 'non_sensitive_mi', 'non_sensitive_wmi', 'non_sensitive_non_encode'
                                           ], 
-                              used_id_nums=[50, 10]):
+                              used_id_nums=[
+                                            50, 
+                                            10
+                                            ]):
         """
             [task] should make it clear what is bin_size and step_size
             [warning] this is test version now, merged process here, including plot and calculation
+            [update] [Nov 22, 2023] looks like the results are same with MATLAB version now
         """
         # --- additional parameters
+        print(f'[Codinfo] Processing RSA for Human and NN ({self.model_structure})')
+        
         ...
+        self._human_neuron_RSA_analysis_legacy()
         
         # --- RSA
         self.human_neuron_RSA_analysis(metrics, cell_types, used_id_nums)
+        
+    
          
     #FIXME use for loop for different type of cells and used_ids
     def human_neuron_RSA_analysis(self, metrics:list[str]=None, cell_types:list[str]=None, used_id_nums:list[int]=None):
@@ -464,62 +485,74 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
                 
                 for used_id_num in used_id_nums:
                     
-                    self.save_root_ids = os.path.join(self.save_root_cell_type, str(used_id_num))
-                    utils_.make_dir(self.save_root_ids)
+                    self.save_root_comparison = os.path.join(self.save_root_cell_type, str(used_id_num))
+                    utils_.make_dir(self.save_root_comparison)
                     
-                    # --- from Human_Neuron_Records_Process
-                    selected_ids, human_DM_dict = self.human_neuron_DSM_process_sub_id(metric, used_cell_type, used_id_num)
-                    
-                    if human_DM_dict is None:
-                        print(f'[Codinfo] No cell of {used_cell_type}')
-                        pass
-                    else:
-                        self.human_NN_RSA_analysis(metric, human_DM_dict, selected_ids, used_id_num, used_cell_type)
-                
+                    # --- entrance 
+                    self.human_NN_RSA_analysis(metric, used_cell_type, used_id_num)
 
     # ------------------------------------------------------------------------------------------------------------------
-    def human_NN_RSA_analysis(self, metric, human_DM_dict, selected_ids, used_id_num, used_cell_type):
+    def human_NN_RSA_analysis(self, metric:str=None, used_cell_type:str=None, used_id_num:int=None):
         """
-        
+            input:
+                
         """
-
-        # --- calculation
-        human_NN_corr_dict = self.human_NN_RSA_analysis_sub_id(metric, human_DM_dict, selected_ids, used_id_num, used_cell_type)
-
-        # --- plot - all layers
+        # ----- load Human data
+        selected_ids, human_DM_dict = self.human_neuron_DSM_process_sub_id([metric], [used_cell_type], [used_id_num])
         
-        print(f'[Codinfo] Ploting Single plot for {self.model_structure} {metric} {used_cell_type} {used_id_num}...')
+        # ------ load NN data
+        NN_DM_dict = self._NN_unit_DSM_process_sub_id(metric, used_cell_type)
         
-        self.human_NN_RSA_analysis_sub_id_plot(
-            self.layers,
-            human_NN_corr_dict,
-            used_cell_type, used_id_num,
-            title=f'Human-NN RSA Score {self.model_structure} (all layers) {metric}_{used_cell_type}_{used_id_num}')
-        
-        self.human_neuron_RSA_temporal_plot(
-            self.layers,
-            human_NN_corr_dict,
-            used_cell_type, used_id_num,
-            title=f'Human-NN RSA Score temporal\n{self.model_structure} (all layers) {metric}_{used_cell_type}_{used_id_num}')
+        if human_DM_dict is None or NN_DM_dict is None:
+            print(f'[Codinfo] No cell or unit of {used_cell_type}')
+            return
+            
+        else:
+            # --- load NN data
+            human_NN_corr_dict = self.human_NN_RSA_analysis_sub_id(metric, selected_ids, used_id_num, used_cell_type, human_DM_dict, NN_DM_dict)
     
-        # --- plot - neurons
-        idx, layers_n, _ = utils_.imaginary_neurons_vgg(self.layers, self.neurons)
-        human_NN_corr_dict_neuron = {_:human_NN_corr_dict[_][idx] for _ in human_NN_corr_dict.keys()}
+            # --- plot - all layers
+            print(f'[Codinfo] Ploting Single plot for {self.model_structure} {metric} {used_cell_type} {used_id_num}...')
+            self.human_NN_RSA_analysis_sub_id_plot(
+                self.layers,
+                human_NN_corr_dict,
+                used_cell_type, used_id_num,
+                title=f'Human-NN RSA Score {self.model_structure} (all layers) {metric}_{used_cell_type}_{used_id_num}')
+            
+            self.human_neuron_RSA_temporal_plot(
+                self.layers,
+                human_NN_corr_dict,
+                used_cell_type, used_id_num,
+                title=f'Human-NN RSA Score temporal\n{self.model_structure} (all layers) {metric}_{used_cell_type}_{used_id_num}')
         
-        self.human_NN_RSA_analysis_sub_id_plot(
-            layers_n,
-            human_NN_corr_dict_neuron,
-            used_cell_type, used_id_num,
-            title=f'Human-NN RSA Score {self.model_structure} (neuron) {metric}_{used_cell_type}_{used_id_num}')
+            # --- plot - neurons
+            idx, layers_n, _ = utils_.imaginary_neurons_vgg(self.layers, self.neurons)
+            human_NN_corr_dict_neuron = {_:human_NN_corr_dict[_][idx] for _ in human_NN_corr_dict.keys()}
+            
+            self.human_NN_RSA_analysis_sub_id_plot(
+                layers_n,
+                human_NN_corr_dict_neuron,
+                used_cell_type, used_id_num,
+                title=f'Human-NN RSA Score {self.model_structure} (neuron) {metric}_{used_cell_type}_{used_id_num}')
+            
+            self.human_neuron_RSA_temporal_plot(
+                layers_n,
+                human_NN_corr_dict_neuron,
+                used_cell_type, used_id_num,
+                title=f'Human-NN RSA Score temporal\n{self.model_structure} (neuron) {metric}_{used_cell_type}_{used_id_num}')
+            
+    def _NN_unit_DSM_process_sub_id(self, metric, used_cell_type):
         
-        self.human_neuron_RSA_temporal_plot(
-            layers_n,
-            human_NN_corr_dict_neuron,
-            used_cell_type, used_id_num,
-            title=f'Human-NN RSA Score temporal\n{self.model_structure} (neuron) {metric}_{used_cell_type}_{used_id_num}')
-
+        # ----- from NN Selectivity_Analysis_SM
+        metric_dict = self.selectivity_analysis_similarity(metric)
+        
+        # ---
+        NN_DM_dict = {_:metric_dict[_][used_cell_type]['matrix'] if (metric_dict[_][used_cell_type] is not None and metric_dict[_][used_cell_type]['matrix'] is not None) else None for _ in metric_dict.keys()}
+        
+        return NN_DM_dict
+        
     #FIXME
-    def human_NN_RSA_analysis_sub_id(self, metric, human_DM_dict, selected_ids, used_id_num, used_cell_type, num_perm=1000, alpha=0.05):
+    def human_NN_RSA_analysis_sub_id(self, metric, selected_ids, used_id_num, used_cell_type, human_DM_dict, NN_DM_dict, num_perm=1000, alpha=0.05):
         """
             in practice, to avoid the unwanted asymmetric matrix, use 
                 'NN_DM[np.triu_indices(used_id_num, 1)]'
@@ -528,7 +561,7 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
             after selected sub ids
         """
         
-        save_path = os.path.join(self.save_root_ids, f'RSA_results_{metric}_{used_cell_type}_{used_id_num}.pkl')
+        save_path = os.path.join(self.save_root_comparison, f'RSA_results_{metric}_{used_cell_type}_{used_id_num}.pkl')
         
         if os.path.exists(save_path):
             
@@ -539,10 +572,6 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
         else:
             
             print(f'[Codinfo] Calculating Human-NN Similarity of [{metric}] [{used_cell_type}] [{used_id_num}]...')
-            
-            # ----- from NN Selectivity_Analysis_SM
-            metric_dict = self.selectivity_analysis_similarity(metric)
-            
             human_DM_v = human_DM_dict['human_DM_v']
             human_DM_v_temporal = human_DM_dict['human_DM_v_temporal']
             
@@ -556,13 +585,6 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
             #human_DM_v_perm_temporal = np.zeros((self.meanFR_PSTH_id.shape[0], num_perm, human_DM_v.size))     # (31, 1000, 1225)
             #for t in tqdm(range(self.meanFR_PSTH_id.shape[0]), desc='Human corr temporal'):     # for each time point
             #    human_DM_v_perm_temporal[t, :, :] = np.array([_['vector'] for _ in Parallel(n_jobs=-1)(delayed(utils_similarity.selectivity_analysis_calculation)(metric, self.meanFR_PSTH_id[t, np.random.permutation(len(selected_ids))]) for _ in range(num_perm))])
-            
-            # ---
-            if used_cell_type == 'qualified':
-                NN_DM_dict = {_:metric_dict[_]['all']['matrix'] for _ in metric_dict.keys()}
-          
-            else:
-                NN_DM_dict = {_:metric_dict[_][used_cell_type]['matrix'] if (metric_dict[_][used_cell_type] is not None and metric_dict[_][used_cell_type]['matrix'] is not None) else None for _ in metric_dict.keys()}
             
             # --- init
             corr_coef = np.zeros(len(self.layers))     # (num_layers,)
@@ -718,11 +740,11 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
             fig, ax = plt.subplots(figsize=figsize)
             
             plot_static_correlation(layers, ax, RSA_dict, title=title, legend=False)
-            utils_similarity.fake_legend_describe_numpy(RSA_dict['similarity'], ax)
+            utils_similarity.fake_legend_describe_numpy(RSA_dict['similarity'], ax, RSA_dict['sig_FDR'].astype(bool))
     
             plt.tight_layout(pad=1)
-            plt.savefig(os.path.join(self.save_root_ids, f'{title}.png'), bbox_inches='tight')
-            plt.savefig(os.path.join(self.save_root_ids, f'{title}.pdf'), bbox_inches='tight')   
+            plt.savefig(os.path.join(self.save_root_comparison, f'{title}.png'), bbox_inches='tight')
+            plt.savefig(os.path.join(self.save_root_comparison, f'{title}.pdf'), bbox_inches='tight')   
             #plt.show()
             plt.close()
         # --------
@@ -750,12 +772,12 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
             fig, ax = plt.subplots(figsize=(np.array(RSA_dict['similarity_temporal'].T.shape)/5))
             
             plot_temporal_correlation(layers, fig, ax, RSA_dict, error_control_measure, title, vlim, extent)
-            utils_similarity.fake_legend_describe_numpy(RSA_dict['similarity_temporal'], ax)
+            utils_similarity.fake_legend_describe_numpy(RSA_dict['similarity_temporal'], ax, RSA_dict['sig_temporal_FDR'].astype(bool))
                     
             plt.tight_layout(pad=1)
             
-            plt.savefig(os.path.join(self.save_root_ids, f'{title}.png'))
-            plt.savefig(os.path.join(self.save_root_ids, f'{title}.pdf'))     
+            plt.savefig(os.path.join(self.save_root_comparison, f'{title}.png'))
+            plt.savefig(os.path.join(self.save_root_comparison, f'{title}.pdf'))     
             #plt.show()
             plt.close()
             
@@ -860,8 +882,7 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
                 
                 fig.savefig(os.path.join(metric_path, f'{suptitle}_{str(len(cell_types))}_types_{postfix}'), bbox_inches='tight')
                 plt.close()
-              
-            
+
     def human_NN_RSA_plot_temporal(self, idx, layers, metrics:list[str]=None, cell_types:list[str]=None, used_id_nums:list[int]=None, 
                                  error_control_measure:str='sig_FDR', postfix=''):
         
@@ -930,7 +951,64 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
                 
                 fig.savefig(os.path.join(metric_path, f'{suptitle}_{str(len(cell_types))}_types_{postfix}'), bbox_inches='tight')
                 plt.close()
+                
+    # ------------------------------------------------------------------------------------------------------------------
+    def _human_neuron_RSA_analysis_legacy(self, 
+                                         metrics:list[str]=['pearson'],
+                                         used_id_nums:list[int]=[
+                                             50,
+                                             10
+                                             ]
+                                         ):
+        
+        """
+        
+        """
+        print('[Codinfo] Processing legacy mismatched_comparison Human Selective V.S. NN Strong Selective...')
+        
+        for metric in metrics:
             
+            utils_.make_dir(os.path.join(self.save_root, f'{metric}'))
+            utils_.make_dir(os.path.join(self.save_root, f'{metric}', '-_mismatched_comparison'))
+            utils_.make_dir(os.path.join(self.save_root, f'{metric}', '-_mismatched_comparison', 'Human Selective V.S. NN Strong Selective'))
+            
+            for used_id_num in used_id_nums:
+            
+                self.save_root_comparison = os.path.join(self.save_root, f'{metric}', '-_mismatched_comparison', 'Human Selective V.S. NN Strong Selective', str(used_id_num))
+                utils_.make_dir(self.save_root_comparison)
+                
+                human_NN_corr_dict = self._human_NN_RSA_legacy_design(metric, used_id_num, used_cell_types_pair=['selective', 'strong_selective'])
+                
+                # --- plot - all layers
+                print(f'[Codinfo] Ploting Single plot for RSA_results_{metric}_{used_id_num}_mismatched_Selective_Human_Strong_Selective_NN...')
+                self.human_NN_RSA_analysis_sub_id_plot(
+                    self.layers,
+                    human_NN_corr_dict,
+                    None, used_id_num,
+                    title=f'Human-NN RSA Score {metric}_{used_id_num}_mismatched_Selective_Human_Strong_Selective_NN (all)')
+                
+                self.human_neuron_RSA_temporal_plot(
+                    self.layers,
+                    human_NN_corr_dict,
+                    None, used_id_num,
+                    title=f'Human-NN RSA Score temporal\n{metric}_{used_id_num}_mismatched_Selective_Human_Strong_Selective_NN (all)')
+            
+                # --- plot - neurons
+                idx, layers_n, _ = utils_.imaginary_neurons_vgg(self.layers, self.neurons)
+                human_NN_corr_dict_neuron = {_:human_NN_corr_dict[_][idx] for _ in human_NN_corr_dict.keys()}
+                
+                self.human_NN_RSA_analysis_sub_id_plot(
+                    layers_n,
+                    human_NN_corr_dict_neuron,
+                    None, used_id_num,
+                    title=f'Human-NN RSA Score {metric}_{used_id_num}_mismatched_Selective_Human_Strong_Selective_NN (neuron)')
+                
+                self.human_neuron_RSA_temporal_plot(
+                    layers_n,
+                    human_NN_corr_dict_neuron,
+                    None, used_id_num,
+                    title=f'Human-NN RSA Score temporal\n{metric}_{used_id_num}_mismatched_Selective_Human_Strong_Selective_NN (neuron)')
+                
     def _human_NN_RSA_load_similarity_dict(self, idx, metric, cell_types, used_id_nums, postfix):
         
         metric_path = os.path.join(self.save_root, metric)
@@ -972,7 +1050,180 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
                 })
             
         return hyper_RSA_dict_metric
+    
+    
+    def _human_NN_RSA_legacy_design(self, metric, used_id_num, used_cell_types_pair:list[str]=None, num_perm=1000, alpha=0.05):
+        
+        """
+            this function use the legacy design to compare the Weak_encode Cells and Encode Units
+        """
+  
+        # ----- calculation
+        save_path = os.path.join(self.save_root_comparison, f'RSA_results_{metric}_{used_id_num}_mismatched_Selective_Human_Strong_Selective_NN.pkl')
+        
+        if os.path.exists(save_path):
+            
+            print(f'[Codinfo] Loading Human-NN Similarity of {metric}_{used_id_num}_mismatched_Selective_Human_Strong_Selective_NN...')
+            
+            RSA_dict = utils_.pickle_load(save_path)
+        
+        else:
+            
+            print(f'[Codinfo] Calculating Human-NN Similarity of {metric}_{used_id_num}_mismatched_Selective_Human_Strong_Selective_NN...')
+            
+            # ----- from Human, cells
+            selected_ids, human_DM_dict = self.human_neuron_DSM_process_sub_id([metric], [used_cell_types_pair[0]], [used_id_num])
+            
+            human_DM_v = human_DM_dict['human_DM_v']
+            human_DM_v_temporal = human_DM_dict['human_DM_v_temporal']
+            
+            # ----- init, perm results, method 1 can load data immediately, and method 2 demands 10 mins on 24 (6 cores)
+            # threads CPU, the two methods may have tiny differences for each time
+            # --- 1. for constant results 
+            human_DM_v_perm = human_DM_dict['human_DM_v_perm']
+            human_DM_v_perm_temporal = human_DM_dict['human_DM_v_perm_temporal']
+            # --- 2. permutation for evry time
+            #human_DM_v_perm = np.array([_['vector'] for _ in Parallel(n_jobs=-1)(delayed(utils_similarity.selectivity_analysis_calculation)(metric, self.meanFR_id[np.random.permutation(len(selected_ids))]) for _ in tqdm(range(num_perm), desc='Human corr'))])
+            #human_DM_v_perm_temporal = np.zeros((self.meanFR_PSTH_id.shape[0], num_perm, human_DM_v.size))     # (31, 1000, 1225)
+            #for t in tqdm(range(self.meanFR_PSTH_id.shape[0]), desc='Human corr temporal'):     # for each time point
+            #    human_DM_v_perm_temporal[t, :, :] = np.array([_['vector'] for _ in Parallel(n_jobs=-1)(delayed(utils_similarity.selectivity_analysis_calculation)(metric, self.meanFR_PSTH_id[t, np.random.permutation(len(selected_ids))]) for _ in range(num_perm))])
+            
+            # ----- from NN, Selectivity_Analysis_SM
+            metric_dict = self.selectivity_analysis_similarity(metric)
+            
+            NN_DM_dict = {_:metric_dict[_][used_cell_types_pair[1]]['matrix'] if (metric_dict[_][used_cell_types_pair[1]] is not None and metric_dict[_][used_cell_types_pair[1]]['matrix'] is not None) else None for _ in metric_dict.keys()}
+            
+            # --- init
+            corr_coef = np.zeros(len(self.layers))     # (num_layers,)
+            corr_coef_perm = np.zeros((len(self.layers), human_DM_v_perm.shape[0]))     # (num_layers, num_perm)
+            p_perm = np.zeros(len(self.layers))     # (num_layers,)
+            
+            corr_coef_temporal = np.zeros((len(self.layers), human_DM_v_temporal.shape[0]))     # (num_layers, num_time_steps)
+            corr_coef_perm_temporal = np.zeros((len(self.layers), *human_DM_v_perm_temporal.shape[:2]))     # (num_layers, num_time_steps, num_perm)
+            p_perm_temporal = np.zeros((len(self.layers), human_DM_v_temporal.shape[0]))     # (num_layers, num_time_steps)
+            
+            # --- similarity loop over (1) layer and (2) timestep
+            tqdm_bar = tqdm(total=len(self.layers), desc=f'Human-NN RSA {metric}_{used_id_num}_mismatched_Selective_Human_Strong_Selective_NN')
+            
+            for l_idx, layer in enumerate(self.layers, 0):     # for each layer
+                
+                NN_DM = NN_DM_dict[layer]     # select one layer -> (50,50)
+                
+                if NN_DM is None:     # abnormal detection 1: NN_DM is None
+                    
+                    corr_coef[l_idx] = np.nan
+                    corr_coef_perm[l_idx, :] = np.full((num_perm, ), np.nan)
+                    p_perm[l_idx] = np.nan
+                    
+                    corr_coef_temporal[l_idx, :] = np.full((human_DM_v_temporal.shape[0], ), np.nan)
+                    corr_coef_perm_temporal[l_idx, :, :] = np.full(human_DM_v_perm_temporal.shape[:2], np.nan)
+                    p_perm_temporal[l_idx, :] = np.full((human_DM_v_temporal.shape[0], ), np.nan)
+                    
+                else:
+                    # --- select sub ids
+                    NN_DM = NN_DM[np.ix_(selected_ids, selected_ids)]     # (50,50) -> (10,10)
+                    
+                    if metric == 'euclidean':
+                        NN_DM = NN_DM/(np.max(NN_DM[~np.isnan(NN_DM)])+1e-3)
 
+                    NN_DM_v = NN_DM[np.triu_indices(used_id_num, 1)]  # (10,10) -> (45)
+                    
+                    # --- FR (static)
+                    rho = spearmanr_(human_DM_v, NN_DM_v)     # abnormal detection 2: NN_DM_v has NaN value or constant
+                    corr_coef[l_idx] = rho
+                    
+                    pl = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(spearmanr_)(human_DM_v_perm[_, :], NN_DM_v) for _ in range(human_DM_v_perm.shape[0]))
+                    
+                    corr_coef_perm_seg = [_ for _ in pl]
+                    corr_coef_perm[l_idx, :] = corr_coef_perm_seg
+                    
+                    if np.isnan(rho):
+                        p_perm[l_idx] = np.nan
+                    else:
+                        p_perm[l_idx] = np.mean(corr_coef_perm_seg > rho)
+                    
+                    # --- PSTH (temporal)
+                    for t_idx in range(human_DM_v_temporal.shape[0]):
+                        
+                        rho_temporal = spearmanr_(human_DM_v_temporal[t_idx, :], NN_DM_v)
+                        corr_coef_temporal[l_idx, t_idx] = rho_temporal
+    
+                        pl = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(spearmanr_)(human_DM_v_perm_temporal[t_idx, _, :], NN_DM_v) for _ in range(human_DM_v_perm_temporal.shape[1]))
+                        
+                        corr_coef_perm_temporal_seg = [_ for _ in pl]
+                        corr_coef_perm_temporal[l_idx, t_idx, :] = corr_coef_perm_temporal_seg
+                        
+                        if np.isnan(rho_temporal):
+                            p_perm_temporal[l_idx, t_idx] = np.nan
+                        else:
+                            p_perm_temporal[l_idx, t_idx] = np.mean(corr_coef_perm_temporal_seg > rho_temporal)
+                
+                tqdm_bar.update(1)
+        
+            # ----- plot
+            # --- static correction (with nan alignment)
+            (_, _, alpha_Sadik, alpha_Bonf) = multipletests(p_perm, alpha=alpha, method='fdr_bh')  
+            (sig_FDR, p_FDR, _, _) = multipletests(p_perm[~np.isnan(p_perm)], alpha=alpha, method='fdr_bh')    # FDR (flase discovery rate) correction
+            
+            p_FDR_aligned = np.full_like(p_perm, np.nan)
+            sig_FDR_aligned = p_FDR_aligned.copy()
+            
+            p_FDR_aligned[~np.isnan(p_perm)] = p_FDR
+            sig_FDR_aligned[~np.isnan(p_perm)] = sig_FDR
+            
+            sig_Bonf = p_FDR_aligned<alpha_Bonf
+            
+            # --- temporal
+            p_temporal_FDR = np.zeros((len(self.layers), human_DM_v_temporal.shape[0]))     # (num_layers, num_time_steps)
+            sig_temporal_FDR =  p_temporal_FDR.copy()
+            sig_temporal_Bonf = p_temporal_FDR.copy()
+            
+            for l_idx in range(len(self.layers)):
+                
+                (_, _, alpha_Sadik_temporal, alpha_Bonf_temporal) = multipletests(p_perm_temporal[l_idx, :], alpha=alpha, method='fdr_bh')      # FDR
+                
+                if np.all(np.isnan(p_perm_temporal[l_idx, :])):
+                    p_temporal_FDR_aligned = np.full_like((p_perm_temporal[l_idx, :]), np.nan)
+                    sig_temporal_FDR_aligned = p_temporal_FDR_aligned.copy()
+                    
+                else:
+                    (sig_temporal_FDR_seg, p_temporal_FDR_seg, _, _) = multipletests(p_perm_temporal[l_idx, :][~np.isnan(p_perm_temporal[l_idx, :])], alpha=alpha, method='fdr_bh')      # FDR
+                
+                    p_temporal_FDR_aligned = np.full_like(p_perm_temporal[l_idx, :], np.nan)
+                    sig_temporal_FDR_aligned = p_temporal_FDR_aligned.copy()
+                    
+                    p_temporal_FDR_aligned[~np.isnan(p_perm_temporal[l_idx, :])] = p_temporal_FDR_seg
+                    sig_temporal_FDR_aligned[~np.isnan(p_perm_temporal[l_idx, :])] = sig_temporal_FDR_seg
+                
+                p_temporal_FDR[l_idx, :] = p_temporal_FDR_aligned
+                sig_temporal_FDR[l_idx, :] = sig_temporal_FDR_aligned
+                
+                sig_temporal_Bonf[l_idx, :] = p_temporal_FDR_aligned<alpha_Bonf_temporal     # Bonf correction
+                
+            # --- seal results
+            RSA_dict = {
+                'similarity': corr_coef,
+                'similarity_perm': corr_coef_perm,
+                'similarity_p': p_perm,
+                
+                'similarity_temporal': corr_coef_temporal,
+                'similarity_perm_temporal': corr_coef_perm_temporal,
+                'similarity_p_perm_temporal': p_perm_temporal,
+                
+                'p_FDR': p_FDR_aligned,
+                'sig_FDR': sig_FDR_aligned,
+                'sig_Bonf': sig_Bonf,
+                
+                'p_temporal_FDR': p_temporal_FDR,
+                'sig_temporal_FDR': sig_temporal_FDR,
+                'sig_temporal_Bonf': sig_temporal_Bonf,
+                }
+            
+            # --- save data
+            utils_.pickle_dump(save_path, RSA_dict)
+        
+        return RSA_dict
+    
 # ======================================================================================================================
 def plot_static_correlation(layers, ax, RSA_dict, error_control_measure='sig_FDR', title=None, error_area=True, vlim:list[float]=None, legend=True):
     
@@ -1077,8 +1328,41 @@ class similarity_scores_comparison_base():
         self.cell_types = cell_types
         self.used_id_nums = used_id_nums
 
-    def _statistical_calculation(self, ):
+    def _statistical_calculation(self, mask=None):
         
+# =============================================================================
+#         # ----- all RSA scores
+#         if mask is None:
+#         
+#             self.rsa_scores_dicts = {_:self.rsa_dicts[_]['similarity'][~np.isnan(self.rsa_dicts[_]['similarity'])].ravel() if self.rsa_dicts[_] is not np.nan else np.nan for _ in self.rsa_dicts.keys()}
+#             self.rsa_scores_temporal_dicts = {_:self.rsa_dicts[_]['similarity_temporal'][~np.isnan(self.rsa_dicts[_]['similarity_temporal'])].ravel() if self.rsa_dicts[_] is not np.nan else np.nan for _ in self.rsa_dicts.keys()}
+#         
+#         # ----- FDR correction
+#         elif 'FDR' in mask:
+#             
+#             self.rsa_scores_dicts = {_:self.rsa_dicts[_]['similarity'][self.rsa_dicts[_]['sig_FDR'].astype(bool)].ravel() if self.rsa_dicts[_] is not np.nan else np.nan for _ in self.rsa_dicts.keys()}
+#             self.rsa_scores_temporal_dicts = {_:self.rsa_dicts[_]['similarity_temporal'][self.rsa_dicts[_]['sig_temporal_FDR'].astype(bool)].ravel() if self.rsa_dicts[_] is not np.nan else np.nan for _ in self.rsa_dicts.keys()}
+#         
+#         # ----- Bonf correction
+#         elif 'Bonf' in mask:
+#             
+#             self.rsa_scores_dicts = {_:self.rsa_dicts[_]['similarity'][self.rsa_dicts[_]['sig_Bonf'].astype(bool)].ravel() if self.rsa_dicts[_] is not np.nan else np.nan for _ in self.rsa_dicts.keys()}
+#             self.rsa_scores_temporal_dicts = {_:self.rsa_dicts[_]['similarity_temporal'][self.rsa_dicts[_]['sig_temporal_Bonf'].astype(bool)].ravel() if self.rsa_dicts[_] is not np.nan else np.nan for _ in self.rsa_dicts.keys()}
+#         
+#         groups = [[2,0], [2,1], [2,3], [2,4], [2,5], [2,6]]
+#         
+#         rsa_scores_dicts_merge = {'static': self.rsa_scores_dicts, 'temporal': self.rsa_scores_temporal_dicts}
+#         
+#         for rsa_scores_dict_key, rsa_scores_dict in rsa_scores_dicts_merge.items():
+#             
+#             rdsk = list(rsa_scores_dict.keys())
+#             
+#             self.ttest_ind_results = [ttest_ind(rsa_scores_dict[rdsk[_[0]]], rsa_scores_dict[rdsk[_[1]]]) if (rsa_scores_dict[rdsk[_[0]]] is not np.nan and rsa_scores_dict[rdsk[_[1]]] is not np.nan) else (np.nan, np.nan) for _ in groups]
+#             self.ttest_ind_statistics, self.ttest_ind_p_values = [_[0] for _ in self.ttest_ind_results], [_[1] for _ in self.ttest_ind_results]
+#             
+#             self._plot(rsa_scores_dict_key, rsa_scores_dict, mask)
+# =============================================================================
+
         self.rsa_scores_dicts = {_:self.rsa_dicts[_]['similarity'][self.rsa_dicts[_]['sig_FDR'].astype(bool)].ravel() for _ in self.rsa_dicts.keys()}
         self.rsa_scores_temporal_dicts = {_:self.rsa_dicts[_]['similarity_temporal'][self.rsa_dicts[_]['sig_temporal_FDR'].astype(bool)].ravel() for _ in self.rsa_dicts.keys()}
         
@@ -1093,10 +1377,10 @@ class similarity_scores_comparison_base():
             
             self._plot(rsa_scores_dict_key, rsa_scores_dict)
         
-        
     def _plot(self, ):
         
         print('6')
+        
         
 class Monkey_similarity_scores_comparison(similarity_scores_comparison_base):
     
@@ -1163,6 +1447,10 @@ class Human_similarity_scores_comparison(similarity_scores_comparison_base):
                 
                 utils_.make_dir(os.path.join(self.similarity_save_root, f'{self.metric}', self.cell_type))
                 
+                if '-_mismatched_comparison' in self.cell_type:
+                    
+                    self._mismatched_comparison = True
+                    
                 for self.used_id_num in self.used_id_nums:
                     
                     self.similarity_save_root_comparison = os.path.join(self.similarity_save_root, f'{self.metric}', self.cell_type, str(self.used_id_num))
@@ -1172,43 +1460,41 @@ class Human_similarity_scores_comparison(similarity_scores_comparison_base):
                     self.rsa_dicts = {}
                     
                     for folder in self.folders:
-                
-                        file_path = os.path.join(self.root, f'{folder}/Analysis/RSA/{self.primate}/{self.metric}/{self.cell_type}/{self.used_id_num}/RSA_results_{self.metric}_{self.cell_type}_{self.used_id_num}.pkl')
                         
-                        if not os.path.exists(file_path):
-                            self.rsa_dicts.update({
-                                folder: np.nan
-                                })
+                        if self._mismatched_comparison:
+                            
+                            file_path = os.path.join(self.root, f'{folder}/Analysis/RSA/{self.primate}/{self.metric}/{self.cell_type}/{self.used_id_num}/RSA_results_{self.metric}_{self.used_id_num}_mismatched_Selective_Human_Strong_Selective_NN.pkl')
+                                
+                            if not os.path.exists(file_path):
+                                self.rsa_dicts.update({
+                                    folder: np.nan
+                                    })
+                                
+                            else:
+                                self.rsa_dicts.update({
+                                    folder: utils_.pickle_load(file_path)
+                                    })
                             
                         else:
-                            self.rsa_dicts.update({
-                                folder: utils_.pickle_load(file_path)
-                                })
-            
+                            
+                            file_path = os.path.join(self.root, f'{folder}/Analysis/RSA/{self.primate}/{self.metric}/{self.cell_type}/{self.used_id_num}/RSA_results_{self.metric}_{self.cell_type}_{self.used_id_num}.pkl')
+                            
+                            if not os.path.exists(file_path):
+                                self.rsa_dicts.update({
+                                    folder: np.nan
+                                    })
+                                
+                            else:
+                                self.rsa_dicts.update({
+                                    folder: utils_.pickle_load(file_path)
+                                    })
+                            
                     # ---
+                    self._statistical_calculation(mask='sig_FDR')
+                    self._statistical_calculation(mask='sig_Bonf')
                     self._statistical_calculation()
                     
-                    
-    def _statistical_calculation(self, ):
-        
-        self.rsa_scores_dicts = {_:self.rsa_dicts[_]['similarity'][~np.isnan(self.rsa_dicts[_]['similarity'])] if self.rsa_dicts[_] is not np.nan else np.nan for _ in self.rsa_dicts.keys()}
-        self.rsa_scores_temporal_dicts = {_:self.rsa_dicts[_]['similarity_temporal'][~np.isnan(self.rsa_dicts[_]['similarity_temporal'])] if self.rsa_dicts[_] is not np.nan else np.nan for _ in self.rsa_dicts.keys()}
-        
-        groups = [[2,0], [2,1], [2,3], [2,4], [2,5], [2,6]]
-        
-        rsa_scores_dicts_merge = {'static': self.rsa_scores_dicts, 'temporal': self.rsa_scores_temporal_dicts}
-        
-        for rsa_scores_dict_key, rsa_scores_dict in rsa_scores_dicts_merge.items():
-            
-            rdsk = list(rsa_scores_dict.keys())
-            
-            self.ttest_ind_results = [ttest_ind(rsa_scores_dict[rdsk[_[0]]], rsa_scores_dict[rdsk[_[1]]]) if (rsa_scores_dict[rdsk[_[0]]] is not np.nan and rsa_scores_dict[rdsk[_[1]]] is not np.nan) else (np.nan, np.nan) for _ in groups]
-            self.ttest_ind_statistics, self.ttest_ind_p_values = [_[0] for _ in self.ttest_ind_results], [_[1] for _ in self.ttest_ind_results]
-            
-            self._plot(rsa_scores_dict_key, rsa_scores_dict)
-            
-            
-    def _plot(self, rsa_scores_dict_key, rsa_scores_dict):
+    def _plot(self, rsa_scores_dict_key, rsa_scores_dict, mask):
         
         plt.rcParams.update({"font.family": "Times New Roman"})
         plt.rcParams.update({'font.size': 14})
@@ -1227,7 +1513,12 @@ class Human_similarity_scores_comparison(similarity_scores_comparison_base):
         ax.set_xticks(np.arange(1,8), ['Baseline', 'VGG16', 'VGG16bn', 'S 4 IF C', 'S4 LIF C', 'S 4 LIF v', 'S 16 IF C'], rotation='vertical')
         ax.set_ylabel('Similarity Scores', fontsize=20)
         
-        title = f'Human RSA {rsa_scores_dict_key} Scores Comparison (VGG) {self.metric} {self.cell_type} {self.used_id_num}'
+        if self._mismatched_comparison:
+            cell_type = self.cell_type.split('/')[-1]
+        else:
+            cell_type = self.cell_type
+            
+        title = f'Human RSA {rsa_scores_dict_key} Scores Comparison (VGG)\n{self.metric} {cell_type} {self.used_id_num} {mask}'
         ax.set_title(f'{title}')
         
         plt.tight_layout()
@@ -1296,14 +1587,13 @@ if __name__ == "__main__":
     root_dir = '/home/acxyle-workstation/Downloads/'
 
     #for monkey experiments
-    #test = Selectiviy_Analysis_Correlation_Monkey(NN_root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622'), layers=layers, neurons=neurons)
-    #test.monkey_neuron_analysis(metrics=['euclidean', 'pearson'])
+    RSA_monkey = Selectiviy_Analysis_Correlation_Monkey(NN_root=os.path.join(root_dir, 'Face Identity VGG16bn'), layers=layers, neurons=neurons)
+    RSA_monkey.monkey_neuron_analysis(metrics=['euclidean', 'pearson'])
     
     # for human experiments 
-    #test = Selectiviy_Analysis_Correlation_Human(NN_root=os.path.join(root_dir, 'Face Identity VGG16'), layers=layers, neurons=neurons)
+    RSA_human = Selectiviy_Analysis_Correlation_Human(NN_root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
+    RSA_human.human_neuron_analysis()
     
-    #test.human_neuron_analysis()
-    #test.human_NN_RSA_plot_assemble()
     
     #for model comparison
     primate_nn_comparison = Human_similarity_scores_comparison(root=root_dir,
@@ -1321,4 +1611,27 @@ if __name__ == "__main__":
                                                                           'non_sensitive_si', 'non_sensitive_wsi', 'non_sensitive_mi', 'non_sensitive_wmi', 'non_sensitive_non_encode'],
                                                               used_id_nums=[50, 10],
                                                               )
-    #primate_nn_comparison._statistical_calculation()
+    
+    primate_nn_comparison = Human_similarity_scores_comparison(root=root_dir,
+                                                               primate='Human',
+                                                              folders=['Face Identity Baseline', 'Face Identity VGG16', 'Face Identity VGG16bn', 
+                                                                      'Face Identity SpikingVGG16bn_IF_T4_CelebA2622',
+                                                                      'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622',
+                                                                      'Face Identity SpikingVGG16bn_LIF_T4_vggface',
+                                                                      'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622'],  
+                                                              metrics=['pearson'], 
+                                                              cell_types=[
+                                                                  '-_mismatched_comparison/Human Selective V.S. NN Strong Selective'
+                                                                  ],
+                                                              used_id_nums=[50, 10],
+                                                              )
+    
+    primate_nn_comparison = Monkey_similarity_scores_comparison(root=root_dir,
+                                                               primate='Monkey',
+                                                              folders=['Face Identity Baseline', 'Face Identity VGG16', 'Face Identity VGG16bn', 
+                                                                      'Face Identity SpikingVGG16bn_IF_T4_CelebA2622',
+                                                                      'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622',
+                                                                      'Face Identity SpikingVGG16bn_LIF_T4_vggface',
+                                                                      'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622'],  
+                                                              metrics=['euclidean','pearson'], 
+                                                              )

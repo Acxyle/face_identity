@@ -42,7 +42,7 @@ def selectivity_analysis_calculation(metric: str, feature: np.array):
             
         else:
             
-            if np.any(np.isnan(feature)):
+            if np.any(np.isnan(feature)):     # (500, num_units)
                 
                 mask = np.full((feature.shape[1],), True)
                 for _ in range(feature.shape[1]):
@@ -80,21 +80,19 @@ def selectivity_analysis_calculation(metric: str, feature: np.array):
                 similarity_dict = None
             
             else:
-                similarity_matrix = np.corrcoef(feature)
-                
-                if np.any(np.isnan(similarity_matrix)):     # when detecting NaN value, i.e. the values of one class are identical
+                if np.any(np.isnan(feature)) or np.any([len(np.unique(feature[_, :]))==1 for _ in range(feature.shape[0])]):
                     similarity_dict.update({'contains_nan': True})
                     similarity_matrix = np.ma.corrcoef(np.ma.masked_invalid(feature)).data
-                    
+                
                 else:
                     similarity_dict.update({'contains_nan': False})
+                    similarity_matrix = np.corrcoef(feature)
                     
-                DSM = (1 - similarity_matrix)/2     # SM [-1, 1] -> DSM [0, 1]
-                DSM_z, similarity_value = Square2Tri(DSM)     # (1225,)
+                similarity_matrix_z, similarity_value = matrix_to_vector(similarity_matrix)     # (1225,)
     
                 similarity_dict.update({
                     'vector': similarity_value,     # for RSA
-                    'matrix': DSM_z,     # for plot
+                    'matrix': similarity_matrix_z,     # for plot
                     'num_units': feature.shape[1]
                     })
     
@@ -104,30 +102,21 @@ def selectivity_analysis_calculation(metric: str, feature: np.array):
     return similarity_dict
 
 
-def Square2Tri(DSM):
-    """
-        in python, the squareform() function can convert an array to square or vice versa, 
-        but need to make sure the matrix is symmetrical and 0 diagonal values
-    """
-    # original version
-    #M_z = 1 - np.arctanh(DSM)
-    #V = np.triu(M_z, k=1).T
-    #V = V[V!=0]     # what if the 0 value exists in the upper triangle
+def matrix_to_vector(matrix):
+
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
     
-    if np.max(DSM) > 1:
-        raise ValueError(f'[Codinfo] Value range is (-1, 1) but detected {np.max(DSM)}')
-    
-    DSM_z = np.arctanh(DSM)
-    DSM_z = (DSM_z+DSM_z.T)/2
-    for _ in range(DSM.shape[0]):
-        DSM_z[_,_]=0
-    V = squareform(DSM_z)
-    # -----
-    
-    return DSM_z, V
+    # --- original version
+    matrix_z = 1 - np.arctanh(matrix)     # similarity [-1, 1] -> distance [0,2]
+    vector = matrix_z[np.triu_indices(matrix.shape[0], 1)]     
+
+    return matrix_z, vector
 
 
 def describe_numpy(input:np.array=None):
+    """
+        this function uses a dict format to print the information of a numpy array like Pandas describe
+    """
     
     if input is None or input[~np.isnan(input)].size == 0:
         
@@ -149,21 +138,47 @@ def describe_numpy(input:np.array=None):
     
     return array_stats
 
-def fake_legend_describe_numpy(similarity, ax):
+def fake_legend_describe_numpy(input, ax, mask=None):
     
-    similarity_stats_dict = describe_numpy(similarity)
+
+    similarity_interest = input[mask]
     
-    fake_legend_stats_handles = [Line2D([0], [0], marker='o', color='none', markerfacecolor='orange', markersize=5, markeredgecolor='orange') for _ in range(8)]
-    fake_legend_stats_labels = [
-        f"count: {similarity_stats_dict['count_valid']}/{similarity_stats_dict['count_all']}",
-        f"mean: {similarity_stats_dict['mean']:.3f}",
-        f"std: {similarity_stats_dict['std']:.3f}",
-        f"min: {similarity_stats_dict['min']:.3f}",
-        f"25%: {similarity_stats_dict['25%']:.3f}",
-        f"50%: {similarity_stats_dict['50% (median)']:.3f}",
-        f"75%: {similarity_stats_dict['75%']:.3f}",
-        f"max: {similarity_stats_dict['max']:.3f}"
-        ]
+    similarity_stats_dict = describe_numpy(similarity_interest)
     
-    fake_legend = ax.legend(fake_legend_stats_handles, fake_legend_stats_labels, framealpha=0.25, ncol=2)
-    ax.add_artist(fake_legend)
+    if similarity_stats_dict is None:
+        
+        fake_legend_stats_handles = [Line2D([0], [0], marker='o', color='none', markerfacecolor='orange', markersize=5, markeredgecolor='orange') for _ in range(8)]
+        
+        fake_legend_stats_labels = [
+            f"count: {similarity_interest.size}/{input.size}",
+            "mean: - ",
+            "std: - ",
+            "min: - ",
+            "25%: - ",
+            "50%: - ",
+            "75%: - ",
+            "max: - "
+            ]
+
+        fake_legend = ax.legend(fake_legend_stats_handles, fake_legend_stats_labels, framealpha=0.25, ncol=2, handlelength=0, borderpad=0, labelspacing=0)
+        ax.add_artist(fake_legend)
+        
+    else:
+    
+        fake_legend_stats_handles = [Line2D([0], [0], marker='o', color='none', markerfacecolor='orange', markersize=5, markeredgecolor='orange') for _ in range(8)]
+        
+        fake_legend_stats_labels = [
+            f"count: {similarity_interest.size}/{input.size}",
+            f"mean: {similarity_stats_dict['mean']:.3f}",
+            f"std: {similarity_stats_dict['std']:.3f}",
+            f"min: {similarity_stats_dict['min']:.3f}",
+            f"25%: {similarity_stats_dict['25%']:.3f}",
+            f"50%: {similarity_stats_dict['50% (median)']:.3f}",
+            f"75%: {similarity_stats_dict['75%']:.3f}",
+            f"max: {similarity_stats_dict['max']:.3f}"
+            ]
+        
+        fake_legend = ax.legend(fake_legend_stats_handles, fake_legend_stats_labels, framealpha=0.25, ncol=2, handlelength=0, borderpad=0, labelspacing=0)
+        ax.add_artist(fake_legend)
+    
+    return fake_legend

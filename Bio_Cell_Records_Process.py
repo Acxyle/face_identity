@@ -83,8 +83,11 @@ class Human_Neuron_Records_Process():
         
     # ===== module 1, obtain response map
     # ----- 1. calculate FR from raw records
-    def human_neuron_sort_FR(self, reject_rate=0.15, data_type='default', data_set='CelebA'):
+    # FIXME
+    def human_neuron_sort_FR(self, reject_rate:float=0.15, data_type:str='default', data_set:str='CelebA'):
         """
+            currently the results is not identical with the MATLAB version, need to fix, and upgrade
+            -----
             this function calculates the sorted mean firing rates (entire trial: 0ms - 2000ms) and qualified cells
             
             this function use reject_rate (default: 0.15) and experiment performance to filter out unwanted cells. After 
@@ -101,7 +104,8 @@ class Human_Neuron_Records_Process():
             input: 
                 
             - reject_rate (default=0.15), suggests the threshold to determine the qualified cells
-            - data_type (default='default'). 'base': firing rate from 250ms to 500ms; 'trial' firing rate from 0ms to 2000ms; 'defualt': firing rate from 750ms to 1750ms
+            - data_type (default='default'). 'base': firing rate from 250ms to 500ms; 'trial' firing rate from 0ms to 
+            2000ms; 'defualt': firing rate from 750ms to 1750ms
             - deta_set (default='CelebA'), currently only 'CelebA'
             
             output:
@@ -114,12 +118,13 @@ class Human_Neuron_Records_Process():
             - FR_stats: preliminary firing rates from original experimental records, simply count spikes in given time period
             - beh_stats: original experimental settings and logs, indicates the relationships between images and records
             - adjust_idx [AdjustInd]: corrected indeces of displayed images in experiments due to image errors
-            - displayed_image_sequence [Code]: the displayed image sequence of each session, used to build relationship between image and neuron records
+            - displayed_image_sequence [Code]: the displayed image sequence of each session, used to build relationship 
+            between image and neuron records
             ...
             
         """
         
-        meanFR_path = os.path.join(self.human_neuron_stats, 'meanFR.pkl')
+        meanFR_path = os.path.join(self.human_neuron_stats, f'meanFR_{data_type}.pkl')
         
         if os.path.exists(meanFR_path):
             
@@ -133,6 +138,17 @@ class Human_Neuron_Records_Process():
                 
                 # ----- obtain firing rate (FR) and peri-stimulus histogram (PSTH)
                 FR_stats = self.human_neuron_get_firing_rate()
+                
+                if data_type == 'base':
+                    FR_list = [FR_stats[_]['spike_count_250_500'] for _ in range(len(FR_stats))]
+                elif data_type == 'trial':
+                    FR_list = [FR_stats[_]['spike_count_0_2000'] for _ in range(len(FR_stats))]
+                elif data_type == 'default':
+                    FR_list = [FR_stats[_]['spike_count'] for _ in range(len(FR_stats))]
+                else:
+                    raise ValueError(f'[Codinfo] data_type [{data_type}] is invalid')
+                    
+                FR_PSTH_list = [FR_stats[_]['PSTH_250'] for _ in range(len(FR_stats))]
         
                 # ----- obtain behavior data
                 beh_stats = self.human_neuron_get_beh()
@@ -175,15 +191,9 @@ class Human_Neuron_Records_Process():
                 
                 for cell_idx in tqdm(range(len(FR_stats))):     # for each neuron
                     
-                    # -----
-                    if data_type == 'base':
-                        FR = FR_stats[cell_idx]['spike_count_250_500'].copy()
-                    elif data_type == 'trial':
-                        FR = FR_stats[cell_idx]['spike_count_0_2000'].copy()
-                    elif data_type == 'default':
-                        FR = FR_stats[cell_idx]['spike_count'].copy()
-                        
-                    FR_PSTH = FR_stats[cell_idx]['PSTH_250'].copy()
+                    # --- init
+                    FR = FR_list[cell_idx]
+                    FR_PSTH = FR_PSTH_list[cell_idx]
                 
                     # --- 2.1 retrive session_idx
                     session_idx = neuron_session_idces[cell_idx]     # get session idx
@@ -191,7 +201,7 @@ class Human_Neuron_Records_Process():
                     displayed_image_sequence = behavior[session_idx]['code'].copy()     # delete back_id in img_list, 1-based
                     back_id = behavior[session_idx]['back_id'].copy()     # 
                     
-                    # --- 2.2 remove unwanted record
+                    # --- 2.2 remove unwanted records
                     displayed_image_sequence = np.delete(displayed_image_sequence, back_id) - 1     # img idx, 0-based
 
                     FR = np.delete(FR, back_id)   # remove back_id in neuron response
@@ -254,7 +264,7 @@ class Human_Neuron_Records_Process():
                         if len(displayed_image_sequence) != 500:     # 11: (161); 13: (452)
 
                             for _ in range(500):
-                                used_imgs = np.where(sorted_image_idces == (_+1))[0]
+                                used_imgs = np.where(sorted_image_idces == _)[0]
                                 if len(used_imgs) != 0:
                                     adjustFR[_] = np.mean(FR[used_imgs])
                                     adjustFR_PSTH[_, :] = np.mean(FR_PSTH[used_imgs, :], axis=0)
@@ -348,6 +358,8 @@ class Human_Neuron_Records_Process():
         
     def human_neuron_get_firing_rate(self, time_window=250, time_step=50):  
         """
+            the saved FR_stats['FR'] is identical with FR.m of source MATLAB code
+            -----
             'Spikes.mat': b'MATLAB 5.0 MAT-file, Platform: MACI64, Created on: Thu Dec 30 12:11:01 2021'
             
             contains combined neurons from all session_idces. For each neuron:
@@ -924,7 +936,7 @@ class Human_Neuron_Records_Process():
         else:
         
             # -----
-            meanFR_dict = self.human_neuron_sort_FR()
+            meanFR_dict = self.human_neuron_sort_FR(data_type='default')
             
             meanFR = meanFR_dict['meanFR']
             qualified_cells = meanFR_dict['qualified_cells']
@@ -1074,7 +1086,7 @@ class Human_Neuron_Records_Process():
         idx_dict = cell_stats['cell_types_dict']
         
         # --- load feature
-        meanFR_dict = self.human_neuron_sort_FR()
+        meanFR_dict = self.human_neuron_sort_FR(data_type='default')
         meanFR = meanFR_dict['meanFR']
         
         feature = meanFR.T
@@ -1552,14 +1564,22 @@ class Human_Neuron_Records_Process():
         return trialTimestamps
 
     # ===== module 4. corr
-    def human_neuron_DSM_process_sub_id(self, metric, used_cell_type, used_id_num):
-        
-        selected_ids = self.human_corr_select_sub_identities(used_id_num)
-        human_DM_dict = self.human_neuron_DSM_process(metric, used_cell_type, selected_ids)
+    #FIXME, this for loop has problem, this will only take the results of the final iteration
+    def human_neuron_DSM_process_sub_id(self, metrics:list[str]=None, used_cell_types:list[str]=None, used_id_nums:list[int]=None):
+        """
+            
+        """
+        for metric in metrics:
+            
+            for used_cell_type in used_cell_types:
+                
+                for used_id_num in used_id_nums:
+                    
+                    selected_ids, human_DM_dict = self.human_neuron_DSM_process(metric, used_cell_type, used_id_num)
         
         return selected_ids, human_DM_dict
     
-    def human_neuron_DSM_process(self, metric, used_cell_type, selected_ids:list[int]=list(np.arange(50)), num_perm=1000):
+    def human_neuron_DSM_process(self, metric, used_cell_type, used_id_num, num_perm=1000):
         """
             this function calculates the human pairwise distance matrices based on selected_ids and Used_cell_type, 
             
@@ -1567,55 +1587,58 @@ class Human_Neuron_Records_Process():
                 selected_ids: default all 50 ids
                 used_cell_type: default qualified 1,577 cells
         """
+        # ---
+        selected_ids = self.human_corr_select_sub_identities(used_id_num)
         
+        # ---
         save_root = os.path.join(self.human_neuron_stats, 'corr')
         utils_.make_dir(save_root)
         
         save_root = os.path.join(save_root, metric)
         utils_.make_dir(save_root)
-        
-        save_path = os.path.join(save_root, f'Human_DM_dict_{used_cell_type}_{len(selected_ids)}.pkl')
-        
-        # --- init
-        self.meanFR = self.meanFR_dict['meanFR']     # (2082, 500)
-        self.meanFR_PSTH = self.meanFR_dict['meanFR_PSTH']
-        
+
+        # ---
         used_cells = self.human_neuron_obtain_used_cells(used_cell_type)
             
         if used_cells.size == 0:
             
-            return None
+            return None, None
     
         else:
+            
+            save_path = os.path.join(save_root, f'Human_DM_dict_{used_cell_type}_{len(selected_ids)}.pkl')
+            
+            # --- init
+            self.meanFR = self.meanFR_dict['meanFR']     # (2082, 500)
+            self.meanFR_PSTH = self.meanFR_dict['meanFR_PSTH']
         
             # --- normalize firing rates
-            FR_baseline = np.array([np.mean(self.FR_stats[_]['spike_count_250_500']) for _ in used_cells])     
+            FR_baseline = np.nanmean(self.meanFR_baseline_dict['meanFR'][used_cells, :], axis=1, keepdims=True)
             
-            # [notice] raw data are jagged and no NaN value but meanFR; consider no order of imgs but overall firing rate
-            self.normalized_meanFR = self.meanFR[used_cells]/FR_baseline.reshape(-1, 1)     # (num_cells, num_imgs)
+            self.normalized_meanFR = self.meanFR[used_cells, :]/FR_baseline     # (num_cells, num_imgs)
             self.normalized_meanFR_PSTH = self.meanFR_PSTH[used_cells, :, :]/FR_baseline.reshape(-1, 1, 1)     # (num_cells, num_imgs, num_time_steps)
             
             # --- 
-            self.meanFR_id = np.mean(self.normalized_meanFR.reshape(-1, 50, 10), axis=2)[:, selected_ids].T     # (num_selected_ids, num_cells)
-            self.meanFR_PSTH_id = np.mean(self.normalized_meanFR_PSTH.reshape(-1, 50, 10, 31), axis=2)[:, selected_ids, :].T     # (num_time_steps, num_selected_ids, num_cells)
+            self.meanFR_id = np.nanmean(self.normalized_meanFR.reshape(-1, 50, 10), axis=2)[:, selected_ids].T     # (num_selected_ids, num_cells)
+            self.meanFR_PSTH_id = np.nanmean(self.normalized_meanFR_PSTH.reshape(-1, 50, 10, 31), axis=2)[:, selected_ids, :].T     # (num_time_steps, num_selected_ids, num_cells)
             
             if os.path.exists(save_path):
                 
-                print(f'[Codinfo] Loading Human_neuron_DM for {metric} {used_cell_type}...')
+                print(f'[Codinfo] Loading Human_neuron_DM for {metric} {used_cell_type} {len(selected_ids)}...')
                 
                 human_DM_dict = utils_.pickle_load(save_path)
                 
             else:
                 
-                print(f'[Codinfo] Calculating Human_neuron_DM for {metric} {used_cell_type}...')
+                print(f'[Codinfo] Calculating Human_neuron_DM for {metric} {used_cell_type} {len(selected_ids)}...')
                 
                 # --- for static meanFR
                 human_DM_v = utils_similarity.selectivity_analysis_calculation(metric, self.meanFR_id)['vector']     # (num_selected_ids*(num_selected_ids-1)/2, )
                 human_DM_v_perm = np.array([_['vector'] for _ in Parallel(n_jobs=-1)(delayed(utils_similarity.selectivity_analysis_calculation)(metric, self.meanFR_id[np.random.permutation(len(selected_ids))]) for _ in tqdm(range(num_perm), desc='Human corr'))])
                 
                 # --- for temporal
-                human_DM_v_temporal = np.zeros((self.meanFR_PSTH_id.shape[0], human_DM_v.size))     # (31, 1225)
-                human_DM_v_perm_temporal = np.zeros((self.meanFR_PSTH_id.shape[0], num_perm, human_DM_v.size))     # (31, 1000, 1225)
+                human_DM_v_temporal = np.full((self.meanFR_PSTH_id.shape[0], human_DM_v.size), np.nan)     # (31, 1225)
+                human_DM_v_perm_temporal = np.full((self.meanFR_PSTH_id.shape[0], num_perm, human_DM_v.size), np.nan)     # (31, 1000, 1225)
                 
                 for t in tqdm(range(self.meanFR_PSTH_id.shape[0]), desc='Human corr temporal'):     # for each time point
     
@@ -1627,17 +1650,21 @@ class Human_Neuron_Records_Process():
                     'human_DM_v': human_DM_v, 
                     'human_DM_v_perm': human_DM_v_perm,
                     'human_DM_v_temporal': human_DM_v_temporal,
-                    'human_DM_v_perm_temporal': human_DM_v_perm_temporal
+                    'human_DM_v_perm_temporal': human_DM_v_perm_temporal,
+                    'selected_ids': selected_ids
                     }
                 
                 utils_.pickle_dump(save_path, human_DM_dict)
             
-            return human_DM_dict
+            return selected_ids, human_DM_dict
     
+    # FIXME - the MATLAB souce code is actually using 48 ids for all 50 ids, let's try the difference first
     def human_corr_select_sub_identities(self, used_id_num:int=None, cell_type='selective_cells'):
         
         # --- init
-        self.meanFR_dict = self.human_neuron_sort_FR()
+        self.meanFR_dict = self.human_neuron_sort_FR(data_type='default')
+        self.meanFR_baseline_dict = self.human_neuron_sort_FR(data_type='base')
+        
         self.cell_stats = self.humane_identity_cell_selection()
         self.FR_stats = self.human_neuron_get_firing_rate()
         
@@ -1664,7 +1691,7 @@ class Human_Neuron_Records_Process():
         else:
             raise RuntimeError('[Coderror] invalid used_id_num')
         
-        return selected_ids
+        return sorted(selected_ids)
     
     def human_corr_used_ids_selection(self, encoded_id_pool, used_id_num):
         """
@@ -1686,12 +1713,22 @@ class Human_Neuron_Records_Process():
         if used_cell_type == 'qualified':
             used_cells = np.array(list(self.cell_stats['encode_id'].keys()))
             
-        # --- 2-3
+        # --- 2-5
         elif used_cell_type == 'selective':     # 'selective' = 's_si' + 's_wsi' + 's_mi' + 's_wmi'
             used_cells = np.concatenate(np.array([
                                         self.cell_stats['cell_types_dict']['sensitive_si'],
                                         self.cell_stats['cell_types_dict']['sensitive_wsi'],
                                         self.cell_stats['cell_types_dict']['sensitive_mi'],
+                                        self.cell_stats['cell_types_dict']['sensitive_wmi'], ], dtype=object))
+            
+        elif used_cell_type == 'strong_selective':     # 'strong_selective' = 's_si' + 's_mi'
+            used_cells = np.concatenate(np.array([
+                                        self.cell_stats['cell_types_dict']['sensitive_si'],
+                                        self.cell_stats['cell_types_dict']['sensitive_mi'],], dtype=object))
+            
+        elif used_cell_type == 'weak_selective':     # 'weak_selective' =  's_wsi' + 's_wmi'
+            used_cells = np.concatenate(np.array([
+                                        self.cell_stats['cell_types_dict']['sensitive_wsi'],
                                         self.cell_stats['cell_types_dict']['sensitive_wmi'], ], dtype=object))
             
         elif used_cell_type == 'non_selective':     # 'non_sensitive' = 's_non_encode' + 'ns_si' + 'ns_wsi' + 'ns_mi' + 'ns_wmi' + 'ns_non_encode'
@@ -1703,7 +1740,7 @@ class Human_Neuron_Records_Process():
                                         self.cell_stats['cell_types_dict']['non_sensitive_wmi'],
                                         self.cell_stats['cell_types_dict']['non_sensitive_non_encode'], ], dtype=object))
         
-        # --- 4-13
+        # --- 6-15
         elif used_cell_type == 'sensitive_si':
             used_cells = self.cell_stats['cell_types_dict']['sensitive_si']
             
@@ -1735,7 +1772,7 @@ class Human_Neuron_Records_Process():
         elif used_cell_type == 'non_sensitive_non_encode':
             used_cells = self.cell_stats['cell_types_dict']['non_sensitive_non_encode']
             
-        # --- 14-15
+        # --- 16-17
         elif used_cell_type == 'sensitive':
             used_cells = np.concatenate(np.array([
                                         self.cell_stats['cell_types_dict']['sensitive_si'],
@@ -1752,7 +1789,7 @@ class Human_Neuron_Records_Process():
                                         self.cell_stats['cell_types_dict']['non_sensitive_wmi'],
                                         self.cell_stats['cell_types_dict']['non_sensitive_non_encode'], ], dtype=object))
             
-        # --- 16-17
+        # --- 18-19
         elif used_cell_type == 'encode':
             used_cells = np.concatenate(np.array([
                                         self.cell_stats['cell_types_dict']['sensitive_si'],
@@ -1770,7 +1807,7 @@ class Human_Neuron_Records_Process():
                                         self.cell_stats['cell_types_dict']['sensitive_non_encode'],
                                         self.cell_stats['cell_types_dict']['non_sensitive_non_encode'], ], dtype=object))
             
-        # --- 18-19
+        # --- 20-21
         elif used_cell_type == 'all_sensitive_si':
             used_cells = np.concatenate(np.array([
                                         self.cell_stats['cell_types_dict']['sensitive_si'],
@@ -1828,7 +1865,7 @@ class Human_Neuron_Records_Process():
 # ----- 
 
               
-                
+#FIXME - use one code merge the basis of Monkey and Human Process
 # ======================================================================================================================
 class Monkey_Neuron_Records_Process():
     
@@ -1839,9 +1876,11 @@ class Monkey_Neuron_Records_Process():
     
     def __init__(self, 
                  bio_root='/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Monkey/',  
+                 seed=6
                  ):      
         #super().__init__()
-        
+        np.random.seed(seed)
+
         self.bio_root = bio_root
         
         self.ts = np.arange(-50,201,10)     # target time steps, manually selected from original [-100, 380] 
@@ -1923,16 +1962,17 @@ class Monkey_Neuron_Records_Process():
         fig.savefig(os.path.join(self.bio_root, title+'.eps'))
     
     #FIXME - add the entrence for other types of distance
-    def monkey_neuron_DSM_process(self, time_bin=10, num_perm=1000, metrics:list[str]=['pearson']):
+    #FIXME, this for loop has problem, this will only take the results of the final iteration
+    def monkey_neuron_DSM_process(self, metrics:list[str]=['pearson'], time_bin=10, num_perm=1000):
         """
             this function returns the correlation matrix and triangle from monkey neural responses.
             
-            Input
+            input
                 psthTime: 49 time steps for PSTH from -100 ms to 380 ms
                 meanPSTH: [500, 49, 53], [img, time steps, channels]
                 label: label for 500 imgs
                 
-            Return
+            return
                 monkey_DM_v: condense form of tranformed DSM
                 monkey_DM_v_perm: condense form of transformed DSM with extra dimension of permutation
                 monkey_DM_v_temporal: condense form of transformed DSM with temporal dimension
@@ -1941,38 +1981,40 @@ class Monkey_Neuron_Records_Process():
         
         print('[Codinfo] Calculating monkey neuron stats...')
         
-        file_path = os.path.join(self.bio_root, f'monkey_spikes_corr_Tbin_{time_bin}_Nperm_{num_perm}.pkl')
+        utils_.make_dir(os.path.join(self.bio_root, 'corr'))
         
-        if os.path.exists(file_path):
+        for metric in metrics:
             
-            results = utils_.pickle_load(file_path)
+            utils_.make_dir(os.path.join(self.bio_root, 'corr', f'{metric}'))
+        
+            file_path = os.path.join(self.bio_root, 'corr', f'{metric}', 'Monkey_DM_dict_qualified_50.pkl')
             
-        else:
-            # -----
-            if time_bin == 10:
-                used_psth = self.meanPSTH[:, [np.where(self.psthTime==_)[0][0] for _ in self.ts], :]
+            if os.path.exists(file_path):
+                
+                results = utils_.pickle_load(file_path)
                 
             else:
-                used_psth = np.zeros((self.meanPSTH.shape[0], len(self.ts), self.meanPSTH.shape[2]))     # (500, 26, 53) (img, time, unit)
-                for idx, tt in enumerate(self.ts): 
-                    used_psth[:, idx, :] = np.mean(self.meanPSTH[:, np.where(((tt-time_bin/2)<=self.psthTime) & (self.psthTime<=(tt+time_bin/2)))[0], :], axis=1)
-            
-            used_psth_id = np.array([np.mean(used_psth[np.where(self.label==_)[0], :, :], axis=0) for _ in  range(1, 51)])     
-            used_psth_id = np.transpose(used_psth_id, (1,0,2))     # (time, ID, unit)
-            
-            # [notice] meanGray != np.mean(meanBase, axis=1)
-            self.FR_id = np.array([np.mean(self.meanFR[:, np.where(self.label==_)[0]], axis=1)/self.meanGray for _ in range(1, 51)])
-            
-            scaling_factor = np.mean(self.meanBase,axis=1)
-            #sacling_factor = self.meanGray
-            
-            self.psth_id = np.array([np.array([used_psth_id[i, j, :]/scaling_factor for j in range(50)]) for i in range(used_psth.shape[1])])     # (26, 50, 53)
-            
-            results = {}
-            
-            for metric in metrics:
+                # -----
+                if time_bin == 10:
+                    used_psth = self.meanPSTH[:, [np.where(self.psthTime==_)[0][0] for _ in self.ts], :]
+                    
+                else:
+                    used_psth = np.zeros((self.meanPSTH.shape[0], len(self.ts), self.meanPSTH.shape[2]))     # (500, 26, 53) (img, time, unit)
+                    for idx, tt in enumerate(self.ts): 
+                        used_psth[:, idx, :] = np.mean(self.meanPSTH[:, np.where(((tt-time_bin/2)<=self.psthTime) & (self.psthTime<=(tt+time_bin/2)))[0], :], axis=1)
                 
-                # --- [notice] in order to make the results stable for each experiments, can make the permutation constant here
+                used_psth_id = np.array([np.mean(used_psth[np.where(self.label==_)[0], :, :], axis=0) for _ in  range(1, 51)])     
+                used_psth_id = np.transpose(used_psth_id, (1,0,2))     # (time, ID, unit)
+                
+                # [notice] meanGray != np.mean(meanBase, axis=1)
+                self.FR_id = np.array([np.mean(self.meanFR[:, np.where(self.label==_)[0]], axis=1)/self.meanGray for _ in range(1, 51)])
+                
+                scaling_factor = np.mean(self.meanBase,axis=1)
+                #sacling_factor = self.meanGray
+                
+                self.psth_id = np.array([np.array([used_psth_id[i, j, :]/scaling_factor for j in range(50)]) for i in range(used_psth.shape[1])])     # (26, 50, 53)
+                
+                # --- 
                 # for static meanFR
                 self.monkey_DM_v = utils_similarity.selectivity_analysis_calculation(metric, self.FR_id)['vector']
                 self.monkey_DM_v_perm = np.array([utils_similarity.selectivity_analysis_calculation(metric, self.FR_id[np.random.permutation(self.FR_id.shape[0]),:])['vector'] for _ in range(num_perm)])
@@ -1982,8 +2024,7 @@ class Monkey_Neuron_Records_Process():
                 self.monkey_DM_v_perm_temporal = np.array([np.array([utils_similarity.selectivity_analysis_calculation(metric, self.psth_id[t, np.random.permutation(self.FR_id.shape[0]), :])['vector'] for _ in range(num_perm)]) for t in range(self.psth_id.shape[0])])
                 
                 # --- seal data
-                results.update({
-                    metric: {
+                results = {
                     'monkey_DM_v': self.monkey_DM_v,     # (1225,)
                     'monkey_DM_v_perm': self.monkey_DM_v_perm,      # (1000, 1225)
                     'monkey_DM_v_temporal': self.monkey_DM_v_temporal,     # (26, 1225)
@@ -1991,9 +2032,8 @@ class Monkey_Neuron_Records_Process():
                     'FR_id': self.FR_id,
                     'psth_id': self.psth_id
                     }
-                    })
-            
-            utils_.pickle_dump(file_path, results)
+                
+                utils_.pickle_dump(file_path, results)
             
         return results
         
@@ -2116,17 +2156,19 @@ def extract_period_counts(time_stamps, periods, from_, to_):
     
 if __name__ == "__main__":
 
-    #human_record_process = Human_Neuron_Records_Process()
+    human_record_process = Human_Neuron_Records_Process()
     
-    #human_record_process.human_neuron_sort_FR()
+    human_record_process.human_neuron_sort_FR(data_type='base')
     #human_record_process.humane_identity_cell_selection()
     #human_record_process.human_neuron_raster_plot()
     #human_record_process.human_neuron_stacked_encode_map()
     #human_record_process.human_neuron_FR_stats_plot()
     
-    monkey_record_process = Monkey_Neuron_Records_Process()
+    human_record_process.human_neuron_DSM_process_sub_id(metrics=['pearson'], used_cell_types=['qualified', 'selective', 'non_selective'], used_id_nums=[10])
+
+    #monkey_record_process = Monkey_Neuron_Records_Process()
     
     #monkey_record_process.Monkey_restructure()
     #monkey_record_process.Monkey_plot_sample_response()
     #monkey_record_process.monkey_neuron_DSM_process(metrics=['euclidean', 'pearson'])
-    monkey_record_process.monkey_neuron_DSM_plot()
+    #monkey_record_process.monkey_neuron_DSM_plot()

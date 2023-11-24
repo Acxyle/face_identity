@@ -425,7 +425,7 @@ class Selectiviy_Analysis_SM():
         self.model_structure = root.split('/')[-1].split(' ')[-1]
         
     
-    def selectivity_analysis_similarity_metrics(self, metrics: list[str]):
+    def selectivity_analysis_similarity_metrics(self, metrics:list[str], plot:bool=False):
         """
             metrics should be a list of metrics,
             now have: (1) Euclidean Distance; (2) Pearson Correlation Coefficient
@@ -443,13 +443,14 @@ class Selectiviy_Analysis_SM():
             metric_folder = os.path.join(self.dest_DSM, f'{metric}')
             utils_.make_dir(metric_folder)
             
-            metric_dict = self.selectivity_analysis_similarity(metric, in_layer_plot=True)
+            metric_dict = self.selectivity_analysis_similarity(metric, in_layer_plot=False)
             
             # ----- plot
-            if metric == 'euclidean':
-                self.selectivity_analysis_plot(metric, metric_dict, sup_v=None)
-            elif metric == 'pearson':
-                self.selectivity_analysis_plot(metric, metric_dict, sup_v=(0,1))
+            if plot:
+                if metric == 'euclidean':
+                    self.selectivity_analysis_plot(metric, metric_dict, sup_v=None)
+                elif metric == 'pearson':
+                    self.selectivity_analysis_plot(metric, metric_dict, sup_v=(0, 1))
                
     def selectivity_analysis_similarity(self, metric, in_layer_plot:bool=False):
         
@@ -484,12 +485,13 @@ class Selectiviy_Analysis_SM():
                 mean_FR = self.calculate_mean_FR(feature)
                 sorted_idx = utils_.lexicographic_order(self.num_classes)     # correct labels
                 mean_FR = self.restore_order(mean_FR, sorted_idx)     # (50, num_units)
+                
                 # ----- 0. add type of all neuron into the dict
                 # --- 1 - 10
                 units_type_dict = self.Sort_dict[layer]['advanced_type']
                 # --- 11
-                units_type_dict.update({'all': np.arange(mean_FR.shape[1])})
-                # --- 12 - 13
+                units_type_dict.update({'qualified': np.arange(mean_FR.shape[1])})
+                # --- 12 - 15
                 units_type_dict.update({'selective': 
                                         np.concatenate(np.array([self.Sort_dict[layer]['advanced_type']['sensitive_si'],
                                         self.Sort_dict[layer]['advanced_type']['sensitive_wsi'],
@@ -505,8 +507,18 @@ class Selectiviy_Analysis_SM():
                                         self.Sort_dict[layer]['advanced_type']['non_sensitive_wmi'],
                                         self.Sort_dict[layer]['advanced_type']['non_sensitive_non_encode']], dtype=object))
                                         })
-                
-                # --- 14 - 15
+                    
+                units_type_dict.update({'strong_selective': 
+                                        np.concatenate(np.array([self.Sort_dict[layer]['advanced_type']['sensitive_si'],
+                                        self.Sort_dict[layer]['advanced_type']['sensitive_mi']], dtype=object))
+                                        })
+                    
+                units_type_dict.update({'weak_selective': 
+                                        np.concatenate(np.array([self.Sort_dict[layer]['advanced_type']['sensitive_wsi'],
+                                        self.Sort_dict[layer]['advanced_type']['sensitive_wmi']], dtype=object))
+                                        })
+                    
+                # --- 16 - 17
                 units_type_dict.update({'sensitive': 
                                         np.concatenate(np.array([self.Sort_dict[layer]['advanced_type']['sensitive_si'],
                                         self.Sort_dict[layer]['advanced_type']['sensitive_wsi'],
@@ -523,7 +535,7 @@ class Selectiviy_Analysis_SM():
                                         self.Sort_dict[layer]['advanced_type']['non_sensitive_non_encode']], dtype=object))
                                         })
                 
-                # --- 16 - 17
+                # --- 18 - 19
                 units_type_dict.update({'encode': 
                                         np.concatenate(np.array([self.Sort_dict[layer]['basic_type']['si_idx'],
                                         self.Sort_dict[layer]['basic_type']['wsi_idx'],
@@ -533,7 +545,7 @@ class Selectiviy_Analysis_SM():
                 
                 units_type_dict.update({'non_encode': self.Sort_dict[layer]['basic_type']['non_encode_idx']})
                 
-                # --- 18 -19
+                # --- 20 -21
                 units_type_dict.update({'all_sensitive_si': 
                                         np.concatenate(np.array([self.Sort_dict[layer]['advanced_type']['sensitive_si'],
                                         self.Sort_dict[layer]['advanced_type']['sensitive_wsi']], dtype=object))
@@ -554,7 +566,7 @@ class Selectiviy_Analysis_SM():
                     if metric == 'euclidean':     # for any values
                         self.selectivity_analysis_similarity_in_layer_plot(layer, metric, metric_type_dict)     
                     elif metric == 'pearson':     # for similarity values
-                        self.selectivity_analysis_similarity_in_layer_plot(layer, metric, metric_type_dict, (0,1))    
+                        self.selectivity_analysis_similarity_in_layer_plot(layer, metric, metric_type_dict, (0, 1))    
                 
                 tqdm_bar.update(1)
                 # -----
@@ -777,11 +789,12 @@ if __name__ == '__main__':
 
     root_dir = '/home/acxyle-workstation/Downloads/'
 
-    selectivity_additional_analyzer = Selectiviy_Analysis_SM(root=os.path.join(root_dir, 'Face Identity VGG16bn'), 
-                layers=layers, neurons=neurons)
+    selectivity_additional_analyzer = Selectiviy_Analysis_SM(
+                                                            root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622'), 
+                                                            layers=layers, neurons=neurons)
     
-    metrics_list = ['euclidean', 'pearson']
-    
-    selectivity_additional_analyzer.selectivity_analysis_similarity_metrics(metrics_list)
+    selectivity_additional_analyzer.selectivity_analysis_similarity_metrics(
+                                                                            metrics=['pearson']
+                                                                            )
                                                                                          
 

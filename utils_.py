@@ -9,6 +9,9 @@ import torch
 import torchvision.transforms as transforms
 
 import pickle
+import gzip
+import joblib
+
 import skimage
 import os
 import numpy as np
@@ -22,18 +25,48 @@ from sklearn import svm
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 
-# ----- test script
-ANOVA_stats = {}
-ANOVA_idces = {}
-for layer in layers:
-    stats = np.loadtxt(os.path.join(ANOVA_path, 'ANOVA_stats', f'{layer}-pvalue.csv'), delimiter=',')
-    idces = np.loadtxt(os.path.join(ANOVA_path, 'ANOVA_idces', f'{layer}-neuronIdx.csv'), delimiter=',').astype(int)
-    ANOVA_stats.update({layer:stats})
-    ANOVA_idces.update({layer:idces})
-utils_.pickle_dump(os.path.join(ANOVA_path, 'ANOVA_stats.pkl'), ANOVA_stats)
-utils_.pickle_dump(os.path.join(ANOVA_path, 'ANOVA_idces.pkl'), ANOVA_idces)
-# -----
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
+
+# -----
+def lighten_color(hex_color, increase_value=80):
+    """
+        Lightens a given hex color by a specified value.
+    """
+    increase_value = min(255, increase_value)
+
+    r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:], 16)
+
+    r, g, b = min(r + increase_value, 255), min(g + increase_value, 255), min(b + increase_value, 255)
+
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+# ----- pie chart
+def plot_pie_chart(fig, ax, values, labels, title=None, colors=None, explode=None):
+    """
+    
+    """
+    if explode is None:
+        explode = np.zeros(len(values))
+    
+    ax.pie(values, colors = colors, labels=labels, autopct='%1.1f%%', pctdistance=0.85, explode=explode)
+    
+    centre_circle = plt.Circle((0,0),0.70, fc='white')
+
+    fig.gca().add_artist(centre_circle)    
+
+    ax.axis('equal')  
+    
+    for i, label in enumerate(labels):
+        if values[i] < 10:  # Adjust threshold for small slices
+            x, y = ax.patches[i].theta1, ax.patches[i].r
+            ax.annotate(label + " - " + str(values[i]) + "%", xy=(x, y), xytext=(x+1.2, y+0.5),
+                         arrowprops=dict(facecolor='black', shrink=0.05))
+    
+    ax.set_title(f'{title}', x=0.45, y=0.45)
+    
 # ------ sigstar functions
 def sigstar(groups, stats, ax, nosort=False):
     """
@@ -91,14 +124,14 @@ def sigstar(groups, stats, ax, nosort=False):
 def makeSignificanceBar(x, y, p, ax):
     """
     makeSignificanceBar produces the bar and defines how many asterisks we get for a 
-    given p-value
+    given p-value ★ *
     """
     if p<=1E-3:
-        stars='★★★'
+        stars='***'
     elif p<=1E-2:
-        stars='★★'
+        stars='**'
     elif p<=0.05:
-        stars='★'
+        stars='*'
     elif np.isnan(p):
         stars='N/A'
     else:
@@ -173,30 +206,168 @@ def generate_threshold(input, alpha=1, delta=2):
     
 # -----
 def lexicographic_order(num_classes):
-    id_order = np.arange(num_classes).astype(str)
+    id_order = np.arange(1, num_classes+1).astype(str)
     id_order_idx = np.argsort(id_order)
     id_order_lexical = id_order[id_order_idx].astype(int)
     
     return id_order_lexical
 
-# -----
-def pickle_dump(file_path, file):
-    if not os.path.exists(file_path):
-        with open(file_path, 'wb') as f:
-            pickle.dump(file, f, protocol=-1)
-        f.close()
-    else:
-        raise RuntimeWarning('[Codwarning] file already exists, continue will add extra data into that file')
+# ----------------------------------------------------------------------------------------------------------------------
+def pickle_dump(file, file_path, cmd='wb'):
 
-def pickle_load(file_path):
+    assert cmd in ['w', 'wb', 'w+', 'wb+']
+    
     if os.path.exists(file_path):
-        with open(file_path, 'rb') as f:
-            loaded_file = pickle.load(f)
-        f.close()
-        return loaded_file
-    else:
-        raise RuntimeError('[Coderror] can not find the file')
+        print(f'\n-----\n[Codwarning] file {file_path} already exists, overwriting...\n-----')
+        
+    with open(file_path, cmd) as f:
+        pickle.dump(file, f, protocol=-1)
+        
 
+def pickle_dump_tqdm(file, file_path, cmd='wb'):
+    
+    assert cmd in ['w', 'wb', 'w+', 'wb+']
+    
+    if os.path.exists(file_path):
+        print(f'\n-----\n[Codwarning] file {file_path} already exists, overwriting...\n-----')
+
+    with tqdm_file_object(file_path, cmd) as f:
+        pickle.dump(file, f, protocol=-1)
+
+# FIXME -----
+def dump(file, file_path, cmd='wb', dump_type='pickle', verbose=True):
+    
+    assert cmd in ['w', 'wb', 'w+', 'wb+']
+    
+    if os.path.exists(file_path):
+        print(f'\n-----\n[Codwarning] file {file_path} already exists, overwriting...\n-----')
+        
+    if dump_type == 'gzip':
+        assert os.path.splitext(file_path)[-1] in ['.gz', '.tar.gz', '.xz', '.tar.xz']
+        with gzip.open(file_path, cmd) as f:
+            pickle.dump(file, f, protocol=-1)
+        
+    elif dump_type == 'pickle':
+        assert os.path.splitext(file_path)[-1] in ['.pkl', '.pickle']
+        with tqdm_file_object(file_path, cmd, verbose) as f:
+            pickle.dump(file, f, protocol=-1)
+        
+    elif dump_type == 'joblib':
+        joblib.dump(file, file_path, compress=0, protocol=-1)     # see joblib.dump() for more details
+
+    else:
+        #raise ValueError(f"Invalid dump_type: {dump_type}. Choose from 'pickle', 'gzip', 'joblib', 'json', 'bson', 'msgpack'.")
+        raise ValueError(f"Invalid dump_type: {dump_type}. Choose from 'pickle', 'gzip', 'joblib'.")
+
+# ----------------------------------------------------------------------------------------------------------------------
+def pickle_load(file_path, cmd='rb'):
+    
+    assert cmd in ['r', 'rb', 'r+', 'rb+']
+    
+    if not os.path.exists(file_path):
+        raise ValueError(f'[Coderror] can not find the file {file_path}')
+    
+    else:
+        with open(file_path, cmd) as f:
+            loaded_file = pickle.load(f)
+        return loaded_file
+
+        
+def pickle_load_tqdm(file_path, cmd='rb'):
+    
+    assert cmd in ['r', 'rb', 'r+', 'rb+']
+    
+    if not os.path.exists(file_path):
+        raise ValueError(f'[Coderror] can not find the file {file_path}')
+    
+    else:
+        with tqdm_file_object(file_path, cmd) as f:
+            loaded_file = pickle.load(f)
+        return loaded_file
+        
+# FIXME -----
+def load(file_path, cmd='rb', load_type='pickle', verbose=True):
+    
+    assert cmd in ['r', 'rb', 'r+', 'rb+']
+    
+    if not os.path.exists(file_path):
+        raise ValueError(f'[Coderror] can not find the file {file_path}')
+        
+    if load_type == 'gzip':
+        assert os.path.splitext(file_path)[-1] in ['.gz', '.tar.gz', '.xz', '.tar.xz']
+        with gzip.open(file_path, cmd) as f:
+            loaded_file = pickle.load(f)
+        
+    elif load_type == 'pickle':
+        assert os.path.splitext(file_path)[-1] in ['.pkl', '.pickle']
+        with tqdm_file_object(file_path, cmd, verbose) as f:
+            loaded_file = pickle.load(f)
+        
+    elif load_type == 'joblib':
+        assert os.path.splitext(file_path)[-1] in ['.pkl', '.pickle', '.joblib']
+        loaded_file = joblib.load(file_path)    
+
+    else:
+        #raise ValueError(f"Invalid load_type: {load_type}. Choose from 'pickle', 'gzip', 'joblib', 'json', 'bson', 'msgpack'.")
+        raise ValueError(f"Invalid load_type: {load_type}. Choose from 'pickle', 'gzip', 'joblib'.")
+    
+    return loaded_file
+
+# FIXME --- test version, create a visible progress bar for loading and saving
+class tqdm_file_object:
+    def __init__(self, file_path, mode='rb', verbose=True):
+        self.file = open(file_path, mode)
+        self.mode = mode
+        self.verbose = verbose
+
+        # init progress bar
+        if 'r' in mode:
+            self.length = os.fstat(self.file.fileno()).st_size
+            if self.verbose:
+                self.tqdm = tqdm(total=self.length, unit='B', unit_scale=True, desc=f'Loading {file_path}')
+        elif 'w' in mode or 'a' in mode:
+            if self.verbose:
+                self.tqdm = tqdm(unit='B', unit_scale=True, desc=f'Saving {file_path}')
+
+    def read(self, size=-1):
+        if 'r' not in self.mode:
+            raise NotImplementedError("read() not implemented on file opened in write mode")
+        data = self.file.read(size)
+        if self.verbose:
+            self.tqdm.update(len(data))
+        return data
+    
+    def readline(self, size=-1):
+        data = self.file.readline(size)
+        if self.verbose:
+            self.tqdm.update(len(data))
+        return data
+
+    def write(self, data):
+        if 'w' not in self.mode and 'a' not in self.mode:
+            raise NotImplementedError("write() not implemented on file opened in read mode")
+        
+        if isinstance(data, pickle.PickleBuffer):     # PickleBuffer, for writing
+            data = bytes(data)
+        
+        self.file.write(data)
+        if self.verbose:
+            self.tqdm.update(len(data))
+            self.tqdm.refresh()  # Refresh the progress bar display
+        os.fsync(self.file.fileno())  # Ensure data is written to disk
+
+    def close(self):
+        if self.verbose:
+            self.tqdm.close()
+        self.file.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
+# -----
 def generate_vgg_layers(model, model_name, T=4):     # FIXME add T and other useful attributes
     
     model_dict = {'vgg5':'O', 'vgg11': 'A', 'vgg13': 'B', 'vgg16': 'D', 'vgg19': 'E'}
@@ -490,19 +661,21 @@ def cal_acc1_acc5(output, target):
     acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
     return acc1, acc5
     
-def SVM_classification(matrix, label, test_size=0.2, random_state=6):
-    # [notice] test_size should be the same with finetune but not 100% necessary, random_state is a personal preference
+# FIXME --- add k-fold entrance
+def SVM_classification(matrix, label, test_size=0.2, random_state=42):
+    """
+        1. default kernel='rbf', non-linear. 
+        2. train_test_split() splits train data and test data randomly, not like n_fold experiments
+        
+        "It should be noticed the performance of svm.SVC() can be highly sensitive 
+        to the choice of kernel, used what kernel depends on the data and the 
+        research problem, sounds like can use GridSearchCV from sklearn.model_selection
+        to perform a grid search for best combination for a model, but perhaps time
+        consuming and computation intensive."
+    """
+    
     matrix_train, matrix_test, label_train, label_test = train_test_split(matrix, label, test_size=test_size, random_state=random_state)
-    
-    '''
-    # [notice] default kernel='rbf', which is non-linear. 
-    
-    It should be noticed the performance of svm.SVC() can be highly sensitive 
-    to the choice of kernel, used what kernel depends on the data and the 
-    research problem, sounds like can use GridSearchCV from sklearn.model_selection
-    to perform a grid search for best combination for a model, but perhaps time
-    consuming and computation intensive.
-    '''
+
     clf = svm.SVC()     # .SVC() .LinearSVC() .NuSVC() ... 
     
     if matrix_train.shape[1] == 0:
@@ -516,10 +689,10 @@ def SVM_classification(matrix, label, test_size=0.2, random_state=6):
       
     return acc
 
-def makeLabels(sample_num, class_num):  # generate a label list
+def makeLabels(num_samples, num_classes):  # generate a label list
     label = []
-    for i in range(class_num):
-        label += [i + 1] * sample_num
+    for i in range(num_classes):
+        label += [i + 1] * num_samples
     return label
 
 def seed_worker(worker_id):
@@ -527,16 +700,20 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
-def imaginary_neurons_vgg(layers, neurons=None):
+# ----------------------------------------------------------------------------------------------------------------------
+def activation_function_vgg(layers:list[str], neurons:list[int]=None):
+    """
+        the final layer is 'fc_3' or 'neuron_3' depends on the model
+    """
     layers_ = [i for i in layers if 'neuron' in i or 'pool' in i or 'fc_3' in i]
     idx = [layers.index(i) for i in layers_]
     layers = layers_
-    if neurons != None:
-        neurons_ = [neurons[i] for i in idx]
-        neurons = neurons_
-        
+    
+    if neurons is not None:
+        neurons = [neurons[i] for i in idx]
+    
     return idx, layers, neurons
-
+    
 def imaginary_neurons_resnet(layers, neurons):
     layers_ = [i for i in layers if 'neuron' in i or 'pool' in i or 'fc' in i]
     idx = [layers.index(i) for i in layers_]

@@ -30,9 +30,12 @@ from scipy.stats import gaussian_kde, norm, skew, lognorm, kstest
 from scipy.spatial.distance import pdist, squareform
 
 from scipy.integrate import quad
+from sklearn.manifold import TSNE
 
 import utils_
 import utils_similarity
+
+import Selectivity_Analysis_Feature
 
 #FIXME - move the DM process from RSA to here
 # =============================================================================
@@ -532,7 +535,7 @@ class Human_Neuron_Records_Process():
             
             ax[1].legend(framealpha=0.5)
             
-            fig.suptitle(f'{model_structure} {target} PDF', y=1, fontsize=28)
+            fig.suptitle(f'{model_structure} {target} PDF', y=0.975, fontsize=28)
             
         else:
 
@@ -595,9 +598,10 @@ class Human_Neuron_Records_Process():
                 ax[1].vlines(np.log10(init_th), 0, ylim_max_auto, linestyle='dotted', color='red', label=f'manual value of {init_th*scale_factor:.2f} ({pct_init:.2f}%)')
                 ax[1].fill_between(x, y_kde, where= (x < np.log10(init_th)), color='gray', alpha=0.5)
             
-            fig.suptitle(f'{model_structure} {target} PDF', y=1, fontsize=28)
+            fig.suptitle(f'{model_structure} {target} PDF', y=0.975, fontsize=28)
         
         return fig
+    
     
     def human_neuron_get_beh(self, ):
         """
@@ -902,8 +906,50 @@ class Human_Neuron_Records_Process():
         
         return sessions_attr
     
+    # --------------
+    def human_plot_pie_chart(self, ):
+        """
+        
+        """
+
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        plt.rcParams.update({'font.size': 14})
+        
+        cell_types = self.human_identity_cell_selection()
+
+        bio_pct = cell_types['cell_types_dict']
+        
+        tmp = [bio_pct[_] for _ in bio_pct.keys() if 'non' in _]
+        tmp = [__ for _ in tmp for __ in _]
+        
+        bio_pct_new = {}
+
+        for _ in bio_pct.keys():
+            if 'non' not in _:
+                bio_pct_new.update({_: bio_pct[_]})
+        
+        bio_pct_new.update({'non_encode': np.array(tmp)})
+        
+        values = [len(bio_pct_new[_]) for _ in bio_pct_new.keys()]
+
+        labels = [f's_SI ({values[0]})', f'w_SI ({values[1]})', f's_MI ({values[2]})', f'w_MI ({values[3]})', f'NE ({values[4]})']
+        
+        colors = ['#ff9999','#66b3ff','#99ff99','#ffcc99', '#c2c2f0']
+        explode = np.array([0.5, 0.1, 0.5, 0.1, 0.])
+        
+        title = f'{np.sum(values)} Cells'
+        
+        fig, ax = plt.subplots(figsize=(10,6))
+        
+        utils_.plot_pie_chart(fig, ax, values, labels, title, colors, explode)
+        
+        fig.savefig(os.path.join(self.human_neuron_stats, 'bio_pct_pie_chart.png'))
+        fig.savefig(os.path.join(self.human_neuron_stats, 'bio_pct_pie_chart.eps'))
+        
+        plt.close()
+        
     # ===== module 2. obtain identity-selective cells
-    def humane_identity_cell_selection(self, ):
+    def human_identity_cell_selection(self, ):
         """
             this function select identity_sensitive cells, identity_encode cells and identity_selective cells
             
@@ -1082,7 +1128,7 @@ class Human_Neuron_Records_Process():
         colors = [colorpool_jet(i) for i in range(50)]
         
         # --- load cell_types
-        cell_stats = self.humane_identity_cell_selection()
+        cell_stats = self.human_identity_cell_selection()
         idx_dict = cell_stats['cell_types_dict']
         
         # --- load feature
@@ -1231,7 +1277,7 @@ class Human_Neuron_Records_Process():
         
         # ----- Firing Rates and cells information
         FR_stats = self.human_neuron_get_firing_rate()
-        cell_stats = self.humane_identity_cell_selection()
+        cell_stats = self.human_identity_cell_selection()
 
         # --- preperation
         neuron_session_idces = self.Spikes['vCell'].reshape(-1) - 1    # <- session_idx ID, 0-based
@@ -1665,7 +1711,7 @@ class Human_Neuron_Records_Process():
         self.meanFR_dict = self.human_neuron_sort_FR(data_type='default')
         self.meanFR_baseline_dict = self.human_neuron_sort_FR(data_type='base')
         
-        self.cell_stats = self.humane_identity_cell_selection()
+        self.cell_stats = self.human_identity_cell_selection()
         self.FR_stats = self.human_neuron_get_firing_rate()
         
         encode_dict = self.cell_stats['encode_id']     # encode_dict
@@ -1860,11 +1906,324 @@ class Human_Neuron_Records_Process():
                             if not behavior[i][key][key_]==beh_m[i][key][key_]:
                                 print(i, key, key_, behavior[i][key][key_]==beh_m[i][key][key_])
                                 
+    # ------------------------------------------------------------------------------------------------------------------
+    # FIXME ----- make it contains more information
+    def human_DR(self, NN_folder, layer='neuron_2'):
+        
+        coor_name = ''.join([NN_folder.split(' ')[-1], ' ', layer])
+        tsne_dict = utils_.pickle_load_tqdm(f'/home/acxyle-workstation/Downloads/{NN_folder}/Analysis/Dimension_Reduction/TSNE/tsne_all.pkl')
+        
+        # --- default: all
+        tsne = tsne_dict[layer]['tsne_dict']['all']
+        
+        self.human_DR_single(coor_name, tsne)
+        
+        
+            
+                                
+    # FIXME ----- need to upgrade
+    def human_DR_single(self, coor_name:str=None, tsne:np.array=None):
+        """
+            this function generates the coordinates based on the 
+        """
+        
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
+        id_labels = np.arange(1, 51)
+        img_labels = np.array([np.array([_]*10) for _ in id_labels]).reshape(-1)
+        
+        meanFR_dict = self.human_neuron_sort_FR()
+        cell_stats = self.human_identity_cell_selection()
+        
+        meanFR = meanFR_dict['meanFR']
+        qualified_cells = meanFR_dict['qualified_cells']
+        
+        self.DR_save_folder = os.path.join(self.human_neuron_stats, 'DR results')
+        utils_.make_dir(self.DR_save_folder)
+        
+        self.tsne_folder = os.path.join(self.DR_save_folder, 'TSNE')
+        utils_.make_dir(self.tsne_folder)
+        
+        # -----
+        if coor_name is None and tsne is None:
+            
+            meanFR_ = np.nan_to_num(meanFR[qualified_cells, :])
+            
+            perplexity = np.min([np.sqrt(len(qualified_cells)), 50*10-1])
+            
+            # --- local coordinates
+            tsne = TSNE(perplexity=perplexity).fit_transform(meanFR_.T)
+            
+            coor_name = 'human_coor'
+
+        else:
+            
+            assert isinstance(tsne, np.ndarray) and coor_name is not None
+            
+        self.tsne_save_folder = os.path.join(self.tsne_folder, coor_name)
+        utils_.make_dir(self.tsne_save_folder)
+            
+        # ----- p_values
+        # --- init
+        DR_sub_type = 'all'
+        layer = 'neuron_2'
+        sq = 0.035
+        
+        feature = np.nan_to_num(self.human_neuron_sort_FR()['meanFR']).T
+        
+        file_path = os.path.join(self.tsne_save_folder, f'{layer}_{DR_sub_type}_sq{sq}.pkl')
+        
+        if os.path.exists(file_path):
+            
+            results = utils_.pickle_load_tqdm(file_path)
+            
+        else:
+            
+            kernel_size, kernel_sigma = Selectivity_Analysis_Feature.Selectivity_Analysis_Feature.get_kernel_size(tsne)
+            gaussian_kernel = Selectivity_Analysis_Feature.Selectivity_Analysis_Feature.gausskernel(kernel_size, kernel_sigma)
+            
+            # --- calculate p values
+            
+            p = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(Selectivity_Analysis_Feature.calculate_density_perm_p)(tsne, feature[:, i], num_perm=1000, kernel=gaussian_kernel) for i in tqdm(np.arange(feature.shape[1]), desc=f'{DR_sub_type}'))
+            
+            # --- wrap results and save
+            results = {
+                       'layer': layer, 
+                       'tsne': tsne,     
+                       'DR_sub_type': DR_sub_type,
+                       'p': p, 
+                       'sigma_scaling_factor': sq, 
+                       'kernel_size': kernel_size, 
+                       'kernel_sigma': kernel_sigma, 
+                       'kernel': gaussian_kernel,
+                       }
+            
+            utils_.pickle_dump(file_path, results)
+            
+        # ----- feature regions
+        # --- init
+       
+        p_values = results['p']
+        gaussian_kernel = results['kernel']
+        tsne = results['tsne']
+        maskFactor = 0.1
+        cluster_size_scaling_factor=0.025
+        alpha=0.01
+
+        # ---
+        file_path = os.path.join(self.tsne_save_folder, f'{layer}_{DR_sub_type}_unit_stats.pkl')
+        
+        if os.path.exists(file_path):
+            
+            results = utils_.pickle_load_tqdm(file_path)
+            
+        else:
+        
+            density_map, convolved_density_map = Selectivity_Analysis_Feature.calculate_convolved_density_map(tsne, None, gaussian_kernel)
+            
+            # --- remove corners and edges with too sparse dots
+            mask = convolved_density_map >= (maskFactor*np.mean(convolved_density_map))
+ 
+            # --- init
+            reversed_sort_dict = {value: [key for key, vals in cell_stats['cell_types_dict'].items() if value in vals][0] for key_list in cell_stats['cell_types_dict'].values() for value in key_list}
+            reversed_sort_dict = {_: reversed_sort_dict[_] for _ in sorted(reversed_sort_dict.keys())}
+            
+            # FIXME upgrade this section --- currently the 'encode_id' is only considering 'selective' units
+
+            cluster_size_threshold = mask.size*cluster_size_scaling_factor
+            
+            # --- Sequential, for test
+            pl = {}
+            
+            units = list(reversed_sort_dict.keys())
+            for unit in tqdm(units, desc='Sequential region selection'):
+                
+                results = Selectivity_Analysis_Feature.feature_region_selection_single_unit(
+
+                                                          tsne, 
+                                                          
+                                                          {unit: reversed_sort_dict[unit]},
+                                                          p_values[unit], 
+                                                          cell_stats['encode_id'][unit],      # ---
+                                                               
+                                                          mask, 
+                                                          cluster_size_threshold, 
+                                                          
+                                                          img_labels,
+                                                          )
+                                            
+                pl[unit] = results
+        
+            feature_selective_stats = {_: pl[_]['feature_selective_unit'] for _ in units if pl[_] is not None and len(pl[_]['feature_selective_unit']) != 0}
+            tmp_pool = [___ for __ in [feature_selective_stats[_] for _ in feature_selective_stats.keys()] for ___ in __]
+            tmp_pool_new = [_.split('encode_')[-1] for _ in tmp_pool]
+            
+            feature_component_stats = {_:pl[_]['feature_component_dict'] for _ in units if pl[_] is not None and len(pl[_]['feature_component_dict']) != 0}
     
+            # feature_unit_sorting
+            feature_units = np.array(list(feature_component_stats.keys()))
+            feature_selective_units = np.array(list(feature_selective_stats.keys()))
+            feature_non_selective_units = np.setdiff1d(feature_units, feature_selective_units)
+            
+            # ---
+            feature_strong_sensitive_mi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'strong_encode_sensitive_mi' in feature_selective_stats[_]])
+            feature_weak_sensitive_mi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'weak_encode_sensitive_mi' in feature_selective_stats[_] and 'strong_encode_sensitive_mi' not in feature_selective_stats[_]])
+            feature_merged_sensitive_mi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'merged_encode_sensitive_mi' in feature_selective_stats[_] and 'strong_encode_sensitive_mi' not in feature_selective_stats[_] and 'weak_encode_sensitive_mi' not in feature_selective_stats[_]])
+            
+            feature_strong_sensitive_wmi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'strong_encode_sensitive_wmi' in feature_selective_stats[_]])
+            feature_weak_sensitive_wmi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'weak_encode_sensitive_wmi' in feature_selective_stats[_] and 'strong_encode_sensitive_wmi' not in feature_selective_stats[_]])
+            feature_merged_sensitive_wmi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'merged_encode_sensitive_wmi' in feature_selective_stats[_] and 'strong_encode_sensitive_wmi' not in feature_selective_stats[_] and 'weak_encode_sensitive_wmi' not in feature_selective_stats[_]])
+            
+            # ---
+            feature_strong_sensitive_si_idx = np.array([_ for _ in feature_selective_stats.keys() if 'strong_encode_sensitive_si' in feature_selective_stats[_]])
+            feature_weak_sensitive_si_idx = np.array([_ for _ in feature_selective_stats.keys() if 'weak_encode_sensitive_si' in feature_selective_stats[_] and 'strong_encode_sensitive_si' not in feature_selective_stats[_]])
+            feature_merged_sensitive_si_idx = np.array([_ for _ in feature_selective_stats.keys() if 'merged_encode_sensitive_si' in feature_selective_stats[_] and 'strong_encode_sensitive_si' not in feature_selective_stats[_] and 'weak_encode_sensitive_si' not in feature_selective_stats[_]])
+            
+            feature_strong_sensitive_wsi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'strong_encode_sensitive_wsi' in feature_selective_stats[_]])
+            feature_weak_sensitive_wsi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'weak_encode_sensitive_wsi' in feature_selective_stats[_] and 'strong_encode_sensitive_wsi' not in feature_selective_stats[_]])
+            feature_merged_sensitive_wsi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'merged_encode_sensitive_wsi' in feature_selective_stats[_] and 'strong_encode_sensitive_wsi' not in feature_selective_stats[_] and 'weak_encode_sensitive_wsi' not in feature_selective_stats[_]])
+            
+            feature_unit_sorting_dict = {
+                'feature_non_selective_units': feature_non_selective_units,
+                
+                'feature_strong_sensitive_mi_idx': feature_strong_sensitive_mi_idx,
+                'feature_weak_sensitive_mi_idx': feature_weak_sensitive_mi_idx,
+                'feature_merged_sensitive_mi_idx': feature_merged_sensitive_mi_idx,
+                
+                'feature_strong_sensitive_wmi_idx': feature_strong_sensitive_wmi_idx,
+                'feature_weak_sensitive_wmi_idx': feature_weak_sensitive_wmi_idx,
+                'feature_merged_sensitive_wmi_idx': feature_merged_sensitive_wmi_idx,
+                
+                'feature_strong_sensitive_si_idx': feature_strong_sensitive_si_idx,
+                'feature_weak_sensitive_si_idx': feature_weak_sensitive_si_idx,
+                'feature_merged_sensitive_si_idx': feature_merged_sensitive_si_idx,
+                
+                'feature_strong_sensitive_wsi_idx': feature_strong_sensitive_wsi_idx,
+                'feature_weak_sensitive_wsi_idx': feature_weak_sensitive_wsi_idx,
+                'feature_merged_sensitive_wsi_idx': feature_merged_sensitive_wsi_idx
+                }
+            
+            # -----
+            results = {
+                'original_results': pl,
+                
+                'preliminary_p_masks': {_:pl[_]['preliminary_p_mask'] for _ in units if pl[_] is not None},
+                'qualified_p_masks': {_:pl[_]['qualified_p_mask'] for _ in units if pl[_] is not None},
+                
+                'feature_selective_stats': feature_selective_stats,
+                
+                'feature_component_stats': feature_component_stats,
+                
+                'feature_unit_sorting_dict': feature_unit_sorting_dict
+                }
+            
+            utils_.pickle_dump(file_path, results)
+            
+        # -----
+        
+        pl = results['original_results']
+        feature_unit_sorting_dict = results['feature_unit_sorting_dict']
+        feature_component_stats = results['feature_component_stats']
+        
+        self.single_unit_folder = os.path.join(self.tsne_save_folder, 'Single Unit Plot')
+        utils_.make_dir(self.single_unit_folder)
+        
+        colors = [plt.get_cmap('jet', 50)(i) for i in range(50)]
+        
+        for plot_type in feature_unit_sorting_dict.keys():     # foe each type
+        
+            plot_types_idces = feature_unit_sorting_dict[plot_type]
+            
+            if len(plot_types_idces) != 0:
+        
+                for unit in plot_types_idces:
+                
+                    Selectivity_Analysis_Feature.Selectivity_Analysis_Feature.plot_region_based_coding_single_unit(unit, tsne, feature, feature_component_stats[unit], 
+                                                     layer='neuron_1', img_labels=img_labels, colors=colors, num_classes=50, plot_type_folder=self.single_unit_folder)
+        
+        # --------------------------------------------------------------------------------------------------------------
+        self.sample_folder = os.path.join(self.tsne_save_folder, 'sample figs')
+        utils_.make_dir(self.sample_folder)
+        
+        for type_ in cell_stats['cell_types_dict'].keys():
+            
+            if cell_stats['cell_types_dict'][type_].size > 0:
+                
+                # ---
+                #cell = np.random.choice(cell_stats['cell_types_dict'][type_])
+                
+                # ---
+                if type_ == 'sensitive_si':
+                    cell = 127
+                elif type_ == 'sensitive_wsi':
+                    cell = 1121
+                elif type_ == 'sensitive_mi':
+                    cell = 56
+                elif type_ == 'sensitive_wmi':
+                    cell = 1287
+                elif type_ == 'sensitive_non_encode':
+                    cell = 998
+                elif type_ == 'non_sensitive_wsi':
+                    cell = 163
+                elif type_ == 'non_sensitive_wmi':
+                    cell = 1618
+                elif type_ == 'non_sensitive_non_encode':
+                    cell = 1525
+            
+                FR = meanFR[cell, :]
+                
+                # -----
+                encoded_ids = np.append(cell_stats['encode_id'][cell]['encode'], cell_stats['encode_id'][cell]['weak_encode']).astype(int)
+                
+                fig, ax = plt.subplots(figsize=(10,10))
+                
+                DR_scatter(ax, tsne, img_labels, FR, encoded_ids)
+                
+                ax.set_title(f'Human Cells DR(TSNE) | Coordinates from: {coor_name} | Unit: {cell} | Type: {type_}')
+
+                fig.tight_layout()
+                fig.savefig(os.path.join(self.sample_folder, f'{type_} {cell}.png'))
+                plt.close()
+
+        print('6')
+                
 # ======================================================================================================================
 # ----- 
 
-              
+def DR_scatter(ax, tsne, img_labels, weights, encoded_ids):
+    
+    x = tsne[:, 0] - np.min(tsne[:, 0])
+    y = tsne[:, 1] - np.min(tsne[:, 1])
+    
+    colors = [plt.get_cmap('jet', 50)(i) for i in range(50)]
+    
+    if np.sum(weights) == 0 or np.sum(weights!=0) ==1:
+        for gg in range(1,51):  # this can be changed to different types of id
+            current_scatter = ax.scatter(x[img_labels == gg], y[img_labels == gg], s=5, color=colors[gg-1], alpha=0.5)
+            
+    else:
+        
+        size_weight = weights / max(weights)     # [notice] can not divide by 0 if all values are 0
+        sizes = np.ones(500) * 15 * (1 + 20 * size_weight)
+        
+        for gg in range(1,51):  # this can be changed to different types of id
+            current_scatter = ax.scatter(x[img_labels == gg], y[img_labels == gg], s=sizes[img_labels==gg], color=colors[gg-1], alpha=0.5)
+        
+        # -----
+        if len(encoded_ids) > 0:
+        
+            handles_featured = []
+            labels = []
+            
+            for gg in encoded_ids:
+                current_scatter = ax.scatter(x[img_labels == gg], y[img_labels == gg], s=sizes[img_labels == gg], color=colors[gg-1], alpha=0.7)
+                handles_featured.append(current_scatter)
+                labels.append(f'{gg}')
+            
+            ax.add_artist(ax.legend(handles=handles_featured, labels=labels, framealpha=0.5))
+        # -----
+    
+
 #FIXME - use one code merge the basis of Monkey and Human Process
 # ======================================================================================================================
 class Monkey_Neuron_Records_Process():
@@ -2058,7 +2417,7 @@ class Monkey_Neuron_Records_Process():
             plt.tight_layout()
             plt.savefig(os.path.join(self.bio_root, f'{title}.png'))
         
- 
+
 # ======================================================================================================================    
 def plot_PSTH(fig, ax, PSTH, title=None, time_point=None, time_start=None, time_end=None):
     """
@@ -2158,17 +2517,27 @@ if __name__ == "__main__":
 
     human_record_process = Human_Neuron_Records_Process()
     
-    human_record_process.human_neuron_sort_FR(data_type='base')
-    #human_record_process.humane_identity_cell_selection()
+    #human_record_process.human_neuron_sort_FR(data_type='default')
+    #human_record_process.human_identity_cell_selection()
     #human_record_process.human_neuron_raster_plot()
     #human_record_process.human_neuron_stacked_encode_map()
     #human_record_process.human_neuron_FR_stats_plot()
+    #human_record_process.human_neuron_DSM_process_sub_id(metrics=['pearson'], used_cell_types=['qualified', 'selective', 'non_selective'], used_id_nums=[10])
     
-    human_record_process.human_neuron_DSM_process_sub_id(metrics=['pearson'], used_cell_types=['qualified', 'selective', 'non_selective'], used_id_nums=[10])
-
+    #human_record_process.human_plot_pie_chart()
+    
     #monkey_record_process = Monkey_Neuron_Records_Process()
     
     #monkey_record_process.Monkey_restructure()
     #monkey_record_process.Monkey_plot_sample_response()
     #monkey_record_process.monkey_neuron_DSM_process(metrics=['euclidean', 'pearson'])
     #monkey_record_process.monkey_neuron_DSM_plot()
+    
+    for folder in [
+                    #'Face Identity Baseline', 'Face Identity VGG16', 
+                    'Face Identity VGG16bn',
+                    'Face Identity SpikingVGG16bn_IF_T4_CelebA2622', 'Face Identity SpikingVGG16bn_IF_T16_CelebA2622',
+                   'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622', 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622',
+                   'Face Identity SpikingVGG16bn_LIF_T4_vggface']:
+        
+        human_record_process.human_DR(folder)

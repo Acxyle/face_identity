@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Sep  5 12:30:55 2023
+
+@author: acxyle-workstation
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torchvision.transforms as transforms
+import numpy as np
+import skimage.data
+import skimage.io
+import skimage.transform
+import os
+import utils_
+from tqdm import tqdm
+
+import vgg
+import torchvision
+import pickle
+
+from spikingjelly.activation_based.model.tv_ref_classify import presets, utils
+
+model = vgg.vgg16(num_classes=50)
+
+for i,layer in enumerate(model.modules()):
+    if not isinstance(layer, vgg.VGG) and not isinstance(layer, torch.nn.Sequential):
+        print(i, layer)
+
+device = 'cpu'
+pth_path = "/home/acxyle-workstation/Downloads/Face Identity Baseline/params.pth"
+params = torch.load(pth_path, map_location=torch.device(device))
+
+model.load_state_dict(params)
+model.eval()
+
+print('model params loaded')
+
+x = torch.randn(1,3,224,224)
+y = model(x)
+
+for idx, layer in enumerate(y):
+    print(idx, layer.shape, layer.numel())
+    
+layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model, 'vgg16')
+
+# -----
+batch_size = 1
+valdir = '/home/acxyle-workstation/Downloads/celeb50/'
+      
+"""
+    this presets.ClassificationPresetEval() merges some commonly used operations, euqal to:
+        
+        transforms.Compose(
+            [
+                transforms.Resize(resize_size, interpolation=interpolation),     # -> resize and crop
+                transforms.CenterCrop(crop_size),
+                transforms.PILToTensor(),     # -> convert img to tensor
+                transforms.ConvertImageDtype(torch.float),     
+                transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),     # normalization
+            ]
+"""
+preprocessing = presets.ClassificationPresetEval(crop_size=224, resize_size=224)     
+dataset_test = torchvision.datasets.ImageFolder(valdir, preprocessing)
+
+test_sampler = torch.utils.data.SequentialSampler(dataset_test)
+
+data_loader_test = torch.utils.data.DataLoader(
+                                            dataset_test, 
+                                            batch_size=batch_size, 
+                                            sampler=test_sampler, 
+                                            num_workers=os.cpu_count(), 
+                                            pin_memory= False,
+                                            worker_init_fn=utils_.seed_worker
+                                            )
+    
+criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+
+output_dir = '/home/acxyle-workstation/Downloads/Face Identity Baseline/Features'
+
+with torch.no_grad():
+    for idx, layer_ in tqdm(enumerate(layers)):     # for each layer
+
+        feature_matrix = []
+        
+        count = 0
+        
+        metric_logger = utils.MetricLogger(delimiter="  ")
+        header = "Test: {}".format(layer_)
+
+        num_processed_samples = 0
+        
+        for image, target in metric_logger.log_every(data_loader_test, -1, header):     # for each image
+                
+            image = image.to(device, non_blocking=True)   
+            target = target.to(device, non_blocking=True)
+            
+            feature_list = model(image)
+
+            output=feature_list[-1]
+            #output=feature_list
+               
+            loss = criterion(output, target)
+            acc1, acc5 = utils_.cal_acc1_acc5(output, target)
+    
+            batch_size = target.shape[0]
+                
+            metric_logger.update(loss=loss.item())
+            metric_logger.meters["acc1"].update(acc1.item(), n=batch_size)
+            metric_logger.meters["acc5"].update(acc5.item(), n=batch_size)
+            num_processed_samples += batch_size
+
+            feature_strip = feature_list[idx].squeeze(0).flatten()
+            
+            if feature_strip.shape[0] != neurons[idx]:
+                raise RuntimeError('[Coderror] generated feature_strip ({}) is not exactly the same with neurons ({})'.format(feature_strip.shape[0], neurons[idx]))
+
+            feature_matrix.append(feature_strip)
+            
+            #print(' | layer: ', idx, layer_, ' | feature_strip:', feature_strip.shape[0], 
+            #      ' | label: {}, prediction: {}'.format(target.data.detach().numpy()[0], np.argmax(output.squeeze(0).detach().cpu().numpy())),  
+            #      ' | image count: ', count, ' | feature_matrix: ({}, {})'.format(len(feature_matrix), feature_strip.shape[0]))
+            count += 1
+                            
+        num_processed_samples = utils.reduce_across_processes(num_processed_samples)
+        metric_logger.synchronize_between_processes()
+        test_loss, test_acc1, test_acc5 = metric_logger.loss.global_avg, metric_logger.acc1.global_avg, metric_logger.acc5.global_avg
+        
+        print(f'Test: test_acc1={test_acc1:.3f}, test_acc5={test_acc5:.3f}, test_loss={test_loss:.6f}')
+        
+        feature_matrix = torch.stack(feature_matrix, dim=0)
+        feature_matrix = feature_matrix.detach().cpu().numpy()
+        
+        with open(output_dir + '/' + layer_ + '.pkl',  'wb') as f:
+            pickle.dump(feature_matrix, f, protocol=-1)

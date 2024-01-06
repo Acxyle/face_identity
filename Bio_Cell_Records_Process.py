@@ -29,7 +29,7 @@ from matplotlib import gridspec
 from scipy.stats import gaussian_kde, norm, skew, lognorm, kstest
 from scipy.spatial.distance import pdist, squareform
 
-from scipy.integrate import quad
+from scipy.integrate import quad, IntegrationWarning
 from sklearn.manifold import TSNE
 
 import utils_
@@ -440,30 +440,39 @@ class Human_Neuron_Records_Process():
         
         return FR_stats
         
+    # FIXME ---
     def human_neuron_FR_stats_plot(self, init:float=0.15):
+        """
+            1. bio data > 0, so use feature/scaling_factor rather than (feature-min(feature))/scaling_factor
+            2. this function did not remove the responses of repeated images
+        """
         
         FR_stats = self.human_neuron_get_firing_rate()
         
-        feature = [FR_stats[_]['spike_count_0_2000'] for _ in range(len(FR_stats))]
-        feature = np.array([np.mean(_[~np.isnan(_)]) for _ in feature])
+        feature = [FR_stats[_]['spike_count_0_2000'] for _ in range(len(FR_stats))]     
+        feature = np.array([np.mean(_[~np.isnan(_)]) for _ in feature])     # (2082,)
         
-        scale_factor = (np.max(feature)-np.min(feature))
+        scaling_factor = (np.max(feature)-np.min(feature))
         
-        init_th = init/scale_factor
-        feature = feature/scale_factor
+        init_th = init/scaling_factor
+        feature = feature/scaling_factor     # (0, 1)
         
-        fig = self.neuron_FR_stats_plot(feature=feature, init_th=init_th, scale_factor=scale_factor)
+        fig = self.neuron_FR_stats_plot(feature=feature, init_th=init_th, scaling_factor=scaling_factor)
         
         plt.tight_layout()
         
         fig.savefig(os.path.join(self.human_neuron_stats, 'neuron PDF.png'))
         fig.savefig(os.path.join(self.human_neuron_stats, 'neuron PDF.eps'))
     
+    # ------------------------------------------------------------------------------------------------------------------
+    # FIXME --- needed to be simplified
     @staticmethod
-    def neuron_FR_stats_plot(model_structure:str='human MTL', target:str='cell', feature:np.array=None, init_th=None, scale_factor:float=1.):
+    def neuron_FR_stats_plot(model_structure:str='human MTL', target:str='cell', feature:np.array=None, init_threshold=None, scaling_factor:float=1.):
         """
             this function plots the log gaussian hist and PDF of human neuron data
         """
+        
+        warnings.filterwarnings('ignore', category=IntegrationWarning)     # [caution]
         
         plt.rcParams.update({"font.family": "Times New Roman"})
         plt.rcParams.update({'font.size': 18})
@@ -475,130 +484,119 @@ class Human_Neuron_Records_Process():
         else:
             raise RuntimeError(f'[Coderror] invalid feature shape {feature.shape}')
         
-        if np.any(feature<0):
+        # -----
+        def _plot_hist(ax, feature, title, plot_fitted_PDF=False, init_threshold=None):
+            
+            kde, x, y_kde, feature_mean, feature_std, feature_radius, pct = _hist_with_legend(feature, )
+            
+            (hist_pct, hist_x, _) = ax.hist(feature, bins=100, density=True)
+            
+            if (max_val := np.max(hist_pct)) > 5:
+                ylim_max = np.ceil(max_val / 10) * 10
+            else:
+                ylim_max = max_val * 1.5
+            
+            ax.set_ylim([0, ylim_max])
+            
+            ax.set_title(f'{title}', fontsize=24)
+            
+            ylim_max_auto=ax.get_ylim()[1]
+            
+            if plot_fitted_PDF:
+                
+                ax.vlines(np.mean(feature), 0, ylim_max_auto, color='red', label='mean')
+                
+                y_norm = stats.norm.pdf(x, feature_mean, feature_std)
+                
+                ax.plot(x, y_kde, linestyle='--', linewidth=2, color='orange', label='gaussian_kde')
+                ax.plot(x, y_norm, linestyle='--', linewidth=2, color='red', label='gaussian_fit')
+            
+            if init_threshold:
+                 
+                pct_init = quad(kde, -np.inf, np.log10(init_threshold))[0]*100
+                
+                ax.vlines(init_threshold, 0, ylim_max_auto, linestyle='--', color='red', alpha=0.5, label=f'manual value of {init_threshold*scaling_factor:.2f} ({pct_init:.2f}%)')
+                
+                ax.legend(framealpha=0.5)
+
+            return kde, x, y_kde, feature_mean, feature_std, feature_radius, pct, ylim_max_auto
+        
+        def _plot_hist_with_legend(ax, feature, title, init_threshold=None):
+            
+            kde, x, y_kde, feature_mean, feature_std, feature_radius, pct, ylim_max_auto = _plot_hist(ax, feature, title, True)
+
+            for _ in range(3):
+                
+                ax.vlines(feature_mean-(_+1)*feature_std, 0, ylim_max_auto, linestyle='dotted', color='gold', label=f'p < mean-{(_+1)}std: {pct[_][0]:.2f}%')
+                ax.vlines(feature_mean+(_+1)*feature_std, 0, ylim_max_auto, linestyle='dotted', color='purple', label=f'p > mean+{(_+1)}std: {pct[_][1]:.2f}%')
+            
+            ax.legend(framealpha=0.5)
+            
+            ax.set_xlim([feature_mean-feature_radius, feature_mean+feature_radius])
+            
+            if init_threshold:
+                
+                pct_init = quad(kde, -np.inf, np.log10(init_threshold))[0]*100
+                
+                ax.vlines(np.log10(init_threshold), 0, ylim_max_auto, linestyle='dotted', color='red', label=f'manual value of {init_threshold*scaling_factor:.2f} ({pct_init:.2f}%)')
+                
+                ax.fill_between(x, y_kde, where= (x < np.log10(init_threshold)), color='gray', alpha=0.5)
+        
+        def _hist(feature, ):
             
             kde = gaussian_kde(feature)     # kde estimation
             
-            x = np.linspace(np.min(feature), np.max(feature)*1.1, 1000)
-            y_kde = kde(x)
-            
             feature_mean = np.mean(feature)
             feature_std = np.std(feature)
-            y_norm = stats.norm.pdf(x, feature_mean, feature_std)
+            
+            feature_radius = np.max([np.max(feature)-feature_mean, feature_mean-np.min(feature)])
+            
+            x = np.linspace(feature_mean-feature_radius, feature_mean+feature_radius, 1000)
+            y_kde = kde(x)
+            
+            return kde, x, y_kde, feature_mean, feature_std, feature_radius
+        
+        def _hist_with_legend(feature, ):
+            
+            # --- feature < 0 --- for ANN ---> calculate kde first
+            kde, x, y_kde, feature_mean, feature_std, feature_radius = _hist(feature, )
     
             pct = []
             for _ in range(1,4):
-                pct1 = quad(kde, -np.inf, feature_mean-_*feature_std)[0]*100
-                pct2 = quad(kde, feature_mean+_*feature_std, np.inf)[0]*100
+                pct1 = quad(kde, -np.inf, feature_mean-_*feature_std, limit=100)[0]*100
+                pct2 = quad(kde, feature_mean+_*feature_std, np.inf, limit=100)[0]*100
                 pct.append([pct1, pct2])
             
+            return kde, x, y_kde, feature_mean, feature_std, feature_radius, pct
+        
+        # -----
+        if np.any(feature<0):     # -> details for original data, simple for log data
+            
+            # --- original
             fig, ax = plt.subplots(1, 2, figsize=(20,10))
             
-            (hist_pct, hist_x, _) = ax[0].hist(feature, bins=100, density=True)
-            ylim_max = np.ceil(np.max(hist_pct)/10)*10
+            _plot_hist_with_legend(ax[0], feature, 'hist of original data', init_threshold=init_threshold)
             
-            ax[0].plot(x, y_kde, linestyle='--', linewidth=2, color='orange', label='gaussian_kde')
-            ax[0].plot(x, y_norm, linestyle='--', linewidth=2, color='red', label='gaussian')
-            
-            ax[0].set_ylim([0, ylim_max])
-            ax[0].set_title('hist of original data', fontsize=24)
-            
-            ylim_max_auto = ax[0].get_ylim()[1]
-            
-            for _ in range(3):
-                
-                ax[0].vlines(feature_mean-(_+1)*feature_std, 0, ylim_max_auto, linestyle='dotted', color='gold', label=f'p < mean-{(_+1)}std: {pct[_][0]:.2f}%')
-                ax[0].vlines(feature_mean+(_+1)*feature_std, 0, ylim_max_auto, linestyle='dotted', color='purple', label=f'p > mean+{(_+1)}std: {pct[_][1]:.2f}%')
-            
-            ax[0].legend(framealpha=0.5)
-            
+            # --- log
             feature_log = np.log10(feature[feature>0])
             
-            kde = gaussian_kde(feature_log) 
-            
-            x = np.linspace(np.min(feature_log), (np.max(feature_log)+2)*1.2, 1000)
-            y_kde = kde(x)
-            
-            feature_log_mean = np.mean(feature_log)
-            feature_log_std = np.std(feature_log)
-            y_norm = stats.norm.pdf(x, feature_log_mean, feature_log_std)
-            
-            x_radius = max(feature_log_mean-np.min(feature_log), np.max(feature_log)-feature_log_mean)
-            
-            ax[1].hist(feature_log, bins=100, density=True)
-            ax[1].set_xlim([feature_log_mean-x_radius, feature_log_mean+x_radius])
-            
-            ax[1].plot(x, y_kde, linestyle='--', linewidth=2, color='orange', label='gaussian_kde')
-            ax[1].plot(x, y_norm, linestyle='--', linewidth=2, color='red', label='gaussian')
-            
-            ax[1].set_title(f'log10 hist and gaussian kde excluse 0 ({(feature.size-feature_log.size)/feature.size*100:.2f}%)', fontsize=24)
-            
-            ax[1].legend(framealpha=0.5)
+            _plot_hist(ax[1], feature_log, f'log10 hist and gaussian kde exclude <=0 ({(feature.size-feature_log.size)/feature.size*100:.2f}%)', True, init_threshold=init_threshold)
             
             fig.suptitle(f'{model_structure} {target} PDF', y=0.975, fontsize=28)
             
-        else:
+        else:   # -> simple for original data, details for log data
 
             fig, ax = plt.subplots(1, 2, figsize=(20,10))
             
-            (hist_pct, hist_x, _) = ax[0].hist(feature, bins=100, density=True)
-            ylim_max = np.ceil(np.max(hist_pct)/10)*10
+            _plot_hist(ax[0], feature, 'hist of original data', init_threshold=init_threshold)
             
-            ax[0].set_ylim([0, ylim_max])
-            
-            y_array = np.arange(0, ylim_max+1)
-            y_array = np.array([_ for _ in y_array if _%10==0])
-            
-            ax[0].set_title('hist of original data', fontsize=24)
-     
-            # ---
+            # --- log
             feature_log = np.log10(feature[feature>0])
             
-            kde = gaussian_kde(feature_log)
-            
-            x = np.linspace(np.min(feature_log), (np.max(feature_log)+1)*1.2, 1000)     # extend the x_lim and truncated later
-            y_kde = kde(x)
-            
-            feature_log_mean = np.mean(feature_log)
-            feature_log_std = np.std(feature_log)
-            y_norm = stats.norm.pdf(x, feature_log_mean, feature_log_std)
-    
-            pct = []
-            for _ in range(1,4):
-                pct1 = quad(kde, -np.inf, feature_log_mean-_*feature_log_std)[0]*100
-                pct2 = quad(kde, feature_log_mean+_*feature_log_std, np.inf)[0]*100
-                pct.append([pct1, pct2])   
-     
-            ax[1].hist(feature_log, bins=100, density=True)
-            ax[1].plot(x, y_kde, linestyle='--', color='orange', linewidth=2,  label='gaussian_kde')
-            ax[1].plot(x, y_norm, linestyle='--', color='red', linewidth=2,  label='gaussian')
-            ax[1].set_title(f'log10 hist and gaussian kde excluse 0 ({(feature.size-feature_log.size)/feature.size*100:.2f}%)', fontsize=24)
-            
-            ylim_max_auto = ax[1].get_ylim()[1]
-            
-            ax[1].vlines(np.mean(feature_log), 0, ylim_max_auto, color='red', label='mean')
-            
-            for _ in range(3):
-                
-                ax[1].vlines(feature_log_mean-(_+1)*feature_log_std, 0, ylim_max_auto, linestyle='dotted', color='gold', label=f'p < mean-{(_+1)}std ({pct[_][0]:.2f}%)')
-                ax[1].vlines(feature_log_mean+(_+1)*feature_log_std, 0, ylim_max_auto, linestyle='dotted', color='purple', label=f'p > mean+{(_+1)}std ({pct[_][1]:.2f}%)')
-    
-            x_radius = max(feature_log_mean-np.min(feature_log), np.max(feature_log)-feature_log_mean)
-            
-            ax[1].set_xlim([feature_log_mean-x_radius, feature_log_mean+x_radius])
-            ax[1].set_ylim([0, ylim_max_auto])
-            
-            ax[1].legend(framealpha=0.5)
-            
-            if init_th is not None:
-                
-                pct_init = quad(kde, -np.inf, np.log10(init_th))[0]*100
-                ax[0].vlines(init_th, 0, ylim_max, linestyle='--', color='red', alpha=0.5, label=f'manual value of {init_th*scale_factor:.2f} ({pct_init:.2f}%)')
-                ax[0].legend(framealpha=0.5)
-                ax[1].vlines(np.log10(init_th), 0, ylim_max_auto, linestyle='dotted', color='red', label=f'manual value of {init_th*scale_factor:.2f} ({pct_init:.2f}%)')
-                ax[1].fill_between(x, y_kde, where= (x < np.log10(init_th)), color='gray', alpha=0.5)
-            
+            _plot_hist_with_legend(ax[1], feature_log, f'log10 hist and gaussian kde excluse <=0 ({(feature.size-feature_log.size)/feature.size*100:.2f}%)', init_threshold=init_threshold)
+
             fig.suptitle(f'{model_structure} {target} PDF', y=0.975, fontsize=28)
+            
         
         return fig
     

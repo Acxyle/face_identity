@@ -26,37 +26,23 @@ Created on Wed Feb 15 13:54:55 2023
 """
 
 import os
-import math
-import pickle
 import numpy as np
 import matplotlib.pyplot as plt
-import pandas as pd
 from tqdm import tqdm
-import random
-import argparse
 import gc
 import logging
 import warnings
-
-import psutil
-import sys
-
-#from functools import reduce
-
-import spiking_vgg, spiking_resnet, sew_resnet
-from spikingjelly.activation_based import surrogate, neuron, functional
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
-
 from joblib import Parallel, delayed
-from scipy.interpolate import interp1d, RegularGridInterpolator, LinearNDInterpolator, CloughTocher2DInterpolator
+from scipy.interpolate import interp1d
 from collections import Counter
 
 from scipy.stats import gaussian_kde
 from matplotlib import gridspec
 
-import vgg, resnet
-import utils_
+
 from Bio_Cell_Records_Process import Human_Neuron_Records_Process
+import utils_
+import models_
 
 
 class Encode_feaquency_analyzer():
@@ -359,6 +345,7 @@ class Encode_feaquency_analyzer():
     
         print(f'[Codinfo] Executing plot_Encode_pct() with num_types={num_types}')
         
+        # --- label correction
         if 'basic_type' in self.Sort_dict['neuron_1'].keys() and 'si_idx' in self.Sort_dict['neuron_1']['basic_type'].keys():
             
             for layer in self.Sort_dict.keys():
@@ -399,7 +386,7 @@ class Encode_feaquency_analyzer():
         if num_types == 5:
             
             # ----- 5 types
-            Encode_types_pct = self.obtain_Encode_types_pct(self.layers, self.neurons, self.Sort_dict, num_types=num_types)
+            Encode_types_pct = self.obtain_Encode_types_pct(self.layers, self.neurons, self.Sort_dict.copy(), num_types=num_types)
             
             # --- 1. all
             curve_dict = self.obtain_Encode_types_curve_dict(Encode_types_pct)
@@ -430,7 +417,7 @@ class Encode_feaquency_analyzer():
             
         elif num_types == 23:
             
-            Encode_types_pct = self.obtain_Encode_types_pct(self.layers, self.neurons, self.Sort_dict, num_types=num_types)
+            Encode_types_pct = self.obtain_Encode_types_pct(self.layers, self.neurons, self.Sort_dict.copy(), num_types=num_types)
             
             # ----- all operation
             figs, axes = plt.subplots(2,2,figsize=(24,12))
@@ -871,6 +858,7 @@ class Encode_feaquency_analyzer():
                     target_units = np.array([])
                     
                     for type_ in unit_type:
+                        
                         target_units = np.concatenate((target_units, self.Sort_dict[layer]['advanced_type'][type_]))     
                     
                     # -----
@@ -1820,7 +1808,7 @@ class Encode_feaquency_analyzer():
         
     # ------------------------------------------------------------------------------------------------------------------
     #FIXME 
-    def NN_unit_FR_stats_plot(self, ):
+    def plot_unit_responses_PDF(self, ):
         """
             [Jan 3, 2023] Task: need to add more section to compare the distribution of different types of units
         """
@@ -1833,12 +1821,15 @@ class Encode_feaquency_analyzer():
         
         feature_path_list = [os.path.join(self.root, layer+'.pkl') for layer in self.layers]
         
-        Parallel(n_jobs=-1)(delayed(NN_unit_FR_stats_plot_single)(layer, save_path, feature_path_list[idx], self.model_structure+f' {layer}') for idx, layer in tqdm(enumerate(self.layers), desc=f'[{self.model_structure}] unit PDF'))
+        Parallel(n_jobs=int(os.cpu_count()/2))(delayed(NN_unit_FR_stats_plot_single)(layer, save_path, feature_path_list[idx], self.model_structure+f'_{layer}') for idx, layer in tqdm(enumerate(self.layers), desc=f'[{self.model_structure}] unit PDF'))
         
-        print('[Codinfo] NN_unit_FR_stats_plot() finished.')
+        #for idx, layer in tqdm(enumerate(self.layers), desc=f'[{self.model_structure}] unit PDF'):
+        #    NN_unit_FR_stats_plot_single(layer, save_path, feature_path_list[idx], self.model_structure+f'_{layer}')
+        
+        print('[Codinfo] plot_unit_responses_PDF() finished.')
         
         
-    def NN_plot_pie_chart(self, target_layers=None):
+    def plot_pct_pie_chart(self, target_layers=None):
         
         if not hasattr(self, 'Sort_dict'):
             self.Sort_dict = utils_.load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
@@ -1884,7 +1875,7 @@ class Encode_feaquency_analyzer():
             
             plt.close()
         
-        print('[Codinfo] NN_plot_pie_chart() finished.')
+        print('[Codinfo] plot_pct_pie_chart() finished.')
             
         
 # ----------------------------------------------------------------------------------------------------------------------
@@ -2005,16 +1996,19 @@ def plot_single_subsubplot(ax_left, ax_right, values, color, scaling_factor=0.1)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+#TODO - consider the distribution of different types of units
 def NN_unit_FR_stats_plot_single(layer, save_path, feature_path, model_structure):
     
-    logging.getLogger('matplotlib').setLevel(logging.ERROR)
-    
-    feature = utils_.load(feature_path, verbose=False)
-    
-    fig = Human_Neuron_Records_Process.neuron_FR_stats_plot(model_structure, 'unit', feature)
-    
     with warnings.catch_warnings():
+        
         warnings.simplefilter(action='ignore')
+        logging.getLogger('matplotlib').setLevel(logging.ERROR)
+        
+        feature = utils_.load(feature_path, verbose=False)
+        
+        fig = Human_Neuron_Records_Process.neuron_FR_stats_plot(model_structure, 'unit', feature)
+        
+        plt.tight_layout()
         fig.savefig(os.path.join(save_path, layer+'.png'))
         fig.savefig(os.path.join(save_path, layer+'.eps'))
     
@@ -2057,7 +2051,7 @@ if __name__ == "__main__":
     
     model_name = 'vgg16_bn'
     
-    model_ = vgg.__dict__[model_name](num_classes=50)
+    model_ = models_.vgg.__dict__[model_name](num_classes=50)
     layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, model_name)
 
     root_dir = '/home/acxyle-workstation/Downloads'
@@ -2068,7 +2062,7 @@ if __name__ == "__main__":
                     #'Face Identity Baseline', 
                     #'Face Identity VGG16', 
                     #'Face Identity VGG16bn',
-                    'Face Identity SpikingVGG16bn_IF_T4_CelebA2622', 
+                    'Face Identity SpikingVGG16bn_IF_T4_CelebA2622_fold_3', 
                     #'Face Identity SpikingVGG16bn_IF_T16_CelebA2622',
                     #'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622', 
                     #'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622',
@@ -2088,15 +2082,11 @@ if __name__ == "__main__":
         # ---
 
         #selectivity_analyzer.SVM()
-        selectivity_analyzer.SVM_plot()
+        #selectivity_analyzer.SVM_plot()
     
-    #selectivity_analyzer.plot_stacked_responses()
-    #selectivity_analyzer.plot_sample_responses()
-    
-    #selectivity_analyzer.NN_unit_FR_stats_plot()
-    
-    # ---
-    #selectivity_analyzer.NN_unit_FR_stats_plot()
-    
-    #selectivity_analyzer.NN_plot_pie_chart()
+        #selectivity_analyzer.plot_stacked_responses()
+        #selectivity_analyzer.plot_sample_responses()
+        
+        selectivity_analyzer.plot_unit_responses_PDF()
+        #selectivity_analyzer.plot_pct_pie_chart()
     

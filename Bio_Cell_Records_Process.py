@@ -457,7 +457,7 @@ class Human_Neuron_Records_Process():
         init_th = init/scaling_factor
         feature = feature/scaling_factor     # (0, 1)
         
-        fig = self.neuron_FR_stats_plot(feature=feature, init_th=init_th, scaling_factor=scaling_factor)
+        fig = self.neuron_FR_stats_plot(feature=feature, init_threshold=init_th, scaling_factor=scaling_factor)
         
         plt.tight_layout()
         
@@ -485,89 +485,52 @@ class Human_Neuron_Records_Process():
             raise RuntimeError(f'[Coderror] invalid feature shape {feature.shape}')
         
         # -----
-        def _plot_hist(ax, feature, title, plot_fitted_PDF=False, init_threshold=None):
+        def _hist(feature):
             
-            kde, x, y_kde, feature_mean, feature_std, feature_radius, pct = _hist_with_legend(feature, )
-            
-            (hist_pct, hist_x, _) = ax.hist(feature, bins=100, density=True)
-            
-            if (max_val := np.max(hist_pct)) > 5:
-                ylim_max = np.ceil(max_val / 10) * 10
-            else:
-                ylim_max = max_val * 1.5
-            
-            ax.set_ylim([0, ylim_max])
-            
-            ax.set_title(f'{title}', fontsize=24)
-            
-            ylim_max_auto=ax.get_ylim()[1]
-            
-            if plot_fitted_PDF:
-                
-                ax.vlines(np.mean(feature), 0, ylim_max_auto, color='red', label='mean')
-                
-                y_norm = stats.norm.pdf(x, feature_mean, feature_std)
-                
-                ax.plot(x, y_kde, linestyle='--', linewidth=2, color='orange', label='gaussian_kde')
-                ax.plot(x, y_norm, linestyle='--', linewidth=2, color='red', label='gaussian_fit')
-            
-            if init_threshold:
-                 
-                pct_init = quad(kde, -np.inf, np.log10(init_threshold))[0]*100
-                
-                ax.vlines(init_threshold, 0, ylim_max_auto, linestyle='--', color='red', alpha=0.5, label=f'manual value of {init_threshold*scaling_factor:.2f} ({pct_init:.2f}%)')
-                
-                ax.legend(framealpha=0.5)
-
-            return kde, x, y_kde, feature_mean, feature_std, feature_radius, pct, ylim_max_auto
-        
-        def _plot_hist_with_legend(ax, feature, title, init_threshold=None):
-            
-            kde, x, y_kde, feature_mean, feature_std, feature_radius, pct, ylim_max_auto = _plot_hist(ax, feature, title, True)
-
-            for _ in range(3):
-                
-                ax.vlines(feature_mean-(_+1)*feature_std, 0, ylim_max_auto, linestyle='dotted', color='gold', label=f'p < mean-{(_+1)}std: {pct[_][0]:.2f}%')
-                ax.vlines(feature_mean+(_+1)*feature_std, 0, ylim_max_auto, linestyle='dotted', color='purple', label=f'p > mean+{(_+1)}std: {pct[_][1]:.2f}%')
-            
-            ax.legend(framealpha=0.5)
-            
-            ax.set_xlim([feature_mean-feature_radius, feature_mean+feature_radius])
-            
-            if init_threshold:
-                
-                pct_init = quad(kde, -np.inf, np.log10(init_threshold))[0]*100
-                
-                ax.vlines(np.log10(init_threshold), 0, ylim_max_auto, linestyle='dotted', color='red', label=f'manual value of {init_threshold*scaling_factor:.2f} ({pct_init:.2f}%)')
-                
-                ax.fill_between(x, y_kde, where= (x < np.log10(init_threshold)), color='gray', alpha=0.5)
-        
-        def _hist(feature, ):
-            
-            kde = gaussian_kde(feature)     # kde estimation
-            
+            kde = gaussian_kde(feature)
             feature_mean = np.mean(feature)
             feature_std = np.std(feature)
-            
-            feature_radius = np.max([np.max(feature)-feature_mean, feature_mean-np.min(feature)])
-            
-            x = np.linspace(feature_mean-feature_radius, feature_mean+feature_radius, 1000)
+            feature_radius = max(np.max(feature) - feature_mean, feature_mean - np.min(feature))
+            x = np.linspace(feature_mean - feature_radius, feature_mean + feature_radius, 1000)
             y_kde = kde(x)
             
             return kde, x, y_kde, feature_mean, feature_std, feature_radius
         
-        def _hist_with_legend(feature, ):
+        def _plot_hist(ax, feature, title, plot_fitted_PDF=False, plot_legend=False, init_threshold=None):
             
-            # --- feature < 0 --- for ANN ---> calculate kde first
-            kde, x, y_kde, feature_mean, feature_std, feature_radius = _hist(feature, )
-    
-            pct = []
-            for _ in range(1,4):
-                pct1 = quad(kde, -np.inf, feature_mean-_*feature_std, limit=100)[0]*100
-                pct2 = quad(kde, feature_mean+_*feature_std, np.inf, limit=100)[0]*100
-                pct.append([pct1, pct2])
+            kde, x, y_kde, feature_mean, feature_std, feature_radius = _hist(feature)
             
-            return kde, x, y_kde, feature_mean, feature_std, feature_radius, pct
+            # ---
+            (hist_pct, hist_x, _) = ax.hist(feature, bins=100, density=True)
+            ylim_max = max(np.ceil(np.max(hist_pct) / 10) * 10, 1.5 * np.max(hist_pct)) if np.max(hist_pct) > 5 else np.max(hist_pct) * 1.5
+            ax.set_ylim([0, ylim_max])
+            ax.set_title(title, fontsize=24)
+            ylim_max_auto = ax.get_ylim()[1]
+            
+            # ---
+            if plot_fitted_PDF:
+                ax.vlines(np.mean(feature), 0, ylim_max_auto, color='red', label='mean')
+                y_norm = stats.norm.pdf(x, feature_mean, feature_std)
+                ax.plot(x, y_kde, linestyle='--', linewidth=2, color='orange', label='gaussian_kde')
+                ax.plot(x, y_norm, linestyle='--', linewidth=2, color='red', label='gaussian_fit')
+            
+            # ---
+            if plot_legend:
+                for i in range(3):
+                    pct_below = quad(kde, -np.inf, feature_mean - (i + 1) * feature_std)[0] * 100
+                    pct_above = quad(kde, feature_mean + (i + 1) * feature_std, np.inf)[0] * 100
+                    ax.vlines(feature_mean - (i + 1) * feature_std, 0, ylim_max_auto, linestyle='dotted', color='gold', label=f'p < mean-{i+1}std: {pct_below:.2f}%')
+                    ax.vlines(feature_mean + (i + 1) * feature_std, 0, ylim_max_auto, linestyle='dotted', color='purple', label=f'p > mean+{i+1}std: {pct_above:.2f}%')
+                ax.legend(framealpha=0.5)
+                ax.set_xlim([feature_mean - feature_radius, feature_mean + feature_radius])
+        
+            # ---
+            if init_threshold:
+                pct_init = quad(kde, -np.inf, np.log10(init_threshold))[0] * 100
+                ax.vlines(np.log10(init_threshold), 0, ylim_max_auto, linestyle='dotted', color='red', label=f'manual value of {init_threshold:.2f} ({pct_init:.2f}%)')
+                ax.fill_between(x, y_kde, where=(x < np.log10(init_threshold)), color='gray', alpha=0.5)
+  
+            return kde, x, y_kde, feature_mean, feature_std, feature_radius
         
         # -----
         if np.any(feature<0):     # -> details for original data, simple for log data
@@ -575,7 +538,7 @@ class Human_Neuron_Records_Process():
             # --- original
             fig, ax = plt.subplots(1, 2, figsize=(20,10))
             
-            _plot_hist_with_legend(ax[0], feature, 'hist of original data', init_threshold=init_threshold)
+            _plot_hist(ax[0], feature, 'hist of original data', True, True, init_threshold=init_threshold)
             
             # --- log
             feature_log = np.log10(feature[feature>0])
@@ -585,19 +548,18 @@ class Human_Neuron_Records_Process():
             fig.suptitle(f'{model_structure} {target} PDF', y=0.975, fontsize=28)
             
         else:   # -> simple for original data, details for log data
-
+    
             fig, ax = plt.subplots(1, 2, figsize=(20,10))
             
-            _plot_hist(ax[0], feature, 'hist of original data', init_threshold=init_threshold)
+            _plot_hist(ax[0], feature, 'hist of original data', True, init_threshold=init_threshold)
             
             # --- log
             feature_log = np.log10(feature[feature>0])
             
-            _plot_hist_with_legend(ax[1], feature_log, f'log10 hist and gaussian kde excluse <=0 ({(feature.size-feature_log.size)/feature.size*100:.2f}%)', init_threshold=init_threshold)
-
+            _plot_hist(ax[1], feature_log, f'log10 hist and gaussian kde excluse <=0 ({(feature.size-feature_log.size)/feature.size*100:.2f}%)', True, True, init_threshold=init_threshold)
+    
             fig.suptitle(f'{model_structure} {target} PDF', y=0.975, fontsize=28)
             
-        
         return fig
     
     

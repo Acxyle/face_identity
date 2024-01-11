@@ -42,7 +42,6 @@ from matplotlib import gridspec
 
 from Bio_Cell_Records_Process import Human_Neuron_Records_Process
 import utils_
-import models_
 
 
 class Encode_feaquency_analyzer():
@@ -78,11 +77,13 @@ class Encode_feaquency_analyzer():
             raise ValueError('[Codwarning] invalid layers and neurons')
             
         self.model_structure = root.split('/')[-1].split(' ')[-1]
+     
         
-        
+    # FIXME
     def calculation_Encode(self, ):
         """
             this function generates the encode_dict, 1-based dict containing encoded classes, and sort_dict, different types of units
+            this function depends on 'basic_type' and 'advanced_type', which should be simplified in the future to save the storage space
         """
         print('[Codinfo] Executing calculation_Encode...')
         
@@ -353,25 +354,25 @@ class Encode_feaquency_analyzer():
                 unit_sort_dict = {
                     
                     'basic_type': {
-                        'si': self.Sort_dict[layer]['basic_type']['si_idx'],
-                        'wsi': self.Sort_dict[layer]['basic_type']['wsi_idx'],
-                        'mi': self.Sort_dict[layer]['basic_type']['mi_idx'],
-                        'wmi': self.Sort_dict[layer]['basic_type']['wmi_idx'],
-                        'non_encode': self.Sort_dict[layer]['basic_type']['non_encode_idx']
+                        'si': self.Sort_dict[layer]['basic_type']['si'],
+                        'wsi': self.Sort_dict[layer]['basic_type']['wsi'],
+                        'mi': self.Sort_dict[layer]['basic_type']['mi'],
+                        'wmi': self.Sort_dict[layer]['basic_type']['wmi'],
+                        'non_encode': self.Sort_dict[layer]['basic_type']['non_encode']
                         },
                     
                     'advanced_type': {
-                        's_si': self.Sort_dict[layer]['advanced_type']['sensitive_si'],
-                        's_wsi': self.Sort_dict[layer]['advanced_type']['sensitive_wsi'],
-                        's_mi': self.Sort_dict[layer]['advanced_type']['sensitive_mi'],
-                        's_wmi': self.Sort_dict[layer]['advanced_type']['sensitive_wmi'],
-                        's_non_encode': self.Sort_dict[layer]['advanced_type']['sensitive_non_encode'],
+                        's_si': self.Sort_dict[layer]['advanced_type']['s_si'],
+                        's_wsi': self.Sort_dict[layer]['advanced_type']['s_wsi'],
+                        's_mi': self.Sort_dict[layer]['advanced_type']['s_mi'],
+                        's_wmi': self.Sort_dict[layer]['advanced_type']['s_wmi'],
+                        's_non_encode': self.Sort_dict[layer]['advanced_type']['s_non_encode'],
                         
-                        'ns_si': self.Sort_dict[layer]['advanced_type']['non_sensitive_si'],
-                        'ns_wsi': self.Sort_dict[layer]['advanced_type']['non_sensitive_wsi'],
-                        'ns_mi': self.Sort_dict[layer]['advanced_type']['non_sensitive_mi'],
-                        'ns_wmi': self.Sort_dict[layer]['advanced_type']['non_sensitive_wmi'],
-                        'ns_non_encode': self.Sort_dict[layer]['advanced_type']['non_sensitive_non_encode'],
+                        'ns_si': self.Sort_dict[layer]['advanced_type']['ns_si'],
+                        'ns_wsi': self.Sort_dict[layer]['advanced_type']['ns_wsi'],
+                        'ns_mi': self.Sort_dict[layer]['advanced_type']['ns_mi'],
+                        'ns_wmi': self.Sort_dict[layer]['advanced_type']['ns_wmi'],
+                        'ns_non_encode': self.Sort_dict[layer]['advanced_type']['ns_non_encode'],
                         }
                     }
                 
@@ -738,6 +739,66 @@ class Encode_feaquency_analyzer():
                 fig.savefig(os.path.join(frequency_folder, self.layers[_]+'.png'), bbox_inches='tight')
                 plt.close()
         
+    @staticmethod
+    def _dict_name_update(target_dict, target_path):
+        
+        if 'sensitive_si' in target_dict.keys():
+            
+            target_dict = {
+
+                's_si': target_dict['sensitive_si'],
+                's_mi': target_dict['sensitive_mi'],
+                'ns_si': target_dict['non_sensitive_si'],
+                'ns_mi': target_dict['non_sensitive_mi'],
+                
+                's_wsi': target_dict['sensitive_wsi'],
+                's_wmi': target_dict['sensitive_wmi'],
+                'ns_wsi': target_dict['non_sensitive_wsi'],
+                'ns_wmi': target_dict['non_sensitive_wmi'],
+                
+                's_non_encode': target_dict['sensitive_non_encode'],
+                'ns_non_encode': target_dict['non_sensitive_non_encode']
+                }
+            
+            os.remove(target_path)
+            utils_.dump(target_dict, target_path, verbose=False)
+        
+        elif 'neuron_1' in target_dict.keys():
+            
+            if 'sensitive_si' in target_dict['neuron_1']['advanced_type'].keys():
+            
+                for _layer in target_dict.keys():
+                    
+                    target_dict[_layer]['basic_type'] = {
+                        'si': target_dict[_layer]['basic_type']['si_idx'],
+                        'wsi': target_dict[_layer]['basic_type']['wsi_idx'],
+                        'mi': target_dict[_layer]['basic_type']['mi_idx'],
+                        'wmi': target_dict[_layer]['basic_type']['wmi_idx'],
+                        'non_encode': target_dict[_layer]['basic_type']['non_encode_idx']
+                        }
+                    
+                    target_dict[_layer]['advanced_type'] = {
+                        's_si': target_dict[_layer]['advanced_type']['sensitive_si'],
+                        's_mi': target_dict[_layer]['advanced_type']['sensitive_mi'],
+                        'ns_si': target_dict[_layer]['advanced_type']['non_sensitive_si'],
+                        'ns_mi': target_dict[_layer]['advanced_type']['non_sensitive_mi'],
+                        
+                        's_wsi': target_dict[_layer]['advanced_type']['sensitive_wsi'],
+                        's_wmi': target_dict[_layer]['advanced_type']['sensitive_wmi'],
+                        'ns_wsi': target_dict[_layer]['advanced_type']['non_sensitive_wsi'],
+                        'ns_wmi': target_dict[_layer]['advanced_type']['non_sensitive_wmi'],
+                        
+                        's_non_encode': target_dict[_layer]['advanced_type']['sensitive_non_encode'],
+                        'ns_non_encode': target_dict[_layer]['advanced_type']['non_sensitive_non_encode']
+                        }
+                
+                os.remove(target_path)
+                utils_.dump(target_dict, target_path, verbose=False)
+                
+                print('------------------------------------------')
+                print(f'[Codinfo] {target_path} name updated')
+                print('------------------------------------------')
+            
         
     def generate_freq_map(self, ):
         
@@ -779,7 +840,7 @@ class Encode_feaquency_analyzer():
                 os.remove(freq_path)
                 utils_.dump(freq_dict, freq_path)
                 print('------------------------------------------')
-                print('[Codinfo] freq_dict updated')
+                print('[Codinfo] dict name updated')
                 print('------------------------------------------')
                 
         else:
@@ -1559,6 +1620,10 @@ class Encode_feaquency_analyzer():
         if not hasattr(self, 'Sort_dict'):
             self.Sort_dict = utils_.load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
         
+        # --- update dict
+        self._dict_name_update(self.Sort_dict, os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
+        
+        # ---
         self.fig_folder = os.path.join(self.dest_Encode, 'Layer_stacked_responses')
         utils_.make_dir(self.fig_folder)
         
@@ -1596,7 +1661,7 @@ class Encode_feaquency_analyzer():
         plt.rcParams.update({'font.size': 14})
         
         feature = utils_.load(os.path.join(self.root, layer+'.pkl'), verbose=False)
-
+        
         if num_types == 5:
             
             # select the classes
@@ -1900,8 +1965,7 @@ def plot_single(fig, gs_main, layer, num_types, idx_dict, feature, num_classes, 
     colors = [colorpool_jet(i) for i in range(50)]
     
     tqdm_bar = tqdm(total=num_types, desc=f'{layer}')
-    idx_dict_keys = list(idx_dict.keys())
-    
+
     y_lim_min = np.min(feature)
     y_lim_max = np.max(feature)
     y_lin_range = y_lim_max - y_lim_min
@@ -1912,6 +1976,8 @@ def plot_single(fig, gs_main, layer, num_types, idx_dict, feature, num_classes, 
     for i in range(num_rows):
         for j in range(num_cols):
             
+            unit_type = list(idx_dict.keys())[i*num_cols+j]
+            
             gs_sub = gridspec.GridSpecFromSubplotSpec(1, 2, width_ratios=[4, 1], subplot_spec=gs_main[i, j])
 
             ax_left = fig.add_subplot(gs_sub[0])
@@ -1921,17 +1987,16 @@ def plot_single(fig, gs_main, layer, num_types, idx_dict, feature, num_classes, 
                 ax_left.set_xticks([])
                 ax_left.set_yticks([])
 
-            if idx_dict[idx_dict_keys[j]].size == 0:
-                ax_left.set_title(idx_dict_keys[j] + ' [0.00%]')
+            if idx_dict[unit_type].size == 0:
+                ax_left.set_title(unit_type + ' [0.00%]')
                 ax_right.set_title('th')
 
             else:
-                feature_test = feature[:, idx_dict[idx_dict_keys[j]]]     # (500, num_units)
-                feature_test_groups = feature_test.reshape(num_classes, num_samples, -1)     # (50, 10, num_units)
+                feature_test = feature[:, idx_dict[unit_type]]     # (500, num_units)
+
+                feature_test_mean = np.mean(feature_test.reshape(num_classes, num_samples, -1), axis=1)     # (50, num_units)
                 
-                feature_test_mean = np.mean(feature_test_groups, axis=1)     # (50, num_units)
-                
-                num_units = len(idx_dict[idx_dict_keys[j]])
+                num_units = len(idx_dict[unit_type])
                 
                 # -----
                 x = np.tile(np.arange(num_classes), num_units)     # (0,1,...,49,0,1,...)
@@ -1944,7 +2009,7 @@ def plot_single(fig, gs_main, layer, num_types, idx_dict, feature, num_classes, 
                 # -----
                 
                 pct = num_units/feature.shape[1]*100
-                ax_left.set_title(idx_dict_keys[j] + f' [{pct:.2f}%]')
+                ax_left.set_title(unit_type + f' [{pct:.2f}%]')
                 # -----
                 
                 # ----- stats: mean firing rate for each id
@@ -2051,6 +2116,10 @@ if __name__ == "__main__":
     
     model_name = 'vgg16_bn'
     
+    import sys
+    sys.path.append('../')
+    import models_
+    
     model_ = models_.vgg.__dict__[model_name](num_classes=50)
     layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, model_name)
 
@@ -2058,18 +2127,9 @@ if __name__ == "__main__":
 
     
     
-    for folder in [
-                    #'Face Identity Baseline', 
-                    #'Face Identity VGG16', 
-                    #'Face Identity VGG16bn',
-                    'Face Identity SpikingVGG16bn_IF_T4_CelebA2622_fold_3', 
-                    #'Face Identity SpikingVGG16bn_IF_T16_CelebA2622',
-                    #'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622', 
-                    #'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622',
-                    #'Face Identity SpikingVGG16bn_LIF_T4_vggface'
-                    ]:
+    for fold_idx in range(1,5):
         
-        selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, folder), 
+        selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, f'Face Identity SpikingVGG16bn_IF_T4_CelebA2622_fold_{fold_idx}'), 
                                                          layers=layers, neurons=neurons)
         
         #selectivity_analyzer.calculation_Encode()
@@ -2083,10 +2143,11 @@ if __name__ == "__main__":
 
         #selectivity_analyzer.SVM()
         #selectivity_analyzer.SVM_plot()
-    
-        #selectivity_analyzer.plot_stacked_responses()
+        
+        for num_types in [5, 10]:
+            selectivity_analyzer.plot_stacked_responses(num_types=num_types)
         #selectivity_analyzer.plot_sample_responses()
         
-        selectivity_analyzer.plot_unit_responses_PDF()
+        #selectivity_analyzer.plot_unit_responses_PDF()
         #selectivity_analyzer.plot_pct_pie_chart()
     

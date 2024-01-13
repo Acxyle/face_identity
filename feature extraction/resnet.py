@@ -5,7 +5,35 @@ Created on Wed Feb  8 15:12:39 2023
 
 @author: acxyle
     
-    [notice] this is the rewrite from (1) pytorch Resnet and (2) VGGFace2. this document aims to generate the whole feature maps of the entire model
+    rewrite from https://github.com/cydonia999/VGGFace2-pytorch/blob/master/models/resnet.py
+    
+    focusing on feature extraction, coorperate with the modification of forward() of nn.Sequential() of container.py as follow:
+        
+        # -----
+        def forward(self, input):    
+            
+            def _feature_list_forward(feature, module):
+                list_or_tensor = module(feature[-1])     # take the last element
+                if isinstance(list_or_tensor, list):     # extend/append the new output to the feature list
+                    feature.extend(list_or_tensor)
+                elif isinstance(list_or_tensor, torch.Tensor):
+                    feature.append(list_or_tensor)
+                return feature
+                
+            if isinstance(input, torch.Tensor):     # for 1st forward of every module
+                for module in self:
+                    input = module(input) if not isinstance(input, list) else _feature_list_forward(input, module)
+            elif isinstance(input, list):     # from 2nd forward
+                for module in self:
+                    input = _feature_list_forward(input, module)
+            else:
+                raise ValueError
+                
+            return input
+        # -----
+    
+    Please manually add nn.Softmax(dim)(input) and rewrite the forward() accordingly for normal use
+    
 """
 
 import torch
@@ -25,7 +53,8 @@ def conv3x3(in_planes, out_planes, stride=1):
                      padding=1, bias=False)
 
 
-class BasicBlock(nn.Module):  # valid for resnet18() and resnet34()
+class BasicBlock(nn.Module):  # for resnet18() and resnet34()
+
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None):
@@ -60,6 +89,7 @@ class BasicBlock(nn.Module):  # valid for resnet18() and resnet34()
 
 
 class Bottleneck(nn.Module):
+    
     expansion = 4
 
     def __init__(self, inplanes, planes, stride=1, downsample=None):
@@ -101,9 +131,10 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, num_classes=1000, include_top=True, mode='feature'):
-        self.inplanes = 64
+    def __init__(self, block, layers, num_classes=1000, include_top=True):
         super(ResNet, self).__init__()
+        
+        self.inplanes = 64
         self.include_top = include_top
         
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
@@ -118,8 +149,6 @@ class ResNet(nn.Module):
         self.avgpool = nn.AvgPool2d(7, stride=1)
         self.fc = nn.Linear(512 * block.expansion, num_classes)
         
-        self.mode = mode
-
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
@@ -146,33 +175,34 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers) 
   
     def forward(self, x): 
-        x01 = self.conv1(x)
-        x02 = self.bn1(x01)
-        x03 = self.relu(x02)
-        x04 = self.maxpool(x03)
+        x01_ = self.conv1(x)
+        x02_ = self.bn1(x01_)
+        x03_ = self.relu(x02_)
+        x04_ = self.maxpool(x03_)
         
-        x_list1 = self.layer1(x04)
+        x_list1 = self.layer1(x04_)
         x_list2 = self.layer2(x_list1)
         x_list3 = self.layer3(x_list2)
         x_list4 = self.layer4(x_list3)      
 
-        x05 = self.avgpool(x_list4[-1])
+        x05_ = self.avgpool(x_list4[-1])
         
         if not self.include_top:
-            if self.mode == 'classification':
-                return x05
-            elif self.mode == 'feature':
-                all_feature_map = [x01, x02, x03, x04, *x_list4, x05]    
+            
+            all_feature_map = [x01_, x02_, x03_, x04_, *x_list4, x05_]    
+                
             return all_feature_map
         
-        x05 = x05.view(x05.size(0), -1)
-        x06 = self.fc(x05)     # classification
+        else:
         
-        if self.mode == 'classification':
-            return x06
-        elif self.mode == 'feature':
-            all_feature_map = [x01, x02, x03, x04, *x_list4, x05, x06]    
+            x05_ = x05_.view(x05_.size(0), -1)
+            
+            x06_ = self.fc(x05_)
+            
+            all_feature_map = [x01_, x02_, x03_, x04_, *x_list4, x05_, nn.ReLU()(x06_)]  
+            
             return all_feature_map
+
 
 def resnet18(**kwargs):
     return ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
@@ -190,8 +220,8 @@ def resnet152(**kwargs):
     return ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
 
 if __name__ == '__main__':
+    
     model = resnet18()
-    #print(model)
     x = torch.randn(1,3,224,224)
     out = model(x)
     for idx, layer in enumerate(out):

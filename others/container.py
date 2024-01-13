@@ -1,5 +1,5 @@
 """
-  Use below code to replace the 'forward' function of 'Sequential' class
+  Use below code to replace the forward() of nn.Sequential() of container.py
 """
 
 class Sequential(Module):
@@ -47,42 +47,48 @@ class Sequential(Module):
                 ]))
     """
 
-    #...
+    ...
 
     # NB: We can't really type check this function as the type of input
     # may change dynamically (as is tested in
     # TestScript.test_sequential_intermediary_types).  Cannot annotate
     # with Any as TorchScript expects a more precise type
-# =============================================================================
-#     def forward(self, input):
-#         for module in self:
-#             input = module(input)
-#         return input
-# =============================================================================
-    def forward(self, input):     # [warning] self is one Sequential object
+    
+    # ------------------------------------------------------------------------------------------------------------------
+    """
+        Created on Mon Feb 13 00:12:41 2023
         
-        if isinstance(input, list):     # [外层判定]，如果输入是 list
-
+        Specifically designed for feature extraction, without functional impairment for feed-forward but not time consuming
+        
+        Please manually switch the forward() for different purpose
+    """
+    
+    # ----- [replace the forward function] -----
+    #def forward(self, input):
+    #    for module in self:
+    #        input = module(input)
+    #    return input
+    
+    def forward(self, input):    
+        
+        def _feature_list_forward(feature, module):
+            list_or_tensor = module(feature[-1])     # take the last element
+            if isinstance(list_or_tensor, list):     # extend/append the new output to the feature list
+                feature.extend(list_or_tensor)
+            elif isinstance(list_or_tensor, torch.Tensor):
+                feature.append(list_or_tensor)
+            return feature
+            
+        if isinstance(input, torch.Tensor):     # for 1st forward of every module
             for module in self:
-                temp = module(input[-1])     # 输出可能是 list or tensor
-                if isinstance(temp, list):
-                    input = [*input, *temp]
-                elif isinstance(temp, torch.Tensor):
-                    input = [*input, temp]
-                    
-        elif isinstance(input, torch.Tensor):     # [外层判定] 如果输入不是 list 而是 torch.Tensor
-
+                input = module(input) if not isinstance(input, list) else _feature_list_forward(input, module)
+        elif isinstance(input, list):     # from 2nd forward
             for module in self:
-                if isinstance(input, list):   # [内层判定] [补充]在这个 Sequential 内的迭代中，module() 可能会生成 list, 此处用于进行此判定
-                    temp = module(input[-1])     # 输出可能是 list or tensor
-                    if isinstance(temp, list):
-                        input = [*input, *temp]
-                    elif isinstance(temp, torch.Tensor):
-                        input = [*input, temp]
-
-                elif isinstance(input, torch.Tensor):     # [内层判定]
-                    input = module(input)     # 执行每个 module 的 forward, [warning] 输出可能是 list 或者 torch.Tensor
-
+                input = _feature_list_forward(input, module)
+        else:
+            raise ValueError
+            
         return input
+    # ------------------------------------------------------------------------------------------------------------------
 
-    #...
+    ...

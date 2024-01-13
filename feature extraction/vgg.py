@@ -5,7 +5,35 @@ Created on Sun May 21 15:12:39 2023
 
 @author: acxyle
     
-    [notice] this is the rewrite from pytorch VGG
+    rewrite from https://github.com/pytorch/vision/blob/main/torchvision/models/vgg.py
+
+    focusing on feature extraction, coorperate with the modification of forward() of nn.Sequential() of container.py as follow:
+        
+        # -----
+        def forward(self, input):    
+            
+            def _feature_list_forward(feature, module):
+                list_or_tensor = module(feature[-1])     # take the last element
+                if isinstance(list_or_tensor, list):     # extend/append the new output to the feature list
+                    feature.extend(list_or_tensor)
+                elif isinstance(list_or_tensor, torch.Tensor):
+                    feature.append(list_or_tensor)
+                return feature
+                
+            if isinstance(input, torch.Tensor):     # for 1st forward of every module
+                for module in self:
+                    input = module(input) if not isinstance(input, list) else _feature_list_forward(input, module)
+            elif isinstance(input, list):     # from 2nd forward
+                for module in self:
+                    input = _feature_list_forward(input, module)
+            else:
+                raise ValueError
+                
+            return input
+        # -----
+        
+    Please manually add nn.Softmax(dim)(input) and rewrite the forward() accordingly for normal use
+        
 """
 
 import torch
@@ -58,10 +86,10 @@ class VGG(nn.Module):
         x01 = torch.flatten(x01, 1)
         x_list2 = self.classifier([x01])
         
-        x02 = nn.Softmax(dim=-1)(x_list2[-1])     # for finetune, and final test
-        #x02 = nn.ReLU()(x_list2[-1])     # for feature extraction
+        x02 = x_list2[-1]
+        #x02 = nn.Softmax(dim=-1)(x_list2[-1])     
         
-        feature = [*x_list[1:], x01, *x_list2[1:-1], x02]
+        feature = [*x_list[1:], x01, *x_list2[1:-1], nn.ReLU()(x02)]
         
         return feature
 

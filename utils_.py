@@ -14,8 +14,10 @@ import joblib
 
 import skimage
 import os
+import sys
 import numpy as np
 import random
+import datetime
 #import cv2
 
 from spikingjelly.activation_based.model.tv_ref_classify import utils
@@ -27,6 +29,27 @@ from sklearn.model_selection import train_test_split
 
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+
+sys.path.append('../')
+import models_
+
+
+def _print(content, message_type='[Codinfo]', symbol='-', padding=2, border_length=None):
+    """
+
+    """
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    row_data = [current_time, message_type, content]
+    formatted_row = "|".join("{:<{}}".format(' '*padding + item, len(item)+padding*2) for item in row_data)
+    
+    if border_length:
+        border = symbol * (len(formatted_row) + 2) 
+    else:
+        border = symbol * 20
+
+    print(border)
+    print(formatted_row)
 
 
 # -----
@@ -240,7 +263,7 @@ def dump(file, file_path, cmd='wb', dump_type='pickle', verbose=True):
     assert cmd in ['w', 'wb', 'w+', 'wb+']
     
     if os.path.exists(file_path):
-        print(f'\n-----\n[Codwarning] file {file_path} already exists, overwriting...\n-----')
+        _print(f'file {file_path} already exists, overwriting...', '[Codwarning]')
         
     if dump_type == 'gzip':
         assert os.path.splitext(file_path)[-1] in ['.gz', '.tar.gz', '.xz', '.tar.xz']
@@ -368,6 +391,7 @@ class tqdm_file_object:
         self.close()
 
 # -----
+# FIXME --- does this function really in need?
 def generate_vgg_layers(model, model_name, T=4):     # FIXME add T and other useful attributes
     
     model_dict = {'vgg5':'O', 'vgg11': 'A', 'vgg13': 'B', 'vgg16': 'D', 'vgg19': 'E'}
@@ -429,6 +453,7 @@ def generate_vgg_layers(model, model_name, T=4):     # FIXME add T and other use
             
     return layers, neurons, shapes
 
+
 def generate_resnet_layers_list(model, model_name, T=4):     # return layers and neurons
     
     model_dict = {'spiking_resnet18': [2, 2, 2, 2], 
@@ -489,6 +514,109 @@ def generate_resnet_layers_list(model, model_name, T=4):     # return layers and
     
     return layers_, neurons_, shapes_
 
+
+# -----
+def rename():
+    
+    root = '/home/acxyle-workstation/Downloads/Face Identity Resnet50_CelebA2622_fold_0/Features'
+    
+    files = os.listdir(root)
+    
+    for file in files:
+        
+        if 'conv01' in file:
+            
+            new_name = '_'.join(file.split('_')[:-1]) + '_conv_1.pkl'
+            
+            os.rename(os.path.join(root, file), os.path.join(root, new_name))
+        
+        elif 'bn01' in file:
+            
+            new_name = '_'.join(file.split('_')[:-1]) + '_bn_1.pkl'
+            
+            os.rename(os.path.join(root, file), os.path.join(root, new_name))
+        
+        elif 'act01' in file:
+            
+            new_name = '_'.join(file.split('_')[:-1]) + '_neuron_1.pkl'
+            
+            os.rename(os.path.join(root, file), os.path.join(root, new_name))
+        
+        elif 'conv02' in file:
+            
+            new_name = '_'.join(file.split('_')[:-1]) + '_conv_2.pkl'
+            
+            os.rename(os.path.join(root, file), os.path.join(root, new_name))
+        
+        elif 'bn02' in file:
+            
+            new_name = '_'.join(file.split('_')[:-1]) + '_bn_2.pkl'
+            
+            os.rename(os.path.join(root, file), os.path.join(root, new_name))
+        
+        elif 'act02' in file:
+            
+            new_name = '_'.join(file.split('_')[:-1]) + '_neuron_2.pkl'
+            
+            os.rename(os.path.join(root, file), os.path.join(root, new_name))
+            
+        elif 'conv03' in file:
+            
+            new_name = '_'.join(file.split('_')[:-1]) + '_conv_3.pkl'
+            
+            os.rename(os.path.join(root, file), os.path.join(root, new_name))
+        
+        elif 'bn03' in file:
+            
+            new_name = '_'.join(file.split('_')[:-1]) + '_bn_3.pkl'
+            
+            os.rename(os.path.join(root, file), os.path.join(root, new_name))
+            
+        elif 'act03' in file:
+            
+            new_name = '_'.join(file.split('_')[:-1]) + '_neuron_3.pkl'
+            
+            os.rename(os.path.join(root, file), os.path.join(root, new_name))
+        
+        
+# ----------------------------------------------------------------------------------------------------------------------
+def get_layers_and_units(model):
+    
+    if 'vgg' in model.lower():
+        
+        if 'spiking' in model.lower():
+        
+            model_name = '_'.join(model.split('_')[1:])
+        
+        else:
+            
+            model_name = model.lower()
+            
+        model_ = models_.vgg.__dict__[model_name](num_classes=50)
+        
+        return generate_vgg_layers_list_ann(model_, model_name)
+        
+
+    elif 'resnet' in model.lower():
+        
+        if 'spiking' in model.lower() or 'sew' in model.lower():
+            
+            model_name = '_'.join(model.split('_')[1:])
+            
+        else:
+            
+            model_name = model.lower()
+        
+        model_ = models_.resnet.__dict__[model_name](num_classes=50)
+        
+        return generate_resnet_layers_list_ann(model_, model_name)
+        
+    else:
+        
+        raise ValueError(f"[Codwarning] model '{model}' not supported")
+        
+        
+# ----------------------------------------------------------------------------------------------------------------------
 def generate_resnet_layers_list_ann(model, model_name):     # return layers and neurons
     
     model_dict = {'resnet18': [2, 2, 2, 2], 
@@ -497,9 +625,10 @@ def generate_resnet_layers_list_ann(model, model_name):     # return layers and 
                   'resnet101': [3, 4, 23, 3], 
                   'resnet152': [3, 8, 36, 3],}
     
-    layers = ['conv_0', 'bn_0', 'act_0', 'maxpool_0']
-    single_bottleneck_features = ['conv01', 'bn01', 'act01', 'conv02', 'bn02', 'act02', 'conv03', 'bn03', 'add_residual', 'act03']
-    single_basicblock_features = ['conv01', 'bn01', 'act01', 'conv02', 'bn02', 'add_residual', 'act02']
+    layers = ['conv_0', 'bn_0', 'neuron_0', 'maxpool_0']
+    
+    single_bottleneck_features = ['conv_1', 'bn_1', 'neuron_1', 'conv_2', 'bn_2', 'neuron_2', 'conv_3', 'bn_3', 'add_residual', 'neuron_3']
+    single_basicblock_features = ['conv_1', 'bn_1', 'neuron_1', 'conv_2', 'bn_2', 'add_residual', 'neuron_2']
     x = torch.randn(1, 3, 224, 224)
     
     if '18' in model_name or '34' in model_name:
@@ -540,6 +669,7 @@ def generate_resnet_layers_list_ann(model, model_name):     # return layers and 
             shapes_.append(layer.squeeze(0).detach().cpu().numpy().shape)
     
     return layers_, neurons_, shapes_
+
 
 def generate_vgg_layers_list_ann(model, model_name, x = torch.randn(1, 3, 224, 224)):
     
@@ -601,6 +731,8 @@ def generate_vgg_layers_list_ann(model, model_name, x = torch.randn(1, 3, 224, 2
             
     return layers, neurons, shapes
 
+
+# -----
 def params_affine_from_spikingjelly04(params, verbose=True):
     print('[Codinfo] Executing params_affine_from_spikingjelly04...')
     if verbose:
@@ -644,6 +776,7 @@ def params_affine_from_spikingjelly04(params, verbose=True):
     
     return params_replace
     
+
 # [warning] not in sue for current code
 def get_picture(pic_name):
     img = skimage.io.imread(pic_name)
@@ -656,11 +789,13 @@ def make_dir(path):
   if os.path.exists(path) is False:
     os.makedirs(path)
     
+    
 def cal_acc1_acc5(output, target):
     # define how to calculate acc1 and acc5
     acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
     return acc1, acc5
     
+
 # FIXME --- add k-fold entrance
 def SVM_classification(matrix, label, test_size=0.2, random_state=42):
     """
@@ -689,18 +824,47 @@ def SVM_classification(matrix, label, test_size=0.2, random_state=42):
       
     return acc
 
+
 def makeLabels(num_samples, num_classes):  # generate a label list
     label = []
     for i in range(num_classes):
         label += [i + 1] * num_samples
     return label
 
+
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
+
+def describe_model(layers, neurons, shapes):
+
+    layers_info = [list(pair) for pair in zip(list(np.arange(len(layers)+1)), layers, neurons, shapes)]
+    max_widths = [max(len(str(row[i])) for row in layers_info)+2 for i in range(len(layers_info[0]))]
+    
+    print("|".join("{:<{}}".format(header, max_widths[i]) for i, header in enumerate(["No.", "layer", "neurons", "shapes"])))
+    print("-" * sum(max_widths))
+    
+    for row in layers_info:
+        print("|".join("{:<{}}".format(str(item), max_widths[i]) for i, item in enumerate(row)))
+        
+    print("-" * sum(max_widths))
+
+
 # ----------------------------------------------------------------------------------------------------------------------
+# FIXME --- make full use of this design
+
+def activation_function(model_name, layers, neurons=None):
+    
+    if 'vgg' in model_name.lower() or 'baseline' in model_name.lower():
+        
+        return activation_function_vgg(layers, neurons)
+    
+    elif 'resnet' in model_name.lower():
+        
+        return activation_function_resnet(layers, neurons)
+
 def activation_function_vgg(layers:list[str], neurons:list[int]=None):
     """
         the final layer is 'fc_3' or 'neuron_3' depends on the model
@@ -714,16 +878,18 @@ def activation_function_vgg(layers:list[str], neurons:list[int]=None):
     
     return idx, layers, neurons
     
-def imaginary_neurons_resnet(layers, neurons):
+def activation_function_resnet(layers:list[str], neurons:list[int]=None):
+    
     layers_ = [i for i in layers if 'neuron' in i or 'pool' in i or 'fc' in i]
     idx = [layers.index(i) for i in layers_]
-    neurons_ = [neurons[i] for i in idx]
     layers = layers_
-    neurons = neurons_
+    
+    if neurons is not None:
+        neurons = [neurons[i] for i in idx]
     return idx, layers, neurons
 
-# [warning] waiting to write
-# 不一样的地方就是 Vanilla SNN 不需要提供五维的输入，这导致这段代码看起来意义不明
+
+# FIXME --- Vanilla SNN, 意义不明
 def generate_resnet_layers_list_snnrat(model, model_name):     # return layers and neurons
     
     layers = ['cb_0', 'neuron_0']

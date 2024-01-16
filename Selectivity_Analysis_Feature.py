@@ -22,27 +22,16 @@ import logging
 from tqdm import tqdm
 
 import numpy as np
-from scipy.ndimage import convolve
-from scipy.ndimage import label, generate_binary_structure  # the name [label] looks contradictory with many kinds of labels
-from scipy.ndimage import gaussian_filter
-from scipy.stats import ttest_ind
-from scipy.stats import gaussian_kde
+import scipy.ndimage
+
+from scipy.stats import ttest_ind, gaussian_kde
 from scipy.spatial.distance import pdist
 from itertools import combinations
 
-from scipy.io import loadmat, savemat
-
 from joblib import Parallel, delayed
-
-import concurrent.futures
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
-from collections import Counter
-
-from spikingjelly.activation_based import surrogate, neuron, functional
 
 import utils_
 
-import vgg
 
 # ----------------------------------------------------------------------------------------------------------------------
 class Selectivity_Analysis_Feature():
@@ -61,7 +50,7 @@ class Selectivity_Analysis_Feature():
             functions related to models comparisons
     """
     
-    def __init__(self, root='./Face Identity Baseline',
+    def __init__(self, root='./Face Identity Baseline', DR_type='TSNE',
                  num_samples=10, num_classes=50, data_name='', layers=None, neurons=None):
         
         assert root[-1] != '/', f"[Codinfo] root {root} should not end with '/'"
@@ -72,6 +61,7 @@ class Selectivity_Analysis_Feature():
         # --- overall variables
         self.num_samples = num_samples
         self.num_classes = num_classes
+        self.DR_type = DR_type
 
         # -----
         self.root = os.path.join(root, 'Features/')     # <- folder for feature maps, which should be generated before analysis
@@ -95,132 +85,119 @@ class Selectivity_Analysis_Feature():
         
         if self.taskInstruction == 'ImageNet':
             self.nSD = 1.8
-            self.sq = 0.021
+            self.scaling_factor = 0.021
             self.maskFactor = 0.5
         elif self.taskInstruction == 'CoCo':
             self.nSD = 1.5
             self.maskFactor = 0.3
         elif self.taskInstruction == 'CelebA':
             self.nSD = 4
-            self.sq = 0.035
+            self.scaling_factor = 0.035
             self.maskFactor = 0.1
             
     # ------------------------------------------------------------------------------------------------------------------
-    # FIXME
-    def feature_analysis(self, DR_type):
+    # FIXME --- need to simplify and upgrade
+    def feature_analysis(self, ):
         """
-            find how to make better use of this function
+            [notice] this design relies on RAM space
         """
         # -----
         self.dest_Encode = os.path.join(self.dest, 'Encode')
         
-        # -----
         self.id_label = utils_.lexicographic_order(self.num_classes)
         self.img_labels = np.array([[self.id_label[_]]*10 for _ in range(50)]).reshape(-1)
         
         if not hasattr(self, 'Sort_dict'):
-            
             self.Sort_dict = utils_.load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
-        
-        if not hasattr(self, 'Encode_dict'):
 
+        if not hasattr(self, 'Encode_dict'):
             self.Encode_dict = utils_.load(os.path.join(self.dest_Encode, 'Encode_dict.pkl'))
             self.Encode_dict = {_:self.Encode_dict[_] for _ in self.layers}
-            #self.Encode_dict = utils_.load('./encode_dict.pkl')     # --- for baseline neuron_1 test
-        
-        # --- [notice] this data sturcture is based on current design
-        DR_folder = os.path.join(self.dest, f'Dimension_Reduction/{DR_type}')
-        DR_path = os.path.join(DR_folder, [_ for _ in os.listdir(DR_folder) if _.endswith('.pkl')][0])
-        self.DR_dicts = utils_.load(DR_path)
+            
+        # --- depends 
+        self.DR_dicts = utils_.load(os.path.join(self.dest, f'Dimension_Reduction/{self.DR_type}/{self.DR_type.lower()}_all.pkl'), verbose=False)
+        utils_._print(f"len(self.DR_dicts.keys()) is '{len(self.DR_dicts.keys())}'")
         
         # ---            
-        for idx, self.layer in enumerate(self.layers):     # for each layer
+        for (self.layer, self.neuron) in zip(self.layers, self.neurons):     # for each layer
             
             # --- data preparation
-            self.neuron = self.neurons[idx]
-            
             self.layer_folder = os.path.join(self.dest_Feature, f'{self.layer}')
             utils_.make_dir(self.layer_folder)
             
             # --- encode and correction
-            encode_dict =  self.Encode_dict[self.layer]
+            encode_dict = self.Encode_dict[self.layer]
             self.encode_dict = {_: {'encode': self.id_label[encode_dict[_]['encode']-1], 'weak_encode': self.id_label[encode_dict[_]['weak_encode']-1] } for _ in encode_dict.keys()}
-             
-            # --- types
             self.sort_dict = self.Sort_dict[self.layer]
             
-            feature = utils_.load(os.path.join(self.root, self.layer+'.pkl'))
-            
-            # ---
-            [DR_dicts_bank] = [_ for _ in self.DR_dicts[self.layer].keys() if 'dict' in _]
-            
-            # ---
-            #DR_sub_types = [_ for _ in self.DR_dicts[self.layer][DR_dicts_bank].keys() if self.DR_dicts[self.layer][DR_dicts_bank][_] is not None]
-            DR_sub_types = ['all']
-            
-            for DR_sub_type in DR_sub_types:
+            self.feature = utils_.load(os.path.join(self.root, self.layer+'.pkl'), verbose=False)
+  
+            # --- the used coordinates
+            for DR_coordinate in ['all',
+                                #'s_si', 's_wsi', 's_mi', 's_wmi', 's_non_encode', 
+                                #'ns_si', 'ns_wsi', 'ns_mi', 'ns_wmi', 'ns_non_encode'
+                                ]:
                 
                 # --- [test version] size judgement
-                tmp_tsne = self.DR_dicts[self.layer][DR_dicts_bank][DR_sub_type]
-                max_distance = pdist([[np.min(tmp_tsne[:, 0]), np.min(tmp_tsne[:,1])], [np.max(tmp_tsne[:, 0]), np.max(tmp_tsne[:,1])]], 'euclidean')
+                DR_dicts=f'{self.DR_type.lower()}_dict'
+                reduced_features = self.DR_dicts[self.layer][DR_dicts][DR_coordinate]
+                max_distance = pdist([[np.min(reduced_features[:, 0]), np.min(reduced_features[:,1])], [np.max(reduced_features[:, 0]), np.max(reduced_features[:,1])]], 'euclidean')
                 
-                if max_distance < 100:
+                if 9 < max_distance and max_distance < 100:
                     
-                    print(f'[Codinfo] Processing [{DR_sub_type}]...')
+                    utils_._print(f'Processing [{DR_coordinate}]...')
                     
-                    self.layer_folder_DR_sub_type = os.path.join(self.layer_folder, DR_sub_type)
-                    utils_.make_dir(self.layer_folder_DR_sub_type)
+                    self.layer_folder_DR_coordinate = os.path.join(self.layer_folder, f'coordinate_{DR_coordinate}')
+                    utils_.make_dir(self.layer_folder_DR_coordinate)
                 
-                    self.DR_dict = {DR_sub_type: self.DR_dicts[self.layer][DR_dicts_bank][DR_sub_type]}
+                    unit_type_and_reduced_feature = (DR_coordinate, self.DR_dicts[self.layer][DR_dicts][DR_coordinate])
                     
-                    self.feature_analysis_single_layer(feature)
+                    self.feature_analysis_single_layer(unit_type_and_reduced_feature)
                 
                 else:
                     
-                    print(f'[Codinfo] [{DR_sub_type}] has too huge distance to calculate')
+                    utils_._print(f"The diagnal distance of coordinate space '{DR_coordinate}' is smaller than 9 or greater than 100.", '[Codwarning]')
         
-        print('[Codinfo] Completed')
+        utils_._print('Feature analysis completed')
         
         
     # ------------------------------------------------------------------------------------------------------------------
-    def feature_analysis_single_layer(self, feature):    
+    def feature_analysis_single_layer(self, unit_type_and_reduced_feature):    
         """
             [task] divide calculation and plot
         """
         
-        # --- init
+        # ----- init
         ...
         
-        # --- 1.1. calculate p_values for permutation test
-        p_results = self.generate_p_values(feature)
+        # ----- 1.1. calculate p_values for permutation test
+        p_results = self.generate_p_values(unit_type_and_reduced_feature)
         
-        # --- 1.2. calculate feature units
-        feature_unit_results = self.feature_region_selection(p_results)
+        # ----- 1.2. calculate feature units
+        feature_unit_results = self.feature_region_selection(unit_type_and_reduced_feature, p_results)
         
         # --- legacy design
         #from scipy.stats import binom
         #bionorP = 1 - binom.cdf(len(feature_unit_results['feature_component_stats']), len(units), 0.05)
         
-        # --- 2. feature plot
-        self.feature_analysis_plot(feature, feature_unit_results)
+        # ----- 2. feature plot
+        self.feature_analysis_plot(unit_type_and_reduced_feature, feature_unit_results)
+        
         
     # ------------------------------------------------------------------------------------------------------------------
     # FIXME --- need to upgrade and simplify
-    def feature_analysis_plot(self, 
-                              feature, 
-                              feature_unit_results,
-                              ):
+    def feature_analysis_plot(self, unit_type_and_reduced_feature, feature_unit_results):
         
         plt.rcParams.update({"font.family": "Times New Roman"})
         
         # ----- 1. single unit
-        self.single_unit_folder = os.path.join(self.layer_folder_DR_sub_type, 'Single Unit Plot')
+        self.single_unit_folder = os.path.join(self.layer_folder_DR_coordinate, 'Single Unit Plot')
         utils_.make_dir(self.single_unit_folder)
         
-        self.feature_coding_plot(feature, feature_unit_results)
+        self.feature_coding_plot(unit_type_and_reduced_feature, feature_unit_results)
         
         # ----- 2. population level
-        self.population_folder = os.path.join(self.layer_folder_DR_sub_type, 'Population Plot')
+        self.population_folder = os.path.join(self.layer_folder_DR_coordinate, 'Population Plot')
         utils_.make_dir(self.population_folder)
         
         feature_unit_sorting_dict = feature_unit_results['feature_unit_sorting_dict']
@@ -236,12 +213,12 @@ class Selectivity_Analysis_Feature():
         
         for target_cluster_type in ['max']:
             
-            feature_cluster_stats, region_stats = self.population_feature_size(plot_types_dict, feature_unit_results, target_cluster_type)
+            feature_cluster_stats, region_stats = self.population_feature_size(unit_type_and_reduced_feature, plot_types_dict, feature_unit_results, target_cluster_type)
             
             # --- feature_unit analysis
-            self.plot_overlapped_receptive_field(feature_cluster_stats, target_cluster_type)
+            self.plot_overlapped_receptive_field(unit_type_and_reduced_feature, feature_cluster_stats, target_cluster_type)
             
-            self.plot_sizes_box(feature_cluster_stats, target_cluster_type)
+            self.plot_sizes_box(unit_type_and_reduced_feature, feature_cluster_stats, target_cluster_type)
             
             # --- overall_unit analysis
             original_types_dict, region_types_dict = self.region_units_analysis(feature_cluster_stats, region_stats, )
@@ -254,13 +231,13 @@ class Selectivity_Analysis_Feature():
             
             for type_dict in [original_types_dict, region_types_dict]:
                 
-                self.plot_overlapped_receptive_field_regions(feature_unit_results, type_dict, target_cluster_type)
+                self.plot_overlapped_receptive_field_regions(unit_type_and_reduced_feature, feature_unit_results, type_dict, target_cluster_type)
 
-                self.plot_sizes_box_region(feature_unit_results, type_dict, target_cluster_type)
+                self.plot_sizes_box_region(unit_type_and_reduced_feature, feature_unit_results, type_dict, target_cluster_type)
             
 
         # --- 2.2. distance
-        in_feature_values = self.plot_distance_figures(plot_types_dict, feature_unit_results)
+        in_feature_values = self.plot_distance_figures(unit_type_and_reduced_feature, plot_types_dict, feature_unit_results)
         
         # --- overall_unit analysis
 
@@ -273,13 +250,11 @@ class Selectivity_Analysis_Feature():
         
             for encode_type in encode_types:
                 
-                    distance_stats = self.calculate_distance(feature_unit_results, encode_type=encode_type, in_region=False)  
+                    distance_stats = self.calculate_distance(unit_type_and_reduced_feature, feature_unit_results, encode_type=encode_type, in_region=False)  
                     
                     groups = {_: [__ for __ in type_dict[_][0].keys() if __ in distance_stats['distance_dict'].keys()] for _ in type_dict.keys()}
                     
-                    fig, ax = plt.subplots(figsize=(10,10))
-                    
-                    in_region_values = self.plot_distance_box_region(ax, groups, distance_stats, interested_type_list=['fmi'])
+                    in_region_values = self.plot_distance_box_region(unit_type_and_reduced_feature, groups, distance_stats, interested_type_list=['fmi'])
                 
         rank_stats = {'in_feature': {
             'size': feature_cluster_stats,
@@ -292,22 +267,23 @@ class Selectivity_Analysis_Feature():
             }}
         
         # ---
-        rank_stats_path = os.path.join(self.layer_folder_DR_sub_type, 'rank_stats.pkl')
+        rank_stats_path = os.path.join(self.layer_folder_DR_coordinate, 'rank_stats.pkl')
         
         if not os.path.exists(rank_stats_path):
             utils_.dump(rank_stats, rank_stats_path)    
             
-        print('6')
-    
-    def plot_distance_box_region(self, ax, groups, distance_stats, interested_type_list=['feature_strong_sensitive_mi_idx']):
+
+    def plot_distance_box_region(self, unit_type_and_reduced_feature, groups, distance_stats, interested_type_list=['feature_strong_s_mi_idx']):
         
-        DR_sub_type = list(self.DR_dict.keys())[0]
+        DR_coordinate = unit_type_and_reduced_feature[0]
         
         distance_dict = distance_stats['distance_dict']
         in_region = distance_stats['in_region']
         encode_type = distance_stats['encode_type']
         
         group_values = [ [distance_dict[__] for __ in groups[_] if __ in distance_dict.keys()] for _ in groups.keys()]
+        
+        fig, ax = plt.subplots(figsize=(10,10))
         
         flierprops = dict(marker='.', markerfacecolor='red', markersize=1, linestyle='none', markeredgecolor='red')
         ax.boxplot(group_values, notch=True, flierprops=flierprops)
@@ -320,7 +296,7 @@ class Selectivity_Analysis_Feature():
         ax.set_xticklabels(group_ticks, rotation=90)
         
         ax.set_ylabel('Normalized Distance')
-        ax.set_title(f'Layer: {self.layer} | Coordinates from: {DR_sub_type} | Encode type: {encode_type} | In region: {in_region} | Types {len(groups)} | Distances')
+        ax.set_title(f'Layer: {self.layer} | Coordinates from: {DR_coordinate} | Encode type: {encode_type} | In region: {in_region} | Types {len(groups)} | Distances')
         ax.grid(axis='y', linestyle='--')
         
         #ax.spines['top'].set_visible(False)
@@ -357,21 +333,22 @@ class Selectivity_Analysis_Feature():
         return group_values
     
     # ------------------------------------------------------------------------------------------------------------------
-    def plot_sizes_box_region(self, feature_unit_results, original_types_dict, target_cluster_type):
+    def plot_sizes_box_region(self, unit_type_and_reduced_feature, feature_unit_results, original_types_dict, target_cluster_type):
         
         interested_type_list = ['fmi']
+        
         fig, ax = plt.subplots(figsize=(8, 5))
+        
         flierprops = dict(marker='.', markerfacecolor='red', markersize=1, linestyle='none', markeredgecolor='red')
         
         feature_cluster_size_groups = [list(_[0].values()) for _ in list(original_types_dict.values())]
-        
         ax.boxplot(feature_cluster_size_groups, notch=True, flierprops=flierprops)
         
         group_ticks = [f'{_} ({len(feature_cluster_size_groups[idx])})' for idx, _ in enumerate(original_types_dict.keys())]
         
         ax.set_xticklabels(group_ticks, rotation=90)
         
-        ax.set_title(f"Layer: {self.layer} ({len(feature_unit_results['preliminary_p_masks'])}/{self.neuron}) | Coordinates from: {list(self.DR_dict.keys())[0]} | Types {len(original_types_dict)} | Region size ({target_cluster_type}) distribution")
+        ax.set_title(f"Layer: {self.layer} ({len(feature_unit_results['preliminary_p_masks'])}/{self.neuron}) | Coordinates from: {unit_type_and_reduced_feature[0]} | Types {len(original_types_dict)} | Region size ({target_cluster_type}) distribution")
         ax.set_ylabel('Percentage of Feature Space(%)')
         ax.tick_params(axis='both', which='major', labelsize=12)
         ax.grid(axis='y', linestyle='--')
@@ -400,7 +377,7 @@ class Selectivity_Analysis_Feature():
         plt.close()
     
     
-    def plot_overlapped_receptive_field_regions(self, feature_unit_results, original_types_dict, target_cluster_type):
+    def plot_overlapped_receptive_field_regions(self, unit_type_and_reduced_feature, feature_unit_results, original_types_dict, target_cluster_type):
         
         fig, ax = plt.subplots(1, len(original_types_dict), figsize=(3*len(original_types_dict)+3, 4))       
 
@@ -426,7 +403,7 @@ class Selectivity_Analysis_Feature():
                 ax[idx].set_yticks([])
         
         fig.colorbar(cax, cax=fig.add_axes([1.02, 0.15, 0.01, 0.7]))     # [left, bottom, width, height]
-        fig.suptitle(f'Layer: {self.layer} ({self.neuron}) | Coordinates from: {list(self.DR_dict.keys())[0]} | Types {len(original_types_dict)} | Overlapped regions ({target_cluster_type})')
+        fig.suptitle(f'Layer: {self.layer} ({self.neuron}) | Coordinates from: {unit_type_and_reduced_feature[0]} | Types {len(original_types_dict)} | Overlapped regions ({target_cluster_type})')
         
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore')
@@ -438,19 +415,20 @@ class Selectivity_Analysis_Feature():
             fig.savefig(os.path.join(self.region_size_folder, f'{self.layer}_covered_area {len(original_types_dict)} types ({target_cluster_type}).eps'), bbox_inches='tight')
             plt.close()
     
+    
     # FIXME --- not all models have below types
     def region_units_analysis(self, feature_cluster_stats, region_stats, ):
         si = region_stats['s_si']
         
         try:
-            fmi = feature_cluster_stats['feature_strong_sensitive_mi_idx']
+            fmi = feature_cluster_stats['feature_strong_s_mi_idx']
         except:
             fmi = ({}, 0)
         
-        tmp = {_:feature_cluster_stats[_][0] for _ in feature_cluster_stats.keys() if 'weak_sensitive_mi' in _ or 'merged_sensitive_mi' in _}
+        tmp = {_:feature_cluster_stats[_][0] for _ in feature_cluster_stats.keys() if 'weak_s_mi' in _ or 'merged_s_mi' in _}
         combined_dict = {k: v for sub_dict in tmp.values() for k, v in sub_dict.items()}
         
-        tmp_2 = {_:feature_cluster_stats[_][1] for _ in feature_cluster_stats.keys() if 'weak_sensitive_mi' in _ or 'merged_sensitive_mi' in _}
+        tmp_2 = {_:feature_cluster_stats[_][1] for _ in feature_cluster_stats.keys() if 'weak_s_mi' in _ or 'merged_s_mi' in _}
         tmp2 = np.sum(np.array(list(tmp_2.values())), axis=0)
         
         nfmi = (
@@ -474,11 +452,11 @@ class Selectivity_Analysis_Feature():
         mi_others = region_stats['s_mi_others']
         
         try:
-            fwsi = feature_cluster_stats['feature_weak_sensitive_si_idx']    
+            fwsi = feature_cluster_stats['feature_weak_s_si_idx']    
         except:
             fwsi = ({}, 0)
         try:
-            fmsi = feature_cluster_stats['feature_merged_sensitive_si_idx']     
+            fmsi = feature_cluster_stats['feature_merged_s_si_idx']     
         except:
             fmsi = ({}, 0)
             
@@ -487,13 +465,13 @@ class Selectivity_Analysis_Feature():
         
         si_others = (si_others, si_others_maps)
         
-        # --- feature_non_selective(excluded) + feature_weak_sensitive_smi_idx + others(have no feature_resions)
+        # --- feature_non_selective(excluded) + feature_weak_s_smi_idx + others(have no feature_resions)
         try:
             fns = feature_cluster_stats['feature_non_selective_units']    
         except:
             fns = ({}, 0)
         try:
-            fwwmi = feature_cluster_stats['feature_weak_sensitive_wmi_idx']
+            fwwmi = feature_cluster_stats['feature_weak_s_wmi_idx']
         except:
             fwwmi = ({}, 0)
         
@@ -520,10 +498,10 @@ class Selectivity_Analysis_Feature():
             'others': others
             }
         
-        if 'feature_weak_sensitive_mi_idx' in feature_cluster_stats.keys():
-            region_types_dict['fwmi'] = feature_cluster_stats['feature_weak_sensitive_mi_idx']
-        if 'feature_merged_sensitive_mi_idx' in feature_cluster_stats.keys():
-            region_types_dict['fmmi'] = feature_cluster_stats['feature_merged_sensitive_mi_idx']
+        if 'feature_weak_s_mi_idx' in feature_cluster_stats.keys():
+            region_types_dict['fwmi'] = feature_cluster_stats['feature_weak_s_mi_idx']
+        if 'feature_merged_s_mi_idx' in feature_cluster_stats.keys():
+            region_types_dict['fmmi'] = feature_cluster_stats['feature_merged_s_mi_idx']
         
         region_types_dict = {_:region_types_dict[_] for _ in sorted(region_types_dict)}
         
@@ -532,13 +510,13 @@ class Selectivity_Analysis_Feature():
     
     
     # -----
-    def plot_overlapped_receptive_field(self, feature_cluster_stats, target_cluster_type):
+    def plot_overlapped_receptive_field(self, unit_type_and_reduced_feature, feature_cluster_stats, target_cluster_type):
         """
             [question] looks like mark the pct of covered range is not a reasonable value...
         """
         plt.rcParams.update({"font.family": "Times New Roman"})
         
-        DR_sub_type = list(self.DR_dict.keys())[0]
+        DR_coordinate = unit_type_and_reduced_feature[0]
         
         if not len(feature_cluster_stats) > 0:
             
@@ -572,7 +550,7 @@ class Selectivity_Analysis_Feature():
                     ax[idx].set_yticks([])
             
             fig.colorbar(cax, cax=fig.add_axes([1.02, 0.15, 0.01, 0.7]))     # [left, bottom, width, height]
-            fig.suptitle(f'Layer: {self.layer} | Coordinates from: {DR_sub_type} | Overlapped regions ({target_cluster_type})')
+            fig.suptitle(f'Layer: {self.layer} | Coordinates from: {DR_coordinate} | Overlapped regions ({target_cluster_type})')
             
             with warnings.catch_warnings():
                 warnings.simplefilter(action='ignore')
@@ -585,20 +563,20 @@ class Selectivity_Analysis_Feature():
                 plt.close()
             
             # --- fourier analysis
-            #f = np.fft.fft2(feature_cluster_stats['feature_weak_sensitive_mi_idx'][1])
+            #f = np.fft.fft2(feature_cluster_stats['feature_weak_s_mi_idx'][1])
             #fshift = np.fft.fftshift(f)
             #magnitude_spectrum = 20*np.log(np.abs(fshift))
         
         
     # -----
-    def plot_sizes_box(self, feature_cluster_sizes:dict, target_cluster_type='max', interested_type_list=['feature_strong_sensitive_mi_idx']) -> None:
+    def plot_sizes_box(self, unit_type_and_reduced_feature, feature_cluster_sizes:dict, target_cluster_type='max', interested_type_list=['feature_strong_s_mi_idx']) -> None:
         """
             the input is a list in which each element contains numbers of area sizes of each unit of certain unit type,
             if the interested_type==None, then it will plot all combinations, be careful when too many types.
         """
         plt.rcParams.update({"font.family": "Times New Roman"})
         
-        DR_sub_type = list(self.DR_dict.keys())[0]
+        DR_coordinate = unit_type_and_reduced_feature[0]
         
         fig, ax = plt.subplots(figsize=(8, 5))
         flierprops = dict(marker='.', markerfacecolor='red', markersize=1, linestyle='none', markeredgecolor='red')
@@ -611,7 +589,7 @@ class Selectivity_Analysis_Feature():
         
         ax.set_xticklabels(group_ticks, rotation=90)
         
-        ax.set_title(f'Layer: {self.layer} | Coordinates from: {DR_sub_type} | Region size ({target_cluster_type}) distribution')
+        ax.set_title(f'Layer: {self.layer} | Coordinates from: {DR_coordinate} | Region size ({target_cluster_type}) distribution')
         ax.set_ylabel('Percentage of Feature Space(%)')
         ax.tick_params(axis='both', which='major', labelsize=12)
         ax.grid(axis='y', linestyle='--')
@@ -640,7 +618,7 @@ class Selectivity_Analysis_Feature():
                     
                 else:
                     
-                    print(f'[Codinfo] [{interested_type}] not in current tsne coordinates')
+                    print(f'[Codinfo] [{interested_type}] not in current reduced_feature coordinates')
                 
                 fig.savefig(os.path.join(self.size_folder, f'{self.layer}_{target_cluster_type}_size.png'), bbox_inches='tight')
                 fig.savefig(os.path.join(self.size_folder, f'{self.layer}_{target_cluster_type}_size.eps'), bbox_inches='tight')
@@ -650,7 +628,7 @@ class Selectivity_Analysis_Feature():
                 raise RuntimeError(f'[Coderror] Do not support multiple [{interested_type}] in current code')
         
     # -----
-    def plot_distance_figures(self, plot_types_dict, feature_unit_results):
+    def plot_distance_figures(self, unit_type_and_reduced_feature, plot_types_dict, feature_unit_results):
         
         plt.rcParams.update({"font.family": "Times New Roman"})
         
@@ -664,20 +642,18 @@ class Selectivity_Analysis_Feature():
             
             for in_region in in_regions:
         
-                distance_stats = self.calculate_distance(feature_unit_results, encode_type=encode_type, in_region=in_region)  
+                distance_stats = self.calculate_distance(unit_type_and_reduced_feature, feature_unit_results, encode_type=encode_type, in_region=in_region)  
                 
                 groups = {_:plot_types_dict[_] for _ in plot_types_dict.keys() if len(plot_types_dict[_]) != 0}
                 
-                fig, ax = plt.subplots(figsize=(10,10))
-                
-                group_values = self.plot_distance_box(ax, groups, distance_stats)
+                group_values = self.plot_distance_box(unit_type_and_reduced_feature, groups, distance_stats)
         
         return group_values
         
 
-    def plot_distance_box(self, ax, groups, distance_stats, interested_type_list=['feature_strong_sensitive_mi_idx']):
+    def plot_distance_box(self, unit_type_and_reduced_feature, groups, distance_stats, interested_type_list=['feature_strong_s_mi_idx']):
         
-        DR_sub_type = list(self.DR_dict.keys())[0]
+        DR_coordinate = unit_type_and_reduced_feature[0]
         
         distance_dict = distance_stats['distance_dict']
         in_region = distance_stats['in_region']
@@ -686,6 +662,9 @@ class Selectivity_Analysis_Feature():
         group_values = [ [distance_dict[__] for __ in groups[_] if __ in distance_dict.keys()] for _ in groups.keys()]
         
         flierprops = dict(marker='.', markerfacecolor='red', markersize=1, linestyle='none', markeredgecolor='red')
+        
+        fig, ax = plt.subplots(figsize=(10,10))
+        
         ax.boxplot(group_values, notch=True, flierprops=flierprops)
         
         # Formatting plot
@@ -696,7 +675,7 @@ class Selectivity_Analysis_Feature():
         ax.set_xticklabels(group_ticks, rotation=90)
         
         ax.set_ylabel('Normalized Distance')
-        ax.set_title(f'Layer: {self.layer} | Coordinates from: {DR_sub_type} | Encode type: {encode_type} | In region: {in_region} | Distances')
+        ax.set_title(f'Layer: {self.layer} | Coordinates from: {DR_coordinate} | Encode type: {encode_type} | In region: {in_region} | Distances')
         ax.grid(axis='y', linestyle='--')
         
         #ax.spines['top'].set_visible(False)
@@ -726,7 +705,7 @@ class Selectivity_Analysis_Feature():
                     
                 else:
                     
-                    print(f'[Codinfo] [{interested_type}] not in current tsne coordinates')
+                    print(f'[Codinfo] [{interested_type}] not in current reduced_feature coordinates')
                     
                 # ---
                 plt.savefig(os.path.join(self.distance_folder, f'{self.layer}_distance_{encode_type}_{in_region}.png'), bbox_inches='tight')
@@ -739,7 +718,7 @@ class Selectivity_Analysis_Feature():
         return group_values
     
     # --- legacy design
-    def plot_distance_bar(self, ax, groups, distance_dict, save_folder, layer, interested_type_list=['feature_strong_sensitive_mi_idx']):
+    def plot_distance_bar(self, ax, groups, distance_dict, save_folder, layer, interested_type_list=['feature_strong_s_mi_idx']):
         
         stats_mean = []
         stats_std = []
@@ -770,7 +749,7 @@ class Selectivity_Analysis_Feature():
         
 
     #FIXME --- update this code for new version analysis 
-    def calculate_distance(self, feature_unit_results, encode_type='merged', in_region=False):      # try to make a figure to illustrate this?
+    def calculate_distance(self, unit_type_and_reduced_feature, feature_unit_results, encode_type='merged', in_region=False):      # try to make a figure to illustrate this?
         """
             [question] why use encoded_id rather than featured_ids? - so use this dim of 'feature' units to analysis of the 'selective' units
             
@@ -780,8 +759,7 @@ class Selectivity_Analysis_Feature():
             add one more condition to only calculate the distance inside the region? but looks like this will make all distance similiar?
             
         """
-        DR_sub_type = list(self.DR_dict.keys())[0]
-        tsne = self.DR_dict[DR_sub_type]
+        (DR_coordinate, reduced_feature) = unit_type_and_reduced_feature
         
         feature_component_stats = feature_unit_results['feature_component_stats']
         
@@ -799,7 +777,7 @@ class Selectivity_Analysis_Feature():
                 raise ValueError(f'[Codinfo] {encode_type} is invalid')
         
         # --- init
-        max_distance = pdist([[np.min(tsne[:, 0]), np.min(tsne[:, 1])], [np.max(tsne[:, 0]), np.max(tsne[:, 1])]], 'euclidean').item()     # normalization factor
+        max_distance = pdist([[np.min(reduced_feature[:, 0]), np.min(reduced_feature[:, 1])], [np.max(reduced_feature[:, 0]), np.max(reduced_feature[:, 1])]], 'euclidean').item()     # normalization factor
 
         distance_dict = {}
 
@@ -817,7 +795,7 @@ class Selectivity_Analysis_Feature():
                 elif encode_id.size > 1:     # check if this is a valid encoded unit/unit_typeron
                 
                     encoded_img = [np.where(self.img_labels==encode_id[i])[0] for i in range(encode_id.size)]
-                    tsne_img_avg = np.mean(tsne[encoded_img], axis=1)
+                    tsne_img_avg = np.mean(reduced_feature[encoded_img], axis=1)
                     
                     point_wise_pairs = list(combinations(np.arange(tsne_img_avg.shape[0]), 2))
                     
@@ -844,7 +822,7 @@ class Selectivity_Analysis_Feature():
                         
                         component = components[component_idx]
                         
-                        if component['feature_selective_unit'] is None:
+                        if component['feature_selective_type'] is None:
                         
                             pass
                             
@@ -859,7 +837,7 @@ class Selectivity_Analysis_Feature():
                             else:
                                 
                                 encoded_img = [np.where(self.img_labels==encode_id_[i])[0] for i in range(encode_id_.size)]
-                                tsne_img_avg = np.mean(tsne[encoded_img], axis=1)
+                                tsne_img_avg = np.mean(reduced_feature[encoded_img], axis=1)
                                 
                                 point_wise_pairs = list(combinations(np.arange(tsne_img_avg.shape[0]), 2))
                                 
@@ -888,13 +866,12 @@ class Selectivity_Analysis_Feature():
     
 
     # ------------------------------------------------------------------------------------------------------------------
-    def feature_coding_plot(self, feature, feature_unit_results, k=10):
+    def feature_coding_plot(self, unit_type_and_reduced_feature, feature_unit_results, k=10):
         
         """
             test version
         """
-        DR_unit_type = list(self.DR_dict.keys())[0]
-        DR_feature_map = self.DR_dict[DR_unit_type]
+        (DR_unit_type, DR_feature_map) = unit_type_and_reduced_feature
         
         # --- init
         feature_unit_sorting_dict = feature_unit_results['feature_unit_sorting_dict']
@@ -905,8 +882,7 @@ class Selectivity_Analysis_Feature():
         colorpool_jet = plt.get_cmap('jet', 50)
         self.colors = [colorpool_jet(i) for i in range(50)]
        
-        # === Select cells to plot based on plot_type
-        plot_types_dict = {_: feature_unit_sorting_dict[_][::k] for _ in feature_unit_sorting_dict.keys()}
+        plot_types_dict = {_: np.random.choice(feature_unit_sorting_dict[_], np.min([10, len(feature_unit_sorting_dict[_])])) for _ in feature_unit_sorting_dict.keys()}
         
         for plot_type in plot_types_dict.keys():     # foe each type
             
@@ -917,22 +893,21 @@ class Selectivity_Analysis_Feature():
                 self.plot_type_folder = os.path.join(self.single_unit_folder, plot_type)
                 utils_.make_dir(self.plot_type_folder)
                 
-                self.plot_region_based_coding(plot_type, plot_types_idces, DR_feature_map, feature, feature_component_stats)
+                self.plot_region_based_coding(plot_type, plot_types_idces, DR_feature_map, feature_component_stats)
             
     
     # ------------------------------------------------------------------------------------------------------------------
-    def plot_region_based_coding(self, plot_type, plot_types_idces, DR_feature_map, feature, feature_component_stats):
+    def plot_region_based_coding(self, plot_type, plot_types_idces, DR_feature_map, feature_component_stats):
         
         #Parallel(n_jobs=int(os.cpu_count()/2))(delayed(self.plot_region_based_coding_single_unit)(unit_idx, DR_feature_map, feature, feature_component_stats[unit_idx], self.layer, self.img_labels, self.colors, self.num_classes, self.plot_type_folder) for unit_idx in tqdm(plot_types_idces, desc=f'{plot_type}'))
         
         for unit_idx in tqdm(plot_types_idces, desc=f'{plot_type}'):
             
-            self.plot_region_based_coding_single_unit(unit_idx, DR_feature_map, feature, feature_component_stats[unit_idx], self.layer, self.img_labels, self.colors, self.num_classes, self.plot_type_folder)
+            self.plot_region_based_coding_single_unit(unit_idx, DR_feature_map, self.feature[:, unit_idx].astype(float), feature_component_stats[unit_idx], self.layer, self.img_labels, self.colors, self.num_classes, self.plot_type_folder)
 
     # FIXME --- 
     @staticmethod
-    def plot_region_based_coding_single_unit(unit_idx, DR_feature_map, feature, feature_component, 
-                                             layer=None, img_labels=None, colors=None, num_classes=None, plot_type_folder=None):
+    def plot_region_based_coding_single_unit(unit_idx, DR_feature_map, FR, feature_component, layer=None, img_labels=None, colors=None, num_classes=None, plot_type_folder=None):
         
         """
             Task:    
@@ -946,8 +921,6 @@ class Selectivity_Analysis_Feature():
         # --- init
         x = DR_feature_map[:, 0] - np.min(DR_feature_map[:, 0])
         y = DR_feature_map[:, 1] - np.min(DR_feature_map[:, 1])
-        
-        FR = feature[:, unit_idx].astype(float)
         
         # --- plot
         fig = plt.figure(figsize=(18, 9))
@@ -1149,9 +1122,9 @@ class Selectivity_Analysis_Feature():
                 for y_, x_ in component['region_location'].T:
                     tsne_map[y_, x_]=1
                     
-                contour_color, contour_label = _contour_color_and_label(component['feature_selective_unit'])
+                contour_color, contour_label = _contour_color_and_label(component['feature_selective_type'])
                 
-                contour_lines = ax.contour(gaussian_filter(_connect_diagonals(tsne_map).astype(float), sigma=1), [0.5], colors=contour_color)
+                contour_lines = ax.contour(scipy.ndimage.gaussian_filter(_connect_diagonals(tsne_map).astype(float), sigma=1), [0.5], colors=contour_color)
                 ax.clabel(contour_lines, inline=True, fontsize=8, fmt={0.5: contour_label})
                 for line in contour_lines.collections:
                     line.set_linestyle('-') 
@@ -1236,12 +1209,11 @@ class Selectivity_Analysis_Feature():
         return ksdensity
     
     # ------------------------------------------------------------------------------------------------------------------
-    def population_feature_size(self, unit_types_dict, feature_unit_results, target_cluster_type='max'):
+    def population_feature_size(self, unit_type_and_reduced_feature, unit_types_dict, feature_unit_results, target_cluster_type='max'):
         """
             this function calculates (1) the average cluster size and (2) overlapped size for one type of units --- FIXME
         """
-        DR_sub_type = list(self.DR_dict.keys())[0]
-        DR_feature_map = self.DR_dict[DR_sub_type]
+        (DR_coordinate, DR_feature_map) = unit_type_and_reduced_feature
         
         x = DR_feature_map[:, 0] - np.min(DR_feature_map[:, 0])
         y = DR_feature_map[:, 1] - np.min(DR_feature_map[:, 1])
@@ -1289,7 +1261,7 @@ class Selectivity_Analysis_Feature():
         
         for _ in s_si_regions.keys():
             
-            labeled_regions, num_components = label(s_si_regions[_], structure=generate_binary_structure(2,2)) 
+            labeled_regions, num_components = scipy.ndimage.label(s_si_regions[_], structure=scipy.ndimage.generate_binary_structure(2,2)) 
             
             region_sizes = []
             
@@ -1306,7 +1278,7 @@ class Selectivity_Analysis_Feature():
         region_stats['s_si'] = (s_si_regions_sizes_dict, empty_mask)
         
         # ---
-        # sensitive_mi = fmi + nfmi = fmi + f_strong_mi + f_weak_mi + f_merged_mi + others
+        # s_mi = fmi + nfmi = fmi + f_strong_mi + f_weak_mi + f_merged_mi + others
         # [example: Baseline neuron_1] 229 = 108 + 2 + 14 + 105
         
         s_mi = self.sort_dict['advanced_type']['s_mi']
@@ -1320,7 +1292,7 @@ class Selectivity_Analysis_Feature():
         
         for _ in s_mi_others_regions.keys():
             
-            labeled_regions, num_components = label(s_mi_others_regions[_], structure=generate_binary_structure(2,2)) 
+            labeled_regions, num_components = scipy.ndimage.label(s_mi_others_regions[_], structure=scipy.ndimage.generate_binary_structure(2,2)) 
             
             region_sizes = []
             
@@ -1350,7 +1322,7 @@ class Selectivity_Analysis_Feature():
         
         for _ in others_regions.keys():
             
-            labeled_regions, num_components = label(others_regions[_], structure=generate_binary_structure(2,2)) 
+            labeled_regions, num_components = scipy.ndimage.label(others_regions[_], structure=scipy.ndimage.generate_binary_structure(2,2)) 
             
             region_sizes = []
             
@@ -1394,17 +1366,17 @@ class Selectivity_Analysis_Feature():
                         region_size_pool_dict[component_idx] = region_size
                     
                     elif 'strong' in unit_type:
-                        if component['feature_selective_unit'] is not None and 'strong' in component['feature_selective_unit']:
+                        if component['feature_selective_type'] is not None and 'strong' in component['feature_selective_type']:
                             region_size = component['region_size']
                             region_size_pool_dict[component_idx] = region_size
                         
                     elif 'weak' in unit_type:
-                        if component['feature_selective_unit'] is not None and 'weak' in component['feature_selective_unit']:
+                        if component['feature_selective_type'] is not None and 'weak' in component['feature_selective_type']:
                             region_size = component['region_size']
                             region_size_pool_dict[component_idx] = region_size
                     
                     elif 'merged' in unit_type:
-                        if component['feature_selective_unit'] is not None and 'merged' in component['feature_selective_unit']:
+                        if component['feature_selective_type'] is not None and 'merged' in component['feature_selective_type']:
                             region_size = component['region_size']
                             region_size_pool_dict[component_idx] = region_size
                     else:
@@ -1439,6 +1411,7 @@ class Selectivity_Analysis_Feature():
     
     
     def feature_region_selection(self, 
+                                 unit_type_and_reduced_feature,
                                  p_results, 
                                  cluster_size_scaling_factor=0.025, alpha=0.01):
         """
@@ -1461,22 +1434,22 @@ class Selectivity_Analysis_Feature():
             
         """
         # --- init
-        DR_sub_type = list(self.DR_dict.keys())[0]
+        DR_coordinate = unit_type_and_reduced_feature[0]
         
         p_values = p_results['p']
         gaussian_kernel = p_results['kernel']
-        tsne = p_results['tsne']
+        reduced_feature = p_results[f'{self.DR_type.lower()}']
 
         # ---
-        file_path = os.path.join(self.layer_folder_DR_sub_type, f'tsne_{DR_sub_type}_unit_stats.pkl')
+        file_path = os.path.join(self.layer_folder_DR_coordinate, f'tsne_{DR_coordinate}_unit_stats.pkl')
         
         if os.path.exists(file_path):
             
-            results = utils_.pickle_load_tqdm(file_path)
+            results = utils_.load(file_path)
             
         else:
         
-            density_map, convolved_density_map = calculate_convolved_density_map(tsne, None, gaussian_kernel)
+            density_map, convolved_density_map = calculate_convolved_density_map(reduced_feature, weights=None, kernel=gaussian_kernel)
             
             # --- remove corners and edges with too sparse dots
             mask = convolved_density_map >= (self.maskFactor*np.mean(convolved_density_map))
@@ -1487,20 +1460,20 @@ class Selectivity_Analysis_Feature():
             
             # FIXME upgrade this section --- currently the 'encode_id' is only considering 'selective' units
 
-            cluster_size_threshold = mask.size*cluster_size_scaling_factor
+            cluster_size_threshold = mask.size * cluster_size_scaling_factor
             
             # --- Sequential, for test
             pl = []
-            
-            units = np.arange(self.neuron)
-            
-            for unit in tqdm(units, desc='Sequential region selection'):
+
+            for unit in tqdm(units:=np.arange(self.neuron), desc='Sequential region selection'):
                 
                 results = feature_region_selection_single_unit(
 
-                                                          tsne, 
+                                                          reduced_feature,     # (500, 2)
                                                           
-                                                          {unit: reversed_sort_dict[unit]},
+                                                          unit, 
+                                                          reversed_sort_dict[unit],
+                                                          
                                                           p_values[unit], 
                                                           self.encode_dict[unit], 
                                                                
@@ -1512,17 +1485,11 @@ class Selectivity_Analysis_Feature():
                                             
                 pl.append(results)
             
-            # --- Parallel
-            #pl = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(feature_region_selection_single_unit)(unit, p[unit], tsne, s_mi_encode_id, 
-            #                                          alpha=0.01, mask=mask, cluster_size_threshold=cluster_size_threshold, img_labels=self.img_labels)
-            #                                          for unit in tqdm(target_units, desc='Feature Unit Calculation'))
+            # FIXME -- need to upgraded
+            feature_selective_stats = {_: pl[_]['feature_selective_type'] for _ in units if pl[_] is not None and len(pl[_]['feature_selective_type']) != 0}
             
-            # feature_unit_type = {_:list(set([pl[_]['feature_component_dict'][__]['feature_selective_unit'] for __ in pl[_]['feature_component_dict'].keys() if pl[_]['feature_component_dict'][__]['feature_selective_unit'] is not None])) for _ in target_units if pl[_] is not None}
-            
-            # FIXME -- need to be upgraded
-            feature_selective_stats = {_: pl[_]['feature_selective_unit'] for _ in units if pl[_] is not None and len(pl[_]['feature_selective_unit']) != 0}
-            tmp_pool = [___ for __ in [feature_selective_stats[_] for _ in feature_selective_stats.keys()] for ___ in __]
-            tmp_pool_new = [_.split('encode_')[-1] for _ in tmp_pool]
+            #tmp_pool = [___ for __ in [feature_selective_stats[_] for _ in feature_selective_stats.keys()] for ___ in __]
+            #tmp_pool_new = [_.split('encode_')[-1] for _ in tmp_pool]
             
             feature_component_stats = {_:pl[_]['feature_component_dict'] for _ in units if pl[_] is not None and len(pl[_]['feature_component_dict']) != 0}
 
@@ -1532,41 +1499,41 @@ class Selectivity_Analysis_Feature():
             feature_non_selective_units = np.setdiff1d(feature_units, feature_selective_units)
             
             # ---
-            feature_strong_sensitive_mi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'strong_encode_sensitive_mi' in feature_selective_stats[_]])
-            feature_weak_sensitive_mi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'weak_encode_sensitive_mi' in feature_selective_stats[_] and 'strong_encode_sensitive_mi' not in feature_selective_stats[_]])
-            feature_merged_sensitive_mi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'merged_encode_sensitive_mi' in feature_selective_stats[_] and 'strong_encode_sensitive_mi' not in feature_selective_stats[_] and 'weak_encode_sensitive_mi' not in feature_selective_stats[_]])
+            feature_strong_s_mi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'strong_encode_s_mi' in feature_selective_stats[_]])
+            feature_weak_s_mi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'weak_encode_s_mi' in feature_selective_stats[_] and 'strong_encode_s_mi' not in feature_selective_stats[_]])
+            feature_merged_s_mi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'merged_encode_s_mi' in feature_selective_stats[_] and 'strong_encode_s_mi' not in feature_selective_stats[_] and 'weak_encode_s_mi' not in feature_selective_stats[_]])
             
-            feature_strong_sensitive_wmi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'strong_encode_sensitive_wmi' in feature_selective_stats[_]])
-            feature_weak_sensitive_wmi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'weak_encode_sensitive_wmi' in feature_selective_stats[_] and 'strong_encode_sensitive_wmi' not in feature_selective_stats[_]])
-            feature_merged_sensitive_wmi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'merged_encode_sensitive_wmi' in feature_selective_stats[_] and 'strong_encode_sensitive_wmi' not in feature_selective_stats[_] and 'weak_encode_sensitive_wmi' not in feature_selective_stats[_]])
+            feature_strong_s_wmi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'strong_encode_s_wmi' in feature_selective_stats[_]])
+            feature_weak_s_wmi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'weak_encode_s_wmi' in feature_selective_stats[_] and 'strong_encode_s_wmi' not in feature_selective_stats[_]])
+            feature_merged_s_wmi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'merged_encode_s_wmi' in feature_selective_stats[_] and 'strong_encode_s_wmi' not in feature_selective_stats[_] and 'weak_encode_s_wmi' not in feature_selective_stats[_]])
             
             # ---
-            feature_strong_sensitive_si_idx = np.array([_ for _ in feature_selective_stats.keys() if 'strong_encode_sensitive_si' in feature_selective_stats[_]])
-            feature_weak_sensitive_si_idx = np.array([_ for _ in feature_selective_stats.keys() if 'weak_encode_sensitive_si' in feature_selective_stats[_] and 'strong_encode_sensitive_si' not in feature_selective_stats[_]])
-            feature_merged_sensitive_si_idx = np.array([_ for _ in feature_selective_stats.keys() if 'merged_encode_sensitive_si' in feature_selective_stats[_] and 'strong_encode_sensitive_si' not in feature_selective_stats[_] and 'weak_encode_sensitive_si' not in feature_selective_stats[_]])
+            feature_strong_s_si_idx = np.array([_ for _ in feature_selective_stats.keys() if 'strong_encode_s_si' in feature_selective_stats[_]])
+            feature_weak_s_si_idx = np.array([_ for _ in feature_selective_stats.keys() if 'weak_encode_s_si' in feature_selective_stats[_] and 'strong_encode_s_si' not in feature_selective_stats[_]])
+            feature_merged_s_si_idx = np.array([_ for _ in feature_selective_stats.keys() if 'merged_encode_s_si' in feature_selective_stats[_] and 'strong_encode_s_si' not in feature_selective_stats[_] and 'weak_encode_s_si' not in feature_selective_stats[_]])
             
-            feature_strong_sensitive_wsi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'strong_encode_sensitive_wsi' in feature_selective_stats[_]])
-            feature_weak_sensitive_wsi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'weak_encode_sensitive_wsi' in feature_selective_stats[_] and 'strong_encode_sensitive_wsi' not in feature_selective_stats[_]])
-            feature_merged_sensitive_wsi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'merged_encode_sensitive_wsi' in feature_selective_stats[_] and 'strong_encode_sensitive_wsi' not in feature_selective_stats[_] and 'weak_encode_sensitive_wsi' not in feature_selective_stats[_]])
+            feature_strong_s_wsi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'strong_encode_s_wsi' in feature_selective_stats[_]])
+            feature_weak_s_wsi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'weak_encode_s_wsi' in feature_selective_stats[_] and 'strong_encode_s_wsi' not in feature_selective_stats[_]])
+            feature_merged_s_wsi_idx = np.array([_ for _ in feature_selective_stats.keys() if 'merged_encode_s_wsi' in feature_selective_stats[_] and 'strong_encode_s_wsi' not in feature_selective_stats[_] and 'weak_encode_s_wsi' not in feature_selective_stats[_]])
             
             feature_unit_sorting_dict = {
                 'feature_non_selective_units': feature_non_selective_units,
                 
-                'feature_strong_sensitive_mi_idx': feature_strong_sensitive_mi_idx,
-                'feature_weak_sensitive_mi_idx': feature_weak_sensitive_mi_idx,
-                'feature_merged_sensitive_mi_idx': feature_merged_sensitive_mi_idx,
+                'feature_strong_s_mi_idx': feature_strong_s_mi_idx,
+                'feature_weak_s_mi_idx': feature_weak_s_mi_idx,
+                'feature_merged_s_mi_idx': feature_merged_s_mi_idx,
                 
-                'feature_strong_sensitive_wmi_idx': feature_strong_sensitive_wmi_idx,
-                'feature_weak_sensitive_wmi_idx': feature_weak_sensitive_wmi_idx,
-                'feature_merged_sensitive_wmi_idx': feature_merged_sensitive_wmi_idx,
+                'feature_strong_s_wmi_idx': feature_strong_s_wmi_idx,
+                'feature_weak_s_wmi_idx': feature_weak_s_wmi_idx,
+                'feature_merged_s_wmi_idx': feature_merged_s_wmi_idx,
                 
-                'feature_strong_sensitive_si_idx': feature_strong_sensitive_si_idx,
-                'feature_weak_sensitive_si_idx': feature_weak_sensitive_si_idx,
-                'feature_merged_sensitive_si_idx': feature_merged_sensitive_si_idx,
+                'feature_strong_s_si_idx': feature_strong_s_si_idx,
+                'feature_weak_s_si_idx': feature_weak_s_si_idx,
+                'feature_merged_s_si_idx': feature_merged_s_si_idx,
                 
-                'feature_strong_sensitive_wsi_idx': feature_strong_sensitive_wsi_idx,
-                'feature_weak_sensitive_wsi_idx': feature_weak_sensitive_wsi_idx,
-                'feature_merged_sensitive_wsi_idx': feature_merged_sensitive_wsi_idx
+                'feature_strong_s_wsi_idx': feature_strong_s_wsi_idx,
+                'feature_weak_s_wsi_idx': feature_weak_s_wsi_idx,
+                'feature_merged_s_wsi_idx': feature_merged_s_wsi_idx
                 }
             
             # -----
@@ -1589,39 +1556,39 @@ class Selectivity_Analysis_Feature():
 
 
     # ------------------------------------------------------------------------------------------------------------------
-    def generate_p_values(self, feature):
+    def generate_p_values(self, unit_type_and_reduced_feature):
         """
             this function is the parallel executor of calculate_density_perm() to obtain p values for all units
             
-            task:
-                make an entrance for this code to use different coordinates generated by different types of units
         """
         
         # --- init
-        DR_sub_type = list(self.DR_dict.keys())[0]
+        DR_coordinate = unit_type_and_reduced_feature[0]
         
-        file_path = os.path.join(self.layer_folder_DR_sub_type, f'{self.layer}_{DR_sub_type}_sq{self.sq}.pkl')
+        file_path = os.path.join(self.layer_folder_DR_coordinate, f'{self.layer}_{DR_coordinate}_sq{self.scaling_factor}.pkl')
         
         if os.path.exists(file_path):
             
-            results = utils_.pickle_load_tqdm(file_path)
+            results = utils_.load(file_path)
             
         else:
-            tsne = self.DR_dict[DR_sub_type]
+            reduced_feature = unit_type_and_reduced_feature[1]
             
-            kernel_size, kernel_sigma = self.get_kernel_size(tsne, self.sq)
+            kernel_size, kernel_sigma = self.get_kernel_size(reduced_feature, self.scaling_factor)
             gaussian_kernel = self.gausskernel(kernel_size, kernel_sigma)
             
             # --- calculate p values
-            p = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(calculate_density_perm_p)(tsne, feature[:, i], num_perm=1000, kernel=gaussian_kernel) for i in tqdm(np.arange(self.neuron), desc=f'{DR_sub_type}'))
+            p = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(calculate_density_perm_p)(reduced_feature, self.feature[:, i], gaussian_kernel) for i in tqdm(np.arange(self.neuron), desc=f'{DR_coordinate}'))
             
             # --- wrap results and save
             results = {
                        'layer': self.layer, 
-                       'tsne': tsne,     # [notice] currently use 'tsne', for further modification, use other key-value pair
-                       'DR_sub_type': DR_sub_type,
+                       'scaling_factor': self.scaling_factor, 
+                       
+                       'DR_coordinate': DR_coordinate,
+                       f'{self.DR_type.lower()}': reduced_feature,    
                        'p': p, 
-                       'sigma_scaling_factor': self.sq, 
+                       
                        'kernel_size': kernel_size, 
                        'kernel_sigma': kernel_sigma, 
                        'kernel': gaussian_kernel,
@@ -1633,13 +1600,13 @@ class Selectivity_Analysis_Feature():
         
     # ------------------------------------------------------------------------------------------------------------------
     @staticmethod
-    def get_kernel_size(tsne:np.array, sq:float=0.035):
+    def get_kernel_size(reduced_feature:np.array, sq:float=0.035):
         """
             this function calculate the kernel_size and sigma for the following calculation on p values
             
             inputs:
                 
-                tsne: (num_samples, num_dims=2);
+                reduced_feature: (num_samples, num_dims=2);
           
             parameters:
                 
@@ -1658,8 +1625,8 @@ class Selectivity_Analysis_Feature():
             
         """
         # --- normalization
-        density_map = calculate_2d_density_map(tsne)
-        labeled, num_component = label(density_map, structure=generate_binary_structure(2,2))  
+        density_map = calculate_2d_density_map(reduced_feature)
+        labeled, num_component = scipy.ndimage.label(density_map, structure=scipy.ndimage.generate_binary_structure(2,2))  
         
         kernel_sigma = num_component * sq
         
@@ -1726,11 +1693,13 @@ class Selectivity_Analysis_Feature():
         return kernel
 
 
-# ======================================================================================================================
+# ----------------------------------------------------------------------------------------------------------------------
 def feature_region_selection_single_unit(
-                                         tsne, 
+                                         reduced_feature, 
                                          
-                                         unit_type_dict,
+                                         unit, 
+                                         unit_type,
+                                         
                                          p, 
                                          encode_id, 
                                               
@@ -1744,16 +1713,16 @@ def feature_region_selection_single_unit(
                                          num_imgs_threshold=5
                                          ):
     """
-        here is 1 fundamental condition to start the analysis:
+        1 dependent conditions:
             
             0. existing connected area of the p_value probability map
     
-        here are 2 conditions to determine a feature unit:
+        2 conditions to determine a feature unit:
             
             1. the size of region (cluster)
             2. the imgs (default 5) and ids (default: 2) contained in the region
             
-        here is 1 more condition to determine a feature_selective unit:
+        1 more condition to determine a feature_selective unit:
             
             3. the intersection with encoded_ids (default: >=2)
             
@@ -1766,17 +1735,14 @@ def feature_region_selection_single_unit(
     """
     
     # --- init
-    x = tsne[:, 0] - np.min(tsne[:, 0])
-    y = tsne[:, 1] - np.min(tsne[:, 1])
-    
-    unit = list(unit_type_dict.keys())[0]
-    unit_type = unit_type_dict[unit]
+    x = reduced_feature[:, 0] - np.min(reduced_feature[:, 0])
+    y = reduced_feature[:, 1] - np.min(reduced_feature[:, 1])
     
     # --- condition 0, perm p
     p_regions = (p<alpha)*mask
     p_regions_init = p_regions.copy()
 
-    labeled_p_regions, num_components = label(p_regions, structure=generate_binary_structure(2,2)) 
+    labeled_p_regions, num_components = scipy.ndimage.label(p_regions, structure=scipy.ndimage.generate_binary_structure(2,2)) 
     
     if num_components == 0:     # if the unit does not have connected component
         
@@ -1799,7 +1765,7 @@ def feature_region_selection_single_unit(
             
             else:
                 
-                tmp_sig_img = np.array([_ for _ in range(tsne.shape[0]) if labeled_p_regions[round(y[_]), round(x[_])] == i])
+                tmp_sig_img = np.array([_ for _ in range(reduced_feature.shape[0]) if labeled_p_regions[round(y[_]), round(x[_])] == i])
                 
                 #FIXME
                 if len(tmp_sig_img) == 0:
@@ -1823,7 +1789,7 @@ def feature_region_selection_single_unit(
                         'sig_id': tmp_sig_id,
                         'region_size': np.sum(labeled_p_regions==i),
                         'region_location': np.array(np.where(labeled_p_regions==i)),
-                        'feature_selective_unit': None
+                        'feature_selective_type': None
                         }
                     
                     # --- condition 3, intersection
@@ -1836,17 +1802,17 @@ def feature_region_selection_single_unit(
                         
                         if np.intersect1d(tmp_sig_id, encode_id['encode']).size > 1:     # strong_encode si or mi
                         
-                            feature_component_dict[i].update({'feature_selective_unit': f'strong_encode_{unit_type}'})
+                            feature_component_dict[i].update({'feature_selective_type': f'strong_encode_{unit_type}'})
                             
                         elif np.intersect1d(tmp_sig_id, encode_id['weak_encode']).size > 1:     # weak_encode si, wsi, mi, wmi
                         
-                            feature_component_dict[i].update({'feature_selective_unit': f'weak_encode_{unit_type}'})
+                            feature_component_dict[i].update({'feature_selective_type': f'weak_encode_{unit_type}'})
                         
                         else:     # merged_encode
                             
-                            feature_component_dict[i].update({'feature_selective_unit': f'merged_encode_{unit_type}'})
+                            feature_component_dict[i].update({'feature_selective_type': f'merged_encode_{unit_type}'})
                         
-        feature_unit_type_pool = list(set([feature_component_dict[_]['feature_selective_unit'] for _ in feature_component_dict.keys() if feature_component_dict[_]['feature_selective_unit'] is not None]))
+        feature_unit_type_pool = list(set([feature_component_dict[_]['feature_selective_type'] for _ in feature_component_dict.keys() if feature_component_dict[_]['feature_selective_type'] is not None]))
         
         results = {
             'preliminary_p_mask': p_regions_init,
@@ -1855,32 +1821,33 @@ def feature_region_selection_single_unit(
             'feature_component_dict': feature_component_dict,
             'feature_unit': feature_unit,
             
-            'feature_selective_unit': feature_unit_type_pool,
+            'feature_selective_type': feature_unit_type_pool,
+            'encode_id': encode_id
             }
 
         return results
 
-# ======================================================================================================================
-def calculate_density_perm_p(tsne, weights, num_perm, kernel):
+# ----------------------------------------------------------------------------------------------------------------------
+def calculate_density_perm_p(reduced_feature, weights=None, kernel=None, num_perm=1000):
     """
         this function is a warp of calculate_density_perm(), extract the p_values only
         
         in current process script, this is used for parallel process
     """
     
-    p, *_ = calculate_density_perm(tsne, weights, num_perm, kernel)
+    p, *_ = calculate_density_perm(reduced_feature, weights, kernel, num_perm)
     
     return p
     
 
-def calculate_density_perm(tsne, weights=None, num_perm=1000, kernel=None):
+def calculate_density_perm(reduced_feature, weights=None, kernel=None, num_perm=1000):
     """
         this function is an advanced wrap of calculate_convolved_density_map(), added permutation test to generate a p_value
         
         input:
-            tsne: tsne 2D feature with shape (num_samples, 2)
+            reduced_feature: reduced_feature 2D feature with shape (num_samples, 2)
             
-            weights: original weights to indicate the size (radius) of each dot in the tsne coordinate
+            weights: original weights to indicate the size (radius) of each dot in the reduced_feature coordinate
             
             num_perm:
                 
@@ -1896,7 +1863,7 @@ def calculate_density_perm(tsne, weights=None, num_perm=1000, kernel=None):
     if weights is not None and np.sum(weights) != 0 and np.sum(weights!=0) > 1:     # expel unqualified units
         
         # --- calculate the original density map
-        density_map, convolved_density_map = calculate_convolved_density_map(tsne, weights, kernel)
+        density_map, convolved_density_map = calculate_convolved_density_map(reduced_feature, weights, kernel)
         
         # --- init
         permutation_stats = np.zeros(density_map.shape)
@@ -1906,7 +1873,7 @@ def calculate_density_perm(tsne, weights=None, num_perm=1000, kernel=None):
         # --- permutation test
         for _ in range(num_perm):
 
-            perm_density_map, perm_convolved_density_map = calculate_convolved_density_map(tsne, weights[np.random.permutation(len(weights))], kernel)
+            perm_density_map, perm_convolved_density_map = calculate_convolved_density_map(reduced_feature, weights[np.random.permutation(len(weights))], kernel)
             
             permutation_stats += perm_convolved_density_map > convolved_density_map
             
@@ -1917,26 +1884,26 @@ def calculate_density_perm(tsne, weights=None, num_perm=1000, kernel=None):
     
     else:
         
-        density_map, convolved_density_map = calculate_convolved_density_map(tsne, None, kernel)
+        density_map, convolved_density_map = calculate_convolved_density_map(reduced_feature, None, kernel)
         
         perm_density_maps = np.ones((num_perm, *density_map.shape))
         perm_convolved_density_maps = np.ones((num_perm, *density_map.shape))
         
         # init with 1
-        p = np.ones((int(np.ceil(np.max(tsne[:,1]-np.min(tsne[:,1]))+1)), int(np.ceil(np.max(tsne[:,0]-np.min(tsne[:,0]))+1))))      
+        p = np.ones((int(np.ceil(np.max(reduced_feature[:,1]-np.min(reduced_feature[:,1]))+1)), int(np.ceil(np.max(reduced_feature[:,0]-np.min(reduced_feature[:,0]))+1))))      
             
     return p, perm_density_maps, perm_convolved_density_maps
 
 
-def calculate_convolved_density_map(tsne, weights=None, kernel=None):
+def calculate_convolved_density_map(reduced_feature, weights=None, kernel=None):
     """
         this function is a simple wrap of calculate_2d_density_map(), added the smoothed (convolved) density map
         
         input:
             
-            tsne: tsne 2D feature with shape (num_samples, 2)
+            reduced_feature: reduced_feature 2D feature with shape (num_samples, 2)
             
-            weights: original weights to indicate the size (radius) of each dot in the tsne coordinate
+            weights: original weights to indicate the size (radius) of each dot in the reduced_feature coordinate
             
             kernel: 2D kernel used for smooth (convolve) process
             
@@ -1948,13 +1915,13 @@ def calculate_convolved_density_map(tsne, weights=None, kernel=None):
             
     """
     
-    density_map = calculate_2d_density_map(tsne, weights)
-    convolved_density_map = convolve(density_map, kernel, mode='constant')
+    density_map = calculate_2d_density_map(reduced_feature, weights)
+    convolved_density_map = scipy.ndimage.convolve(density_map, kernel, mode='constant')
 
     return density_map, convolved_density_map
 
 
-def calculate_2d_density_map(tsne, weights=None):
+def calculate_2d_density_map(reduced_feature, weights=None):
     """
         this function is the most basic process to calculate the 2D density map. It creates an empty grid first, then count
         the number of dots around each grid point. Finally it generates a 'point density map' which illustrates the spatial
@@ -1962,9 +1929,9 @@ def calculate_2d_density_map(tsne, weights=None):
         
         input:
             
-            tsne: tsne 2D feature with shape (num_samples, 2)
+            reduced_feature: reduced_feature 2D feature with shape (num_samples, 2)
             
-            weights: original weights to indicate the size (radius) of each dot in the tsne coordinate. If weights are not
+            weights: original weights to indicate the size (radius) of each dot in the reduced_feature coordinate. If weights are not
         None, the grid accumulates with 1 for each dot; othwise the grid accumulates with wight (firing rate) for each dot.
             
         return:
@@ -1978,8 +1945,8 @@ def calculate_2d_density_map(tsne, weights=None):
         weights = np.ones(500)
     
     # --- create an empty density map
-    x = tsne[:, 0] - np.min(tsne[:, 0])
-    y = tsne[:, 1] - np.min(tsne[:, 1])
+    x = reduced_feature[:, 0] - np.min(reduced_feature[:, 0])
+    y = reduced_feature[:, 1] - np.min(reduced_feature[:, 1])
     
     density_map = empty_density_map(y, x)
     

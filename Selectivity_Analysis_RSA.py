@@ -21,28 +21,21 @@ import pickle
 import warnings
 import logging
 import numpy as np
-import scipy.io as sio
+
 import matplotlib
-from matplotlib import colors
+
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from tqdm import tqdm
-from collections import Counter
+
 from joblib import Parallel, delayed
-from itertools import chain
+import scipy
 
-
-import spiking_vgg, spiking_resnet, sew_resnet
-from spikingjelly.activation_based import surrogate, neuron, functional
-
-from scipy.spatial.distance import pdist, squareform
 from scipy.stats import pearsonr, spearmanr, kendalltau, ttest_ind
-from scipy.sparse import issparse
+
 from statsmodels.stats.multitest import multipletests
 
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 
-import vgg, resnet
 import utils_
 import utils_similarity
 
@@ -116,7 +109,7 @@ class Selectiviy_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sele
             self.plot_temporal_correlation(np.arange(len(self.layers)), self.layers, RSA_dict, title=f'RSA Score temporal {self.model_structure} (all layers) {self.metric}', extent=extent)
             
             # --- imaginary neurons
-            idx, layer_n, _ = utils_.activation_function_vgg(self.layers)
+            idx, layer_n, _ = utils_.activation_function(self.model_structure, self.layers)
             
             RSA_dict_neuron = {_:RSA_dict[_][idx] for _ in RSA_dict.keys()}
             extent = [self.ts.min()-5, self.ts.max()+5, -0.5, RSA_dict_neuron['similarity_temporal'].shape[0]-0.5]
@@ -149,7 +142,7 @@ class Selectiviy_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sele
             similarity, similarity_perm, similarity_p, similarity_temporal, similarity_perm_temporal, similarity_p_perm_temporal = [np.array(_) for _ in list(zip(*pl))]
             
             # --- static
-            (sig_FDR, p_FDR, alpha_Sadik, alpha_Bonf) = multipletests(similarity_p, alpha=alpha, method='fdr_bh')    # FDR (flase discovery rate) correction
+            (sig_FDR, p_FDR, alpha_Sadik, alpha_Bonf) = multipletests(similarity_p, alpha=alpha, method=FDR_method)    # FDR (flase discovery rate) correction
             sig_Bonf = p_FDR<alpha_Bonf
             
             # --- temporal
@@ -433,13 +426,14 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
     # FIXME
     def human_neuron_analysis(self, 
                               metrics=[
-                                          #'euclidean', 
+                                          'euclidean', 
                                           'pearson'
                                           ], 
                               cell_types=[
                                           'qualified',      # --- 1577 cells V.S. all units
                                           
-                                          'selective', 'non_selective',
+                                          'selective', 
+                                          'non_selective',
                                           #'sensitive', 'non_sensitive', 
                                           
                                           #'encode', 'non_encode', 
@@ -463,6 +457,8 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
         print(f'[Codinfo] Processing RSA for Human and NN ({self.model_structure})')
         
         ...
+        
+        # --- legacy RSA
         self._human_neuron_RSA_analysis_legacy()
         
         # --- RSA
@@ -533,7 +529,7 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
                 title=f'Human-NN RSA Score temporal\n{self.model_structure} (all layers) {metric}_{used_cell_type}_{used_id_num}')
         
             # --- plot - neurons
-            idx, layers_n, _ = utils_.activation_function_vgg(self.layers)
+            idx, layers_n, _ = utils_.activation_function(self.model_structure, self.layers)
             human_NN_corr_dict_neuron = {_:human_NN_corr_dict[_][idx] for _ in human_NN_corr_dict.keys()}
             
             self.human_NN_RSA_analysis_sub_id_plot(
@@ -776,16 +772,14 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore')
             
-            fig, ax = plt.subplots(figsize=(np.array(RSA_dict['similarity_temporal'].T.shape)/5))
+            fig, ax = plt.subplots(figsize=(10, RSA_dict['similarity_temporal'].shape[0]/4))
             
             plot_temporal_correlation(layers, fig, ax, RSA_dict, error_control_measure, title, vlim, extent)
             utils_similarity.fake_legend_describe_numpy(RSA_dict['similarity_temporal'], ax, RSA_dict['sig_temporal_FDR'].astype(bool))
                     
-            plt.tight_layout(pad=1)
-            
+            #plt.tight_layout(pad=1)
             plt.savefig(os.path.join(self.save_root_comparison, f'{title}.png'))
             plt.savefig(os.path.join(self.save_root_comparison, f'{title}.pdf'))     
-            #plt.show()
             plt.close()
             
     # ------------------------------------------------------------------------------------------------------------------
@@ -803,7 +797,7 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
         self.human_NN_RSA_plot_static(np.arange(len(self.layers)), self.layers, metrics, cell_types, used_id_nums, postfix='all layers')
         self.human_NN_RSA_plot_temporal(np.arange(len(self.layers)), self.layers, metrics, cell_types, used_id_nums, postfix='all layers')
         
-        idx, layers_n, _ = utils_.activation_function_vgg(self.layers)
+        idx, layers_n, _ = utils_.activation_function(self.model_structure, self.layers)
         
         self.human_NN_RSA_plot_static(idx, layers_n, metrics, cell_types, used_id_nums, postfix='neuron')
         self.human_NN_RSA_plot_temporal(idx, layers_n, metrics, cell_types, used_id_nums, postfix='neuron')
@@ -998,7 +992,7 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
                     title=f'Human-NN RSA Score temporal\n{metric}_{used_id_num}_mismatched_Selective_Human_Strong_Selective_NN (all)')
             
                 # --- plot - neurons
-                idx, layers_n, _ = utils_.activation_function_vgg(self.layers)
+                idx, layers_n, _ = utils_.activation_function(self.model_structure, self.layers)
                 human_NN_corr_dict_neuron = {_:human_NN_corr_dict[_][idx] for _ in human_NN_corr_dict.keys()}
                 
                 self.human_NN_RSA_analysis_sub_id_plot(
@@ -1228,8 +1222,13 @@ class Selectiviy_Analysis_Correlation_Human(Human_Neuron_Records_Process, Select
         
         return RSA_dict
     
+    
 # ======================================================================================================================
 def plot_static_correlation(layers, ax, RSA_dict, error_control_measure='sig_FDR', title=None, error_area=True, vlim:list[float]=None, legend=True):
+    """
+        #TODO 
+        add the std error area
+    """
     
     plot_x = range(len(layers))
     
@@ -1243,13 +1242,19 @@ def plot_static_correlation(layers, ax, RSA_dict, error_control_measure='sig_FDR
         ax.plot(plot_x, perm_mean, color='dimgray', label='perm mean')
     
     # --- 2. plot RSA scores with FDR results
+    similarity = RSA_dict['similarity']
+    
+    if 'similarity_std' in RSA_dict.keys():
+        ax.fill_between(plot_x, similarity-RSA_dict['similarity_std'], similarity+RSA_dict['similarity_std'], edgecolor=None, facecolor='skyblue', alpha=0.75)
+
     for idx, _ in enumerate(RSA_dict[error_control_measure], 0):
          if not _:   
-             ax.scatter(idx, RSA_dict['similarity'][idx], facecolors='none', edgecolors='blue')
+             ax.scatter(idx, similarity[idx], facecolors='none', edgecolors='blue')
          else:
-             ax.scatter(idx, RSA_dict['similarity'][idx], facecolors='blue', edgecolors='blue')
-    ax.plot(RSA_dict['similarity'], linestyle='dotted', color='deepskyblue')
-    
+             ax.scatter(idx, similarity[idx], facecolors='blue', edgecolors='blue')
+             
+    ax.plot(similarity, linestyle='dotted', color='deepskyblue')
+
     ax.set_ylabel("Spearman's $\\rho$")
     ax.set_xticks(plot_x)
     ax.set_xticklabels(layers, rotation=90, ha='center')
@@ -1268,31 +1273,92 @@ def plot_static_correlation(layers, ax, RSA_dict, error_control_measure='sig_FDR
     if legend:
         ax.legend(handles, labels, framealpha=0.5)
     
-    y_radius = np.max(RSA_dict['similarity'][~np.isnan(RSA_dict['similarity'])])
+    similarity_ = similarity[~np.isnan(similarity)]
+    if error_area:
+        y_radius = np.max(similarity_) - np.min(perm_mean[~np.isnan(perm_mean)])
+    else:
+        y_radius = np.max(similarity_) - np.min(similarity_)
     
     if not vlim:
-        ax.set_ylim([np.min(RSA_dict['similarity'][~np.isnan(RSA_dict['similarity'])])-0.1*y_radius, 1.2*y_radius])
+        if error_area:
+            ylim_bottom = np.min([np.min(similarity_), np.min(perm_mean[~np.isnan(perm_mean)])])
+        else:
+            ylim_bottom = np.min(similarity_)
+        ax.set_ylim([ylim_bottom-0.025*y_radius, np.max(similarity_)+0.05*y_radius])
     else:
         ax.set_ylim(vlim)
 
-def plot_temporal_correlation(layers, fig, ax, RSA_dict, error_control_measure='sig_FDR', title=None, vlim:list[float]=None, extent:list[float]=None, colorbar=True):
+
+def plot_temporal_correlation(layers, fig, ax, RSA_dict, error_control_measure='sig_Bonf', title=None, vlim:list[float]=None, extent:list[float]=None):
     
-    if not vlim:
-        cax = ax.imshow(RSA_dict['similarity_temporal'], aspect='auto', extent=extent)
-        if colorbar:
-            fig.colorbar(cax, ax=ax)
+    def _is_binary(input):
+        return np.all((input==0)|(input==1))
+    
+    # FIXME --- the contour() and contourf() are not identical
+    def _mask_contour(input):
+        
+        from matplotlib.ticker import FixedLocator, FixedFormatter
+        
+        # ---
+        c_ax1 = fig.add_axes([0.91, 0.125, 0.03, 0.35])
+        c_b1 = fig.colorbar(x, cax=c_ax1)
+        c_b1.ax.tick_params(labelsize=16)
+        
+        # ---
+        ax.contour(input, levels:=[-0.1, 0.1, 0.3, 0.5, 0.7, 0.9, 0.95, 0.99, 0.999], origin='upper', cmap='jet', extent=extent, linewidths=3)
+        ax.contourf(input, levels, origin='upper', cmap='gray', extent=extent, alpha=0.3)
+        
+        dummy_y = ax.contourf(input, levels, cmap='jet')
+        for collection in dummy_y.collections:
+            collection.set_visible(False)
+
+        c_ax2 = fig.add_axes([0.91, 0.525, 0.03, 0.35])
+        c_b2 = fig.colorbar(dummy_y, cax=c_ax2)
+        c_b2.ax.tick_params(labelsize=16)
+
+        original_ticks = c_b2.get_ticks()
+        original_labels = [str(tick) for tick in original_ticks]
+
+        c_b2.ax.yaxis.set_major_locator(FixedLocator([-0.2, 0., 0.2, 0.4, 0.6, 0.8, 0.925, 0.975, 0.9945]))
+        c_b2.ax.yaxis.set_major_formatter(FixedFormatter(original_labels))
+        
+    def _p_contour(input):
+        ax.imshow(input:=scipy.ndimage.gaussian_filter(input, sigma=1), aspect='auto',  cmap='gray', extent=extent, interpolation='none', alpha=0.3)
+        ax.contour(input, levels:=[0.5], origin='upper', cmap='jet', extent=extent, linewidths=3)
+        
+        c_b2 = fig.colorbar(x, cax=fig.add_axes([0.91, 0.125, 0.03, 0.75]))
+        c_b2.ax.tick_params(labelsize=16)
+        
+    # ---
+    if vlim:
+        x = ax.imshow(RSA_dict['similarity_temporal'], aspect='auto', vmin=vlim[0], vmax=vlim[1], extent=extent)
     else:
-        cax = ax.imshow(RSA_dict['similarity_temporal'], aspect='auto', vmin=vlim[0], vmax=vlim[1], extent=extent)
-        if colorbar:
-            fig.colorbar(cax, ax=ax)
-            
-    ax.set_yticks(np.arange(RSA_dict['similarity_temporal'].shape[0]), list(reversed(layers)), fontsize=10)
-    ax.set_xlabel('Time (ms)')
+        x = ax.imshow(RSA_dict['similarity_temporal'], aspect='auto', extent=extent)
+
+    ax.set_yticks(np.arange(RSA_dict['similarity_temporal'].shape[0]), list(reversed(layers)), fontsize=12)
+    ax.set_xlabel('Time (ms)', fontsize=14)
     ax.tick_params(axis='x', labelsize=12)
-    ax.set_title(f'{title}')
+    ax.set_title(f'{title}', fontsize=16)
     
-    # significant correlation (Bonferroni correction)
-    ax.imshow(RSA_dict['sig_temporal_Bonf'], aspect='auto',  cmap='gray', extent=extent, interpolation='none', alpha=0.25)
+    # FIXEME --- need to upgrade to merged model
+    # significant correlation (Bonferroni/FDR)
+    if error_control_measure == 'sig_FDR':
+        if _is_binary(mask:=RSA_dict['sig_temporal_FDR']):
+            #ax.imshow(mask, aspect='auto',  cmap='gray', extent=extent, interpolation='none', alpha=0.25)
+            _p_contour(mask)
+
+        else:
+            _mask_contour(mask)
+            
+        
+    elif error_control_measure == 'sig_Bonf':
+        if _is_binary(mask:=RSA_dict['sig_temporal_Bonf']):
+            #ax.imshow(mask, aspect='auto',  cmap='gray', extent=extent, interpolation='none', alpha=0.25)
+            _p_contour(mask)
+
+        else:
+            _mask_contour(mask)
+            
 
 
 # ======================================================================================================================
@@ -1572,7 +1638,11 @@ if __name__ == "__main__":
     
     model_name = 'vgg16_bn'
     
-    model_ = vgg.__dict__[model_name](num_classes=50)
+    import sys
+    sys.path.append('../')
+    import models_
+    
+    model_ = models_.vgg.__dict__[model_name](num_classes=50)
     layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, model_name)
     
     root_dir = '/home/acxyle-workstation/Downloads/'

@@ -113,7 +113,7 @@ class Encode_feaquency_analyzer():
             # --- running
             for layer in self.layers:     # for each layer
                 
-                feature = utils_.load(os.path.join(self.root, f'{layer}.pkl'))      # load feature matrix
+                feature = utils_.load(os.path.join(self.root, f'{layer}.pkl'), verbose=False)      # load feature matrix
     
                 s = self.ANOVA_idces[layer]     # sensitive_idx
                 ns = np.array(list(set(np.arange(feature.shape[1]))-set(s)))     # non_sensitive_idx
@@ -346,43 +346,45 @@ class Encode_feaquency_analyzer():
     
         print(f'[Codinfo] Executing plot_Encode_pct() with num_types={num_types}')
         
-        # --- label correction
-        if 'basic_type' in self.Sort_dict['neuron_1'].keys() and 'si_idx' in self.Sort_dict['neuron_1']['basic_type'].keys():
-            
-            for layer in self.Sort_dict.keys():
-                
-                unit_sort_dict = {
-                    
-                    'basic_type': {
-                        'si': self.Sort_dict[layer]['basic_type']['si'],
-                        'wsi': self.Sort_dict[layer]['basic_type']['wsi'],
-                        'mi': self.Sort_dict[layer]['basic_type']['mi'],
-                        'wmi': self.Sort_dict[layer]['basic_type']['wmi'],
-                        'non_encode': self.Sort_dict[layer]['basic_type']['non_encode']
-                        },
-                    
-                    'advanced_type': {
-                        's_si': self.Sort_dict[layer]['advanced_type']['s_si'],
-                        's_wsi': self.Sort_dict[layer]['advanced_type']['s_wsi'],
-                        's_mi': self.Sort_dict[layer]['advanced_type']['s_mi'],
-                        's_wmi': self.Sort_dict[layer]['advanced_type']['s_wmi'],
-                        's_non_encode': self.Sort_dict[layer]['advanced_type']['s_non_encode'],
-                        
-                        'ns_si': self.Sort_dict[layer]['advanced_type']['ns_si'],
-                        'ns_wsi': self.Sort_dict[layer]['advanced_type']['ns_wsi'],
-                        'ns_mi': self.Sort_dict[layer]['advanced_type']['ns_mi'],
-                        'ns_wmi': self.Sort_dict[layer]['advanced_type']['ns_wmi'],
-                        'ns_non_encode': self.Sort_dict[layer]['advanced_type']['ns_non_encode'],
-                        }
-                    }
-                
-                self.Sort_dict[layer] = unit_sort_dict
-        
-            os.remove(sort_dict_path)
-            utils_.dump(self.Sort_dict, sort_dict_path)
-            print('------------------------------------------')
-            print('[Codinfo] self.Sort_dict updated')
-            print('------------------------------------------')
+        # --- vgg label correction
+# =============================================================================
+#         if 'basic_type' in self.Sort_dict['neuron_1'].keys() and 'si_idx' in self.Sort_dict['neuron_1']['basic_type'].keys():
+#             
+#             for layer in self.Sort_dict.keys():
+#                 
+#                 unit_sort_dict = {
+#                     
+#                     'basic_type': {
+#                         'si': self.Sort_dict[layer]['basic_type']['si'],
+#                         'wsi': self.Sort_dict[layer]['basic_type']['wsi'],
+#                         'mi': self.Sort_dict[layer]['basic_type']['mi'],
+#                         'wmi': self.Sort_dict[layer]['basic_type']['wmi'],
+#                         'non_encode': self.Sort_dict[layer]['basic_type']['non_encode']
+#                         },
+#                     
+#                     'advanced_type': {
+#                         's_si': self.Sort_dict[layer]['advanced_type']['s_si'],
+#                         's_wsi': self.Sort_dict[layer]['advanced_type']['s_wsi'],
+#                         's_mi': self.Sort_dict[layer]['advanced_type']['s_mi'],
+#                         's_wmi': self.Sort_dict[layer]['advanced_type']['s_wmi'],
+#                         's_non_encode': self.Sort_dict[layer]['advanced_type']['s_non_encode'],
+#                         
+#                         'ns_si': self.Sort_dict[layer]['advanced_type']['ns_si'],
+#                         'ns_wsi': self.Sort_dict[layer]['advanced_type']['ns_wsi'],
+#                         'ns_mi': self.Sort_dict[layer]['advanced_type']['ns_mi'],
+#                         'ns_wmi': self.Sort_dict[layer]['advanced_type']['ns_wmi'],
+#                         'ns_non_encode': self.Sort_dict[layer]['advanced_type']['ns_non_encode'],
+#                         }
+#                     }
+#                 
+#                 self.Sort_dict[layer] = unit_sort_dict
+#         
+#             os.remove(sort_dict_path)
+#             utils_.dump(self.Sort_dict, sort_dict_path)
+#             print('------------------------------------------')
+#             print('[Codinfo] self.Sort_dict updated')
+#             print('------------------------------------------')
+# =============================================================================
 
         if num_types == 5:
             
@@ -402,18 +404,18 @@ class Encode_feaquency_analyzer():
             plt.close()
             
             # --- 2. act
-            act_idx, act_layers, _ = utils_.activation_function_vgg(self.layers)
+            act_idx, act_layers, _ = utils_.activation_function(self.model_structure, self.layers)
             Encode_types_pct = {_: [Encode_types_pct[_][idx] for idx in act_idx] for _ in Encode_types_pct.keys()}
  
             curve_dict = self.obtain_Encode_types_curve_dict(Encode_types_pct)
             
-            fig, ax = plt.subplots(figsize=(10,6))
-            self.encode_layer_percent_plot(fig_folder, fig, ax, act_layers, curve_dict, None)
+            figs_act, axes_act = plt.subplots(figsize=(10,6))
+            self.encode_layer_percent_plot(fig_folder, figs_act, axes_act, act_layers, curve_dict, None)
             
-            ax.set_title(title:=self.model_structure + '_5_types_act')
+            axes_act.set_title(title:=self.model_structure + '_5_types_act')
             
-            fig.savefig(os.path.join(fig_folder, title+'.png'), bbox_inches='tight')
-            fig.savefig(os.path.join(fig_folder, title+'.eps'), bbox_inches='tight')    
+            figs_act.savefig(os.path.join(fig_folder, title+'.png'), bbox_inches='tight')
+            figs_act.savefig(os.path.join(fig_folder, title+'.eps'), bbox_inches='tight')    
             plt.close()
             
         elif num_types == 23:
@@ -435,7 +437,7 @@ class Encode_feaquency_analyzer():
             plt.close()
             
             # ----- activation function
-            act_idx, act_layers, _ = utils_.activation_function_vgg(self.layers)
+            act_idx, act_layers, _ = utils_.activation_function(self.model_structure, self.layers)
             Encode_types_pct = {_: [Encode_types_pct[_][idx] for idx in act_idx] for _ in Encode_types_pct.keys()}
             
             figs_act, axes_act = plt.subplots(2,2,figsize=(24,12))
@@ -444,7 +446,7 @@ class Encode_feaquency_analyzer():
                                                                     Encode_types_pct,
                                                                     layers=act_layers)
             
-            figs.suptitle(title:=self.model_structure + '_23_types_act')
+            figs_act.suptitle(title:=self.model_structure + '_23_types_act')
             figs_act.subplots_adjust(hspace=0.5, wspace=0.1)
             figs_act.savefig(os.path.join(fig_folder, title+'.png'), bbox_inches='tight')
             figs_act.savefig(os.path.join(fig_folder, title+'.eps'), bbox_inches='tight')     
@@ -604,7 +606,7 @@ class Encode_feaquency_analyzer():
             self.draw_encode_frequency_layers(freq_dict['all_encode'])
 
         # -----
-        idx, layers, _ = utils_.activation_function_vgg(self.layers)
+        idx, layers, _ = utils_.activation_function(self.model_structure, self.layers)
         
         vmin = 1.
         vmax = 0.
@@ -1155,440 +1157,386 @@ class Encode_feaquency_analyzer():
             
         return layer_dict
     
-    @staticmethod
-    def single_acc(feature, idx, label, tqdm_bar):
-        if len(idx) != 0:
-            acc = utils_.SVM_classification(feature[:, idx], label, test_size=0.2, random_state=42)
-        else:
-            acc = 0. 
-            
-        tqdm_bar.update(1)
+    
+    # ------------------------------------------------------------------------------------------------------------------
+    def SVM_analysis(self, plot_types=5):
         
-        return acc
+        print('[Codinfo] Executing SVM_calculation plot...')
+        
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
+        self.SVM_fig_folder = os.path.join(self.dest_Encode, 'SVM_Figures')
+        utils_.make_dir(self.SVM_fig_folder)
+        
+        # ----- calculation
+        layer_SVM = self.SVM_calculation(plot_types)
+        
+        # ----- plot
+        self.SVM_plot(layer_SVM, plot_types)
+    
     
     #FIXME
-    def SVM(self, num_types=5):
+    def SVM_calculation(self, num_types=5):
         """
             test version for merging with previous results
             
             [notice] manually select the used cell types, now use new 5 types
         """
         
-        print('[Codinfo] computing SVM...')
+        utils_._print('computing SVM_calculation...')
         
-        SVM_path = os.path.join(self.dest_Encode, 'SVM.pkl')
-        
-        #FIXME --- tmp
+        SVM_path = os.path.join(self.dest_Encode, f'SVM_types_{num_types}.pkl')
+
         if os.path.exists(SVM_path):
             
             layer_SVM = utils_.load(SVM_path)
             
         else:
             
+            # --- init
             if not hasattr(self, 'Sort_dict'):
                 self.Sort_dict = utils_.load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
             
-            #ANOVA_idces = utils_.pickle_load(os.path.join(self.dest, 'ANOVA/ANOVA_idces.pkl'))
-            
-            # ----- for SVM
             label = utils_.lexicographic_order(50)+1
             label = np.repeat(label, 10)
             
+            def _calculate_SVM_acc(target_units):
+            
+                return calculate_SVM_acc(feature, target_units, label, tqdm_bar)
+            
             layer_SVM = {}
             
-            for layer in self.layers:
-                
-                # --- depends
-                tqdm_bar = tqdm(total=num_types+1, desc=f'{layer}')
-                
-                feature = utils_.load(os.path.join(self.root, layer+'.pkl'), verbose=False)
+            if num_types == 5:
+ 
+                for layer in self.layers:
+                    
+                    # --- depends
+                    feature = utils_.load(os.path.join(self.root, layer+'.pkl'), verbose=False)
 
-                Sort_dict = self.Sort_dict[layer]
-                
-                # -----
-                #sensitive_idx = ANOVA_idces[layer]
-                #non_sensitive_idx = np.array(list(set(np.arange(feature.shape[1])) - set(sensitive_idx)))
-                
-                #si = Sort_dict['basic_type']['si']
-                #mi = Sort_dict['basic_type']['mi']
-                #wsi = Sort_dict['basic_type']['wsi']
-                #wmi = Sort_dict['basic_type']['wmi']
-                # -----
-                
-                # -----
-                layer_SVM.update({layer:
-                    {
+                    tqdm_bar = tqdm(total=num_types+1, desc=f'{layer}')
+                    Sort_dict = self.Sort_dict[layer]
+                    
+                    # ---
+                    layer_SVM.update({layer:
+                        {
+                        'all_acc': _calculate_SVM_acc(np.arange(feature.shape[1])),     # reference
+
+                        's_si_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['s_si']),
+                        's_mi_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['s_mi']),
+
+                        's_wsi_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['s_wsi']),
+                        's_wmi_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['s_wmi']),
+
+                        'n_e_acc': _calculate_SVM_acc([*Sort_dict['advanced_type']['s_non_encode'], *Sort_dict['advanced_type']['ns_non_encode'],
+                                                                *Sort_dict['advanced_type']['ns_si'], *Sort_dict['advanced_type']['ns_wsi'], 
+                                                                *Sort_dict['advanced_type']['ns_mi'], *Sort_dict['advanced_type']['ns_wmi']])
                         
-                    # --- all units
-                    'all_acc': self.single_acc(feature, np.arange(feature.shape[1]), label, tqdm_bar),     # reference line
-                    
-                    # --- sensitive conditions
-                    #'sensitive_acc': self.single_acc(feature, sensitive_idx, label, tqdm_bar),
-                    #'non_sensitive_acc': self.single_acc(feature, non_sensitive_idx, label, tqdm_bar),
-                    
-                    # --- encode conditions
-                    #'si_acc': self.single_acc(feature, si, label, tqdm_bar),
-                    #'mi_acc': self.single_acc(feature, mi, label, tqdm_bar),
-                    #'encode_acc': self.single_acc(feature, [*si, *mi], label, tqdm_bar),
-                    
-                    # --- weak encode conditions
-                    #'wsi_acc': self.single_acc(feature, wsi, label, tqdm_bar),
-                    #'wmi_acc': self.single_acc(feature, wmi, label, tqdm_bar),
-                    #'weak_encode_acc': self.single_acc(feature, [*wsi, *wmi], label, tqdm_bar),
-                    
-                    # --- non encode conditions
-                    #'non_encode_acc': self.single_acc(feature, Sort_dict['basic_type']['non_encode'], label, tqdm_bar),
-                    #'s_non_encode_acc': self.single_acc(feature, Sort_dict['advanced_type']['s_non_encode'], label, tqdm_bar),
-                    #'ns_non_encode_acc': self.single_acc(feature, Sort_dict['advanced_type']['ns_non_encode'], label, tqdm_bar),
-                    
-                    # --- sensitive + encode conditions
-                    's_si_acc': self.single_acc(feature, Sort_dict['advanced_type']['s_si'], label, tqdm_bar),
-                    's_mi_acc': self.single_acc(feature, Sort_dict['advanced_type']['s_mi'], label, tqdm_bar),
-                    #'s_encode_acc': self.single_acc(feature, [*Sort_dict['advanced_type']['s_si'], *Sort_dict['advanced_type']['s_mi']], label, tqdm_bar),
-                    
-                    #'ns_si_acc': self.single_acc(feature, Sort_dict['advanced_type']['ns_si'], label, tqdm_bar),
-                    #'ns_mi_acc': self.single_acc(feature, Sort_dict['advanced_type']['ns_mi'], label, tqdm_bar),
-                    #'ns_encode_acc': self.single_acc(feature, [*Sort_dict['advanced_type']['ns_si'], *Sort_dict['advanced_type']['ns_mi']], label, tqdm_bar),
-                    
-                    # --- sensitive + weak encode conditions
-                    's_wsi_acc': self.single_acc(feature, Sort_dict['advanced_type']['s_wsi'], label, tqdm_bar),
-                    's_wmi_acc': self.single_acc(feature, Sort_dict['advanced_type']['s_wmi'], label, tqdm_bar),
-                    #'s_weak_encode_acc': self.single_acc(feature, [*Sort_dict['advanced_type']['s_wsi'], *Sort_dict['advanced_type']['s_wmi']], label, tqdm_bar),
-                    
-                    #'ns_wsi_acc': self.single_acc(feature, Sort_dict['advanced_type']['ns_wsi'], label, tqdm_bar),
-                    #'ns_wmi_acc': self.single_acc(feature, Sort_dict['advanced_type']['ns_wmi'], label, tqdm_bar),
-                    #'ns_weak_encode_acc': self.single_acc(feature, [*Sort_dict['advanced_type']['ns_wsi'], *Sort_dict['advanced_type']['ns_wmi']], label, tqdm_bar),
-                    
-                    # --- encode / weak encode conditions
-                    #'all_si_acc': self.single_acc(feature, [*si, *wsi], label, tqdm_bar),
-                    #'all_mi_acc': self.single_acc(feature, [*mi, *wmi], label, tqdm_bar),
-                    #'all_encode_acc': self.single_acc(feature, [*si, *wsi, *mi, *wmi], label, tqdm_bar),
-                            
-                    # --- sensitive + encode/ weak encode conditions
-                    #'all_s_si_acc': self.single_acc(feature, [*Sort_dict['advanced_type']['s_si'], *Sort_dict['advanced_type']['s_wsi']], label, tqdm_bar),
-                    #'all_s_mi_acc': self.single_acc(feature, [*Sort_dict['advanced_type']['s_mi'], *Sort_dict['advanced_type']['s_wmi']], label, tqdm_bar),
-                    #'all_s_strong_encode_acc': self.single_acc(feature, [*Sort_dict['advanced_type']['s_si'], *Sort_dict['advanced_type']['s_wsi'], *Sort_dict['advanced_type']['s_mi'], *Sort_dict['advanced_type']['s_wmi']], label, tqdm_bar),
-                    
-                    #'all_ns_si_acc': self.single_acc(feature, [*Sort_dict['advanced_type']['ns_si'], *Sort_dict['advanced_type']['ns_wsi']], label, tqdm_bar),
-                    #'all_ns_mi_acc': self.single_acc(feature, [*Sort_dict['advanced_type']['ns_mi'], *Sort_dict['advanced_type']['ns_wmi']], label, tqdm_bar),
-                    #'all_ns_strong_encode_acc': self.single_acc(feature, [*Sort_dict['advanced_type']['ns_si'], *Sort_dict['advanced_type']['ns_wsi'], *Sort_dict['advanced_type']['ns_mi'], *Sort_dict['advanced_type']['ns_wmi']], label, tqdm_bar),
-                    
-                    # --- this new non_encode means all other types except s_si, s_wsi, s_mi and s_wmi
-                    'n_e_acc': self.single_acc(feature, [*Sort_dict['advanced_type']['s_non_encode'], *Sort_dict['advanced_type']['ns_non_encode'],
-                                                            *Sort_dict['advanced_type']['ns_si'], *Sort_dict['advanced_type']['ns_wsi'], 
-                                                            *Sort_dict['advanced_type']['ns_mi'], *Sort_dict['advanced_type']['ns_wmi']], label, tqdm_bar)
-                    
-                    }})
-                    
-            utils_.dump(layer_SVM, SVM_path)
+                        }})
             
-            print('[Codinfo] SVM calculation done')
+            elif num_types == 31:
+                
+                # --- init
+                ANOVA_idces = utils_.pickle_load(os.path.join(self.dest, 'ANOVA/ANOVA_idces.pkl'))
+                
+                for layer in self.layers:
+                    
+                    # --- depends
+                    feature = utils_.load(os.path.join(self.root, layer+'.pkl'), verbose=False)
+
+                    tqdm_bar = tqdm(total=num_types+1, desc=f'{layer}')
+                    Sort_dict = self.Sort_dict[layer]
+                    
+                    # --- 
+                    sensitive_idx = ANOVA_idces[layer]
+                    non_sensitive_idx = np.array(list(set(np.arange(feature.shape[1])) - set(sensitive_idx)))
+                    
+                    si = Sort_dict['basic_type']['si']
+                    mi = Sort_dict['basic_type']['mi']
+                    wsi = Sort_dict['basic_type']['wsi']
+                    wmi = Sort_dict['basic_type']['wmi']
+
+                    # -----
+                    layer_SVM.update({layer:
+                        { 
+                        # --- all units
+                        'all_acc': _calculate_SVM_acc(np.arange(feature.shape[1])),     # reference line
+                        
+                        # --- sensitive conditions
+                        'sensitive_acc': _calculate_SVM_acc(sensitive_idx),
+                        'non_sensitive_acc': _calculate_SVM_acc(non_sensitive_idx),
+                        
+                        # --- encode conditions
+                        'si_acc': _calculate_SVM_acc(si),
+                        'mi_acc': _calculate_SVM_acc(mi),
+                        'encode_acc': _calculate_SVM_acc([*si, *mi]),
+                        
+                        # --- weak encode conditions
+                        'wsi_acc': _calculate_SVM_acc(wsi),
+                        'wmi_acc': _calculate_SVM_acc(wmi),
+                        'weak_encode_acc': _calculate_SVM_acc([*wsi, *wmi]),
+                        
+                        # --- non encode conditions
+                        'non_encode_acc': _calculate_SVM_acc(Sort_dict['basic_type']['non_encode']),
+                        's_non_encode_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['s_non_encode']),
+                        'ns_non_encode_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['ns_non_encode']),
+                        
+                        # --- sensitive + encode conditions
+                        's_si_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['s_si']),
+                        's_mi_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['s_mi']),
+                        's_encode_acc': _calculate_SVM_acc([*Sort_dict['advanced_type']['s_si'], *Sort_dict['advanced_type']['s_mi']]),
+                        
+                        'ns_si_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['ns_si']),
+                        'ns_mi_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['ns_mi']),
+                        'ns_encode_acc': _calculate_SVM_acc([*Sort_dict['advanced_type']['ns_si'], *Sort_dict['advanced_type']['ns_mi']]),
+                        
+                        # --- sensitive + weak encode conditions
+                        's_wsi_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['s_wsi']),
+                        's_wmi_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['s_wmi']),
+                        's_weak_encode_acc': _calculate_SVM_acc([*Sort_dict['advanced_type']['s_wsi'], *Sort_dict['advanced_type']['s_wmi']]),
+                        
+                        'ns_wsi_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['ns_wsi']),
+                        'ns_wmi_acc': _calculate_SVM_acc(Sort_dict['advanced_type']['ns_wmi']),
+                        'ns_weak_encode_acc': _calculate_SVM_acc([*Sort_dict['advanced_type']['ns_wsi'], *Sort_dict['advanced_type']['ns_wmi']]),
+                        
+                        # --- encode / weak encode conditions
+                        'all_si_acc': _calculate_SVM_acc([*si, *wsi]),
+                        'all_mi_acc': _calculate_SVM_acc([*mi, *wmi]),
+                        'all_encode_acc': _calculate_SVM_acc([*si, *wsi, *mi, *wmi]),
+                                
+                        # --- sensitive + encode/ weak encode conditions
+                        'all_s_si_acc': _calculate_SVM_acc([*Sort_dict['advanced_type']['s_si'], *Sort_dict['advanced_type']['s_wsi']]),
+                        'all_s_mi_acc': _calculate_SVM_acc([*Sort_dict['advanced_type']['s_mi'], *Sort_dict['advanced_type']['s_wmi']]),
+                        'all_s_strong_encode_acc': _calculate_SVM_acc([*Sort_dict['advanced_type']['s_si'], *Sort_dict['advanced_type']['s_wsi'], *Sort_dict['advanced_type']['s_mi'], *Sort_dict['advanced_type']['s_wmi']]),
+                        
+                        'all_ns_si_acc': _calculate_SVM_acc([*Sort_dict['advanced_type']['ns_si'], *Sort_dict['advanced_type']['ns_wsi']]),
+                        'all_ns_mi_acc': _calculate_SVM_acc([*Sort_dict['advanced_type']['ns_mi'], *Sort_dict['advanced_type']['ns_wmi']]),
+                        'all_ns_strong_encode_acc': _calculate_SVM_acc([*Sort_dict['advanced_type']['ns_si'], *Sort_dict['advanced_type']['ns_wsi'], *Sort_dict['advanced_type']['ns_mi'], *Sort_dict['advanced_type']['ns_wmi']]),
+                        
+                        # --- this new non_encode means all other types except s_si, s_wsi, s_mi and s_wmi
+                        'n_e_acc': _calculate_SVM_acc([*Sort_dict['advanced_type']['s_non_encode'], *Sort_dict['advanced_type']['ns_non_encode'],
+                                                                *Sort_dict['advanced_type']['ns_si'], *Sort_dict['advanced_type']['ns_wsi'], 
+                                                                *Sort_dict['advanced_type']['ns_mi'], *Sort_dict['advanced_type']['ns_wmi']])
+                        
+                        }})
+                        
+            else:
+                
+                raise ValueError(f"num_types {num_types} is invalid, please choose from '5', '31'.")
+                        
+            utils_.dump(layer_SVM, SVM_path, verbose=False)
+            
+            utils_._print(f'SVM_types_{num_types} calculation done')
         
         return layer_SVM
             
     
-    def SVM_plot(self, plot_types=5):
-        
-        print('[Codinfo] Executing SVM plot...')
-        
-        plt.rcParams.update({"font.family": "Times New Roman"})
-        
-        SVM_fig_folder = os.path.join(self.dest_Encode, 'SVM_Figures')
-        utils_.make_dir(SVM_fig_folder)
-        
-        # ----- depends
-        layer_SVM = self.SVM()
-        # -----
+    def SVM_plot(self, layer_SVM, plot_types=5):
+        """
+            this code snippet is backward compatible
+        """
         
         # ----- simplified 5 types
         if plot_types == 5:
-
+            
+            # ----- check
+            assert len(layer_SVM[np.random.choice(self.layers)].keys()) >= 6
+            
+            def _plot_SVM_single(title, target_acc_plot_dict, target_layers):
+                
+                fig, ax = plt.subplots(figsize=(int(len(target_layers)/3), 10))
+                self.SVM_plot_single_fig(ax, self.model_structure, target_layers, target_acc_plot_dict)
+                
+                ax.set_title(title:=f'{title} [{self.model_structure}]')
+                fig.savefig(os.path.join(self.SVM_fig_folder, f'{title}.png'), bbox_inches='tight')
+                fig.savefig(os.path.join(self.SVM_fig_folder, f'{title}.eps'), bbox_inches='tight')
+                plt.close()
+            
+            # --- init
+            unit_types = ['all', 's_si', 's_mi', 's_wsi', 's_wmi', 'n_e']
+            
             # --- all
-            self.acc_plot_dict = {
-                'all_acc_plot':[layer_SVM[layer]['all_acc'] for layer in self.layers],
-                
-                's_si_acc_plot':[layer_SVM[layer]['s_si_acc'] for layer in self.layers],
-                's_wsi_acc_plot':[layer_SVM[layer]['s_wsi_acc'] for layer in self.layers],
-                
-                's_mi_acc_plot':[layer_SVM[layer]['s_mi_acc'] for layer in self.layers],
-                's_wmi_acc_plot':[layer_SVM[layer]['s_wmi_acc'] for layer in self.layers],
-                
-                'n_e_acc_plot':[layer_SVM[layer]['n_e_acc'] for layer in self.layers],
-                }
-            
-            fig, ax = plt.subplots(figsize=(14,10))
-            self.SVM_plot_single_fig(ax)
-            
-            ax.set_title(title:=f'5 types [{self.model_structure}]')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.png'), bbox_inches='tight')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.eps'), bbox_inches='tight', format='eps')
-    
-            plt.close('all')
-            
-            # ---
-            _, layers, _ = utils_.activation_function_vgg(self.layers)
-            layer_neuron_SVM = {_: layer_SVM[_] for _ in layers}
+            acc_plot_dict = {f'{_}_acc': [layer_SVM[layer][f'{_}_acc'] for layer in self.layers] for _ in unit_types}
+            _plot_SVM_single('5 types', acc_plot_dict, self.layers)
             
             # --- act
-            self.acc_plot_dict = {
-                'all_acc_plot':[layer_neuron_SVM[layer]['all_acc'] for layer in layers],
-                
-                's_si_acc_plot':[layer_neuron_SVM[layer]['s_si_acc'] for layer in layers],
-                's_wsi_acc_plot':[layer_neuron_SVM[layer]['s_wsi_acc'] for layer in layers],
-                
-                's_mi_acc_plot':[layer_neuron_SVM[layer]['s_mi_acc'] for layer in layers],
-                's_wmi_acc_plot':[layer_neuron_SVM[layer]['s_wmi_acc'] for layer in layers],
-                
-                'n_e_acc_plot':[layer_neuron_SVM[layer]['n_e_acc'] for layer in layers],
-                }
+            _, layers_act, _ = utils_.activation_function(self.model_structure, self.layers)
+            layer_act_SVM = {_: layer_SVM[_] for _ in layers_act}
             
-            fig, ax = plt.subplots(figsize=(8, 6))
-            self.SVM_plot_single_fig(ax)
-            
-            ax.set_title(title:=f'5 types act [{self.model_structure}]')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.png'), bbox_inches='tight')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.eps'), bbox_inches='tight', format='eps')
-    
-            plt.close('all')
+            acc_plot_dict = {f'{_}_acc': [layer_act_SVM[layer][f'{_}_acc'] for layer in layers_act] for _ in unit_types}
+            _plot_SVM_single('5 types act', acc_plot_dict, layers_act)
         
-        # --- full types
-        elif plot_types == 31:
+        # ----- full 31 types
+        elif plot_types == 30:
             
-            self.acc_plot_dict = {
-    
+            # ----- check
+            assert len(layer_SVM[np.random.choice(self.layers)].keys()) == 31
+
+            def _plot_SVM_single(target_acc_plot_dict, title):
                 
-                # --- 1 - 3
-                'all_acc_plot':[layer_SVM[layer]['all_acc'] for layer in self.layers],
-                
-                'sensitive_acc_plot':[layer_SVM[layer]['sensitive_acc'] for layer in self.layers],
-                'non_sensitive_acc_plot':[layer_SVM[layer]['non_sensitive_acc'] for layer in self.layers],
-                
-                # --- 4 - 6
-                'si_acc_plot':[layer_SVM[layer]['si_acc'] for layer in self.layers],
-                'mi_acc_plot':[layer_SVM[layer]['mi_acc'] for layer in self.layers],
-      
-                'encode_acc_plot':[layer_SVM[layer]['encode_acc'] for layer in self.layers],
-                
-                # --- 7 - 12
-                's_si_acc_plot':[layer_SVM[layer]['s_si_acc'] for layer in self.layers],
-                's_mi_acc_plot':[layer_SVM[layer]['s_mi_acc'] for layer in self.layers],
-                
-                'ns_si_acc_plot':[layer_SVM[layer]['ns_si_acc'] for layer in self.layers],
-                'ns_mi_acc_plot':[layer_SVM[layer]['ns_mi_acc'] for layer in self.layers],
-                
-                's_encode_acc_plot':[layer_SVM[layer]['s_encode_acc'] for layer in self.layers],
-                'ns_encode_acc_plot':[layer_SVM[layer]['ns_encode_acc'] for layer in self.layers],
-                
-                # --- 13 - 15
-                'wsi_acc_plot': [layer_SVM[layer]['wsi_acc'] for layer in self.layers],
-                'wmi_acc_plot': [layer_SVM[layer]['wmi_acc'] for layer in self.layers],
-                
-                'weak_encode_acc_plot': [layer_SVM[layer]['weak_encode_acc'] for layer in self.layers],
-                
-                # --- 16 - 21
-                's_wsi_acc_plot': [layer_SVM[layer]['s_wsi_acc'] for layer in self.layers],
-                's_wmi_acc_plot': [layer_SVM[layer]['s_wmi_acc'] for layer in self.layers],
-                                
-                'ns_wsi_acc_plot': [layer_SVM[layer]['ns_wsi_acc'] for layer in self.layers],
-                'ns_wmi_acc_plot': [layer_SVM[layer]['ns_wmi_acc'] for layer in self.layers],
-                
-                's_weak_encode_acc_plot': [layer_SVM[layer]['s_weak_encode_acc'] for layer in self.layers],
-                'ns_weak_encode_acc_plot': [layer_SVM[layer]['ns_weak_encode_acc'] for layer in self.layers],
-                
-                # --- 22 - 28
-                'all_si_acc_plot': [layer_SVM[layer]['all_si_acc'] for layer in self.layers],
-                'all_mi_acc_plot': [layer_SVM[layer]['all_mi_acc'] for layer in self.layers],
-                
-                'all_s_si_acc_plot': [layer_SVM[layer]['all_s_si_acc'] for layer in self.layers],
-                'all_s_mi_acc_plot': [layer_SVM[layer]['all_s_mi_acc'] for layer in self.layers],
-                
-                'all_ns_si_acc_plot': [layer_SVM[layer]['all_ns_si_acc'] for layer in self.layers],
-                'all_ns_mi_acc_plot': [layer_SVM[layer]['all_ns_mi_acc'] for layer in self.layers],
-                
-                'all_encode_acc_plot': [layer_SVM[layer]['all_encode_acc'] for layer in self.layers],
-                
-                # --- 29 - 31
-                'non_encode_acc_plot':[layer_SVM[layer]['non_encode_acc'] for layer in self.layers],
-                's_non_encode_acc_plot':[layer_SVM[layer]['s_non_encode_acc'] for layer in self.layers],
-                'ns_non_encode_acc_plot':[layer_SVM[layer]['ns_non_encode_acc'] for layer in self.layers],
-                }
+                fig, ax = plt.subplots(figsize=(int(len(self.layers)/3), 10))
+                self.SVM_plot_single_fig(ax, self.model_structure, self.layers, target_acc_plot_dict)
+                ax.set_title(title:=f'{title} [{self.model_structure}]')
+                fig.savefig(os.path.join(self.SVM_fig_folder, f'{title}.png'), bbox_inches='tight')
+                plt.close()
             
-            acc_plot_list = list(self.acc_plot_dict.keys())
+            # --- init
+            unit_types = ['all', 
+                          'sensitive', 'non_sensitive', 
+                          'si', 'mi', 'encode', 
+                          's_si', 's_mi', 'ns_si', 'ns_mi', 's_encode', 'ns_encode',
+                          'wsi', 'wmi', 'weak_encode', 
+                          's_wsi', 's_wmi', 'ns_wsi', 'ns_wmi', 's_weak_encode', 'ns_weak_encode',
+                          'all_si', 'all_mi', 'all_s_si', 'all_s_mi', 'all_ns_si', 'all_ns_mi', 'all_encode',
+                          'non_encode', 's_non_encode', 'ns_non_encode'
+                          ]
             
-            # ----- All types
-            fig, ax = plt.subplots(figsize=(14,10))
-            self.SVM_plot_single_fig(ax, acc_plot_list)
-            ax.set_title(title:=f'All types [{self.model_structure}]')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.png'), bbox_inches='tight')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.eps'), bbox_inches='tight', format='eps')
+            acc_plot_dict = {f'{_}_acc': [layer_SVM[layer][f'{_}_acc'] for layer in self.layers] for _ in unit_types}
             
-            # ----- Basic types
-            fig, ax = plt.subplots(figsize=(14,10))
-            self.SVM_plot_single_fig(ax, [acc_plot_list[_] for _ in [0, 1,2, 3,4,5, 12,13,14, 21,22, 27,28]])
-            ax.set_title(title:=f'Basic types [{self.model_structure}]')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.png'), bbox_inches='tight')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.eps'), bbox_inches='tight', format='eps')
+            acc_plot_types = list(acc_plot_dict.keys())
             
-            # ----- S vs NS and E vs NE
-            fig, ax = plt.subplots(figsize=(14,10))
-            self.SVM_plot_single_fig(ax, [acc_plot_list[_] for _ in [0, 1, 6,7, 10, 15,16, 19, 23,24, 29]])
-            ax.set_title(title:=f'Sensitive types [{self.model_structure}]')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.png'), bbox_inches='tight')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.eps'), bbox_inches='tight', format='eps')
+            # --- reference line
+            _plot_SVM_single(acc_plot_types, 'All types')
             
-            fig, ax = plt.subplots(figsize=(14,10))
-            self.SVM_plot_single_fig(ax, [acc_plot_list[_] for _ in [0, 2, 8,9, 11, 17,18, 20, 25,26, 30]])
-            ax.set_title(title:=f'Non Sensitive types [{self.model_structure}]')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.png'), bbox_inches='tight')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.eps'), bbox_inches='tight', format='eps')
+            # --- each condition
+            for plot_types_and_title in zip(
+                         [acc_plot_types[_] for _ in [[0, 1,2, 3,4,5, 12,13,14, 21,22, 27,28], [0, 1, 6,7, 10, 15,16, 19, 23,24, 29],
+                          [0, 2, 8,9, 11, 17,18, 20, 25,26, 30], [0, 3,4,5, 6,7,8,9,10,11, 12,13,14, 15,16,17,18,19,20, 21,22,23,24,25,26,27],
+                          [0,28,29,30], [0, 3,4,5, 6,7,8,9,10,11],
+                          [0, 12,13,14, 15,16,17,18,19,20], [0, 21,22,23,24,25,26,27]]], 
+                         ['Basic types', 'Sensitive types',
+                         'Non Sensitive types', 'Encode types', 
+                         'Non Encode types', 'Strong all types', 
+                         'Weak all types', 'All(Strong+Weak) all types']
+                        ):
+                
+                _plot_SVM_single(*plot_types_and_title)
             
-            fig, ax = plt.subplots(figsize=(14,10))
-            self.SVM_plot_single_fig(ax, [acc_plot_list[_] for _ in [0, 3,4,5, 6,7,8,9,10,11, 12,13,14, 15,16,17,18,19,20, 21,22,23,24,25,26,27]])
-            ax.set_title(title:=f'Encode types [{self.model_structure}]')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.png'), bbox_inches='tight')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.eps'), bbox_inches='tight', format='eps')
-            
-            fig, ax = plt.subplots(figsize=(14,10))
-            self.SVM_plot_single_fig(ax, [acc_plot_list[_] for _ in [0,28,29,30]])
-            ax.set_title(title:=f'Non Encode types [{self.model_structure}]')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.png'), bbox_inches='tight')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.eps'), bbox_inches='tight', format='eps')
-            
-            # ------ Strong, Weak and All
-            fig, ax = plt.subplots(figsize=(14,10))
-            self.SVM_plot_single_fig(ax, [acc_plot_list[_] for _ in [0, 3,4,5, 6,7,8,9,10,11]])
-            ax.set_title(title:=f'Strong all types [{self.model_structure}]')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.png'), bbox_inches='tight')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.eps'), bbox_inches='tight', format='eps')
-            
-            fig, ax = plt.subplots(figsize=(14,10))
-            self.SVM_plot_single_fig(ax, [acc_plot_list[_] for _ in [0, 12,13,14, 15,16,17,18,19,20]])
-            ax.set_title(title:=f'Weak all types [{self.model_structure}]')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.png'), bbox_inches='tight')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.eps'), bbox_inches='tight', format='eps')
-            
-            fig, ax = plt.subplots(figsize=(14,10))
-            self.SVM_plot_single_fig(ax, [acc_plot_list[_] for _ in [0, 21,22,23,24,25,26,27]])
-            ax.set_title(title:=f'All(Strong+Weak) all types [{self.model_structure}]')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.png'), bbox_inches='tight')
-            fig.savefig(os.path.join(SVM_fig_folder, f'{title}.eps'), bbox_inches='tight', format='eps')
-            
-            plt.close('all')
-         
         else:
-            raise ValueError(f"[Codinfo] plot_types {plot_types} is invalid, choose from '5', '31'.")
+            raise ValueError(f"[Codinfo] plot_types {plot_types} is invalid, choose from '5', '30'.")
         
         # -----
-        print('[Codinfo] Image saved')
+        utils_._print('SVM images saved')
     
-    
-    def SVM_plot_single_fig(self, ax):
+
+    @staticmethod
+    def SVM_plot_single_fig(ax, model_structure, layers, acc_plot_dict, std_plot_dict=None):
         
         plt.rcParams.update({"font.family": "Times New Roman"})
         
-        for acc_plot in list(self.acc_plot_dict.keys()):
- 
-            # --- 1 - 3
-            if acc_plot == 'all_acc_plot':
-                ax.plot(self.acc_plot_dict['all_acc_plot'], 'black', label='all')
+        def _plot_single_SVM_acc(acc_color, label, linestyle=None):
             
-            if acc_plot == 'sensitive_acc_plot':
-                ax.plot(self.acc_plot_dict['sensitive_acc_plot'], 'purple', label='sensitive')
-            if acc_plot == 'non_sensitive_acc_plot':
-                ax.plot(self.acc_plot_dict['non_sensitive_acc_plot'], 'blue', label='non_sensitive')
+            ax.plot(acc_plot_dict[acc_plot], color=acc_color, label=label, linestyle=linestyle)  # black
+            if std_plot_dict is not None and acc_plot in std_plot_dict.keys():
+                ax.fill_between(np.arange(len(layers)), acc_plot_dict[acc_plot]-std_plot_dict[acc_plot], acc_plot_dict[acc_plot]+std_plot_dict[acc_plot], edgecolor=None, facecolor=utils_.lighten_color(acc_color), alpha=0.75)
+
+        for acc_plot in list(acc_plot_dict.keys()):
+
+            # --- 1 - 3
+            if acc_plot == 'all_acc':
+                _plot_single_SVM_acc('#000000', 'all')     # black
+                
+            elif acc_plot == 'sensitive_acc':
+                _plot_single_SVM_acc('#800080', 'sensitive')  # purple
+            
+            elif acc_plot == 'non_sensitive_acc':
+                _plot_single_SVM_acc('#0000FF', 'non_sensitive')  # blue
             
             # --- 22 - 23
-            if acc_plot == 'all_si_acc_plot':
-                ax.plot(self.acc_plot_dict['all_si_acc_plot'], 'gold', label='all_si')
-            if acc_plot == 'all_mi_acc_plot':
-                ax.plot(self.acc_plot_dict['all_mi_acc_plot'], 'lime', label='all_mi')
-                
+            elif acc_plot == 'all_si_acc':
+                _plot_single_SVM_acc('#FFD700', 'all_si')  # gold
+            elif acc_plot == 'all_mi_acc':
+                _plot_single_SVM_acc('#00FF00', 'all_mi')  # lime
+            
             # --- 28
-            if acc_plot == 'all_encode_acc_plot':
-                ax.plot(self.acc_plot_dict['all_encode_acc_plot'], 'aqua', label='all_encode')
-                
+            elif acc_plot == 'all_encode_acc':
+                _plot_single_SVM_acc('#00FFFF', 'all_encode')  # aqua
+            
             # --- 24 - 27
-            if acc_plot == 'all_s_si_acc_plot':
-                ax.plot(self.acc_plot_dict['all_s_si_acc_plot'], 'gold', label='all_s_si', linestyle='--')
-            if acc_plot == 'all_s_mi_acc_plot':
-                ax.plot(self.acc_plot_dict['all_s_mi_acc_plot'], 'lime', label='all_s_mi', linestyle='--')
-                
-            if acc_plot == 'all_ns_si_acc_plot':
-                ax.plot(self.acc_plot_dict['all_ns_si_acc_plot'], 'gold', label='all_ns_si', linestyle=(0,(3,1,1,1,)))
-            if acc_plot == 'all_ns_mi_acc_plot':
-                ax.plot(self.acc_plot_dict['all_ns_mi_acc_plot'], 'lime', label='all_ns_mi', linestyle=(0,(3,1,1,1)))
-
-            # --- 4- 6
-            if acc_plot == 'si_acc_plot':
-                ax.plot(self.acc_plot_dict['si_acc_plot'], 'orange', label='si')
-            if acc_plot == 'mi_acc_plot':
-                ax.plot(self.acc_plot_dict['mi_acc_plot'], 'green', label='mi')
-            if acc_plot == 'encode_acc_plot':
-                ax.plot(self.acc_plot_dict['encode_acc_plot'], 'skyblue', label='encode')
-                
+            elif acc_plot == 'all_s_si_acc':
+                _plot_single_SVM_acc('#FFD700', 'all_s_si', linestyle='--')  # gold
+            elif acc_plot == 'all_s_mi_acc':
+                _plot_single_SVM_acc('#00FF00', 'all_s_mi', linestyle='--')  # lime
+            
+            elif acc_plot == 'all_ns_si_acc':
+                _plot_single_SVM_acc('#FFD700', 'all_ns_si', linestyle=(0, (3, 1, 1, 1,)))  # gold
+            elif acc_plot == 'all_ns_mi_acc':
+                _plot_single_SVM_acc('#00FF00', 'all_ns_mi', linestyle=(0, (3, 1, 1, 1)))  # lime
+            
+            # --- 4 - 6
+            elif acc_plot == 'si_acc':
+                _plot_single_SVM_acc('#FFA500', 'si')  # orange
+            elif acc_plot == 'mi_acc':
+                _plot_single_SVM_acc('#008000', 'mi')  # green
+            elif acc_plot == 'encode_acc':
+                _plot_single_SVM_acc('#87CEEB', 'encode')  # skyblue
+            
             # --- 7 - 12
-            if acc_plot == 's_si_acc_plot':
-                ax.plot(self.acc_plot_dict['s_si_acc_plot'], 'orange', label='s_si', linestyle='--')
-            if acc_plot == 's_mi_acc_plot':
-                ax.plot(self.acc_plot_dict['s_mi_acc_plot'], 'green', label='s_mi', linestyle='--')
+            elif acc_plot == 's_si_acc':
+                _plot_single_SVM_acc('#FFA500', 's_si', linestyle='--')  # orange
+            elif acc_plot == 's_mi_acc':
+                _plot_single_SVM_acc('#008000', 's_mi', linestyle='--')  # green
+            
+            elif acc_plot == 'ns_si_acc':
+                _plot_single_SVM_acc('#FFA500', 'ns_si', linestyle=(0, (3, 1, 1, 1,)))  # orange
+            elif acc_plot == 'ns_mi_acc':
+                _plot_single_SVM_acc('#008000', 'ns_mi', linestyle=(0, (3, 1, 1, 1,)))  # green
+            
+            elif acc_plot == 's_encode_acc':
+                _plot_single_SVM_acc('#87CEEB', 's_encode', linestyle='--')  # skyblue
+            elif acc_plot == 'ns_encode_acc':
+                _plot_single_SVM_acc('#87CEEB', 'ns_encode', linestyle=(0, (3, 1, 1, 1,)))  # skyblue
 
-            if acc_plot == 'ns_si_acc_plot':
-                ax.plot(self.acc_plot_dict['ns_si_acc_plot'], 'orange', label='ns_si', linestyle=(0,(3,1,1,1,)))
-            if acc_plot == 'ns_mi_acc_plot':
-                ax.plot(self.acc_plot_dict['ns_mi_acc_plot'], 'green', label='ns_mi', linestyle=(0,(3,1,1,1,)))
-                
-            if acc_plot == 's_encode_acc_plot':
-                ax.plot(self.acc_plot_dict['s_encode_acc_plot'], 'skyblue', label='s_encode', linestyle='--')
-            if acc_plot == 'ns_encode_acc_plot':
-                ax.plot(self.acc_plot_dict['ns_encode_acc_plot'], 'skyblue', label='ns_encode', linestyle=(0,(3,1,1,1,)))
-                
             # --- 13 - 15
-            if acc_plot == 'wsi_acc_plot':
-                ax.plot(self.acc_plot_dict['wsi_acc_plot'], 'tan', label='wsi')
-            if acc_plot == 'wmi_acc_plot':
-                ax.plot(self.acc_plot_dict['wmi_acc_plot'], 'darkgreen', label='wmi')
-            if acc_plot == 'weak_encode_acc_plot':
-                ax.plot(self.acc_plot_dict['weak_encode_acc_plot'], 'cornflowerblue', label='weak_encode')
+            elif acc_plot == 'wsi_acc':
+                _plot_single_SVM_acc('#D2B48C', 'wsi')  # tan
+            elif acc_plot == 'wmi_acc':
+                _plot_single_SVM_acc('#006400', 'wmi')  # darkgreen
+            elif acc_plot == 'weak_encode_acc':
+                _plot_single_SVM_acc('#6495ED', 'weak_encode')  # cornflowerblue
             
             # --- 16 - 21
-            if acc_plot == 's_wsi_acc_plot':
-                ax.plot(self.acc_plot_dict['s_wsi_acc_plot'], 'tan', label='s_wsi', linestyle='dotted')
-            if acc_plot == 's_wmi_acc_plot':
-                ax.plot(self.acc_plot_dict['s_wmi_acc_plot'], 'darkgreen', label='s_wmi', linestyle='dotted')
+            elif acc_plot == 's_wsi_acc':
+                _plot_single_SVM_acc('#D2B48C', 's_wsi', linestyle='dotted')  # tan
+            elif acc_plot == 's_wmi_acc':
+                _plot_single_SVM_acc('#006400', 's_wmi', linestyle='dotted')  # darkgreen
             
-            if acc_plot == 'ns_wsi_acc_plot':
-                ax.plot(self.acc_plot_dict['ns_wsi_acc_plot'], 'tan', label='ns_wsi', linestyle='dashdot')
-            if acc_plot == 'ns_wmi_acc_plot':
-                ax.plot(self.acc_plot_dict['ns_wmi_acc_plot'], 'darkgreen', label='ns_wmi', linestyle='dashdot')
+            elif acc_plot == 'ns_wsi_acc':
+                _plot_single_SVM_acc('#D2B48C', 'ns_wsi', linestyle='dashdot')  # tan
+            elif acc_plot == 'ns_wmi_acc':
+                _plot_single_SVM_acc('#006400', 'ns_wmi', linestyle='dashdot')  # darkgreen
             
-            if acc_plot == 's_weak_encode_acc_plot':
-                ax.plot(self.acc_plot_dict['s_weak_encode_acc_plot'], 'cornflowerblue', label='s_weak_encode', linestyle='dotted')
-            if acc_plot == 'ns_weak_encode_acc_plot':
-                ax.plot(self.acc_plot_dict['ns_weak_encode_acc_plot'], 'cornflowerblue', label='ns_weak_encode', linestyle='dashdot')
-                
+            elif acc_plot == 's_weak_encode_acc':
+                _plot_single_SVM_acc('#6495ED', 's_weak_encode', linestyle='dotted')  # cornflowerblue
+            elif acc_plot == 'ns_weak_encode_acc':
+                _plot_single_SVM_acc('#6495ED', 'ns_weak_encode', linestyle='dashdot')  # cornflowerblue
+            
             # --- 29 - 31
-            if acc_plot == 'non_encode_acc_plot':
-                ax.plot(self.acc_plot_dict['non_encode_acc_plot'], 'red', label='non_encode')
-            if acc_plot == 's_non_encode_acc_plot':
-                ax.plot(self.acc_plot_dict['s_non_encode_acc_plot'], 'red', label='s_non_encode', linestyle=(0,(3,1,1,1,1,1)))
-            if acc_plot == 'ns_non_encode_acc_plot':
-                ax.plot(self.acc_plot_dict['ns_non_encode_acc_plot'], 'red', label='ns_non_encode', linestyle=(0,(3,10,1,10)))
+            elif acc_plot == 'non_encode_acc':
+                _plot_single_SVM_acc('#FF0000', 'non_encode')  # red
+            elif acc_plot == 's_non_encode_acc':
+                _plot_single_SVM_acc('#FF0000', 's_non_encode', linestyle=(0, (3, 1, 1, 1, 1, 1)))  # red
+            elif acc_plot == 'ns_non_encode_acc':
+                _plot_single_SVM_acc('#FF0000', 'ns_non_encode', linestyle=(0, (3, 10, 1, 10)))  # red
             
-            # --- [new ne]
-            if acc_plot == 'n_e_acc_plot':
-                ax.plot(self.acc_plot_dict['n_e_acc_plot'], 'red', label='n_e', linestyle=(0,(3,1,1,1,1,1)))
+            # --- [new n_e]
+            elif acc_plot == 'n_e_acc':
+                _plot_single_SVM_acc('#FF0000', 'n_e', linestyle=(0, (3, 1, 1, 1, 1, 1)))  # red
+                
             # ---
+            else:
+                raise ValueError(f"acc_plot '{acc_plot}' is invalid.")
+
             
         # -----
-        num_layers = len(self.acc_plot_dict['all_acc_plot'])
+        num_layers = len(acc_plot_dict['all_acc'])
         
-        idx, act_layers, _ = utils_.activation_function_vgg(self.layers)
+        idx, act_layers, _ = utils_.activation_function(model_structure, layers)
             
         # -----
-        if num_layers == len(self.layers):
+        if num_layers == len(layers):
         
-            ax.set_xticks(np.arange(len(self.layers)))
-            ax.set_xticklabels(['' if _ not in idx else self.layers[_] for _ in range(len(self.layers))], rotation='vertical')
+            ax.set_xticks(np.arange(len(layers)))
+            ax.set_xticklabels(['' if _ not in idx else layers[_] for _ in range(len(layers))], rotation='vertical')
             
             ax.set_ylim([0, 100])
             ax.set_yticks(np.arange(1, 101))
@@ -1600,7 +1548,7 @@ class Encode_feaquency_analyzer():
             ax.set_xticklabels(act_layers, rotation='vertical')
             
         else:
-            raise RuntimeError(f"[Codinfo] num_layers {num_layers} is in valid, select from len(self.layers) '{len(self.layers)}', len(act_layers) '{len(idx)}'.")
+            raise RuntimeError(f"[Codinfo] num_layers {num_layers} is in valid, select from len(layers) '{len(layers)}', len(act_layers) '{len(idx)}'.")
         
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)
         ax.legend(ncol=3, loc="upper left", framealpha=0.5)
@@ -1608,6 +1556,7 @@ class Encode_feaquency_analyzer():
     
     # ------------------------------------------------------------------------------------------------------------------
     #FIXME --- test version
+    #FIXME --- think about how to save the calculated data?
     def plot_stacked_responses(self, num_types=5, start_layer_idx=-12):
         """
             this function is memory consuming
@@ -1621,7 +1570,7 @@ class Encode_feaquency_analyzer():
             self.Sort_dict = utils_.load(os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
         
         # --- update dict
-        self._dict_name_update(self.Sort_dict, os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
+        #self._dict_name_update(self.Sort_dict, os.path.join(self.dest_Encode, 'Sort_dict.pkl'))
         
         # ---
         self.fig_folder = os.path.join(self.dest_Encode, 'Layer_stacked_responses')
@@ -1886,10 +1835,10 @@ class Encode_feaquency_analyzer():
         
         feature_path_list = [os.path.join(self.root, layer+'.pkl') for layer in self.layers]
         
-        Parallel(n_jobs=int(os.cpu_count()/2))(delayed(NN_unit_FR_stats_plot_single)(layer, save_path, feature_path_list[idx], self.model_structure+f'_{layer}') for idx, layer in tqdm(enumerate(self.layers), desc=f'[{self.model_structure}] unit PDF'))
+        #Parallel(n_jobs=int(os.cpu_count()/2))(delayed(NN_unit_FR_stats_plot_single)(layer, save_path, feature_path_list[idx], self.model_structure+f'_{layer}') for idx, layer in tqdm(enumerate(self.layers), desc=f'[{self.model_structure}] unit PDF'))
         
-        #for idx, layer in tqdm(enumerate(self.layers), desc=f'[{self.model_structure}] unit PDF'):
-        #    NN_unit_FR_stats_plot_single(layer, save_path, feature_path_list[idx], self.model_structure+f'_{layer}')
+        for idx, layer in tqdm(enumerate(self.layers[-20:]), desc=f'[{self.model_structure}] unit PDF'):
+            NN_unit_FR_stats_plot_single(layer, save_path, feature_path_list[idx], self.model_structure+f'_{layer}')
         
         print('[Codinfo] plot_unit_responses_PDF() finished.')
         
@@ -1942,6 +1891,17 @@ class Encode_feaquency_analyzer():
         
         print('[Codinfo] plot_pct_pie_chart() finished.')
             
+        
+# ----------------------------------------------------------------------------------------------------------------------
+def calculate_SVM_acc(feature, idx, label, tqdm_bar):
+    if len(idx) != 0:
+        acc = utils_.SVM_classification(feature[:, idx], label, test_size=0.2, random_state=42)
+    else:
+        acc = 0. 
+        
+    tqdm_bar.update(1)
+    
+    return acc
         
 # ----------------------------------------------------------------------------------------------------------------------
 def encode_layer_percent_plot_dict(values=None, point=None, color=None, linestyle=None, linewidth=None, label=None):
@@ -2127,9 +2087,9 @@ if __name__ == "__main__":
 
     
     
-    for fold_idx in range(1,5):
+    for fold_idx in range(5):
         
-        selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, f'Face Identity SpikingVGG16bn_IF_T4_CelebA2622_fold_{fold_idx}'), 
+        selectivity_analyzer = Encode_feaquency_analyzer(root=os.path.join(root_dir, f'Face Identity VGG16bn_fold_{fold_idx}'), 
                                                          layers=layers, neurons=neurons)
         
         #selectivity_analyzer.calculation_Encode()
@@ -2141,11 +2101,11 @@ if __name__ == "__main__":
         #selectivity_analyzer.generate_encoded_id_unit_idx()     # <- currently not in use 
         # ---
 
-        #selectivity_analyzer.SVM()
-        #selectivity_analyzer.SVM_plot()
+        #selectivity_analyzer.SVM_analysis()
         
         for num_types in [5, 10]:
             selectivity_analyzer.plot_stacked_responses(num_types=num_types)
+            
         #selectivity_analyzer.plot_sample_responses()
         
         #selectivity_analyzer.plot_unit_responses_PDF()

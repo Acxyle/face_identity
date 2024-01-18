@@ -24,6 +24,7 @@ Created on Sun Feb 19 17:35:00 2023
 
 import os
 import sys
+import scipy
 import datetime
 import time
 import psutil
@@ -31,6 +32,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
+from Bio_Cell_Records_Process import Human_Neuron_Records_Process, Monkey_Neuron_Records_Process
 
 import Selectivity_Analysis_ANOVA
 import Selectivity_Analysis_Encode
@@ -52,7 +54,7 @@ parser.add_argument("--alpha", type=float, default=0.01, help='[Codelp] assign t
 
 parser.add_argument("--root_dir", type=str, default="/home/acxyle-workstation/Downloads", help="[Codelp] root directory for features and neurons")
 
-parser.add_argument("--model", type=str, default='resnet18')     # trigger
+parser.add_argument("--model", type=str, default='resnet50')     # trigger
 
 
 # -----
@@ -61,12 +63,12 @@ args = parser.parse_args()
 
 # ----------------------------------------------------------------------------------------------------------------------
 # FIXME - under construction...
-class Multi_Model_Analysis:
+class Multi_Model_Analysis(Monkey_Neuron_Records_Process, Human_Neuron_Records_Process):
     
     def __init__(self, 
                  feature_root_general='Face Identity VGG16bn_fold_',
                  num_fold=5):
-        
+
         self.feature_root_general = feature_root_general
         self.num_fold = num_fold
         self.model_structure = feature_root_general.split('_')[0].split(' ')[-1]
@@ -102,13 +104,13 @@ class Multi_Model_Analysis:
             
             if os.path.exists(RSA_static_dict_folds_path):
                 
-                RSA_static_dict_folds = utils_.load(RSA_static_dict_folds_path)
+                RSA_dict_folds = utils_.load(RSA_static_dict_folds_path, verbose=False)
             
             else:
                 
                 def __RSA_layer_wise_pct_collect_single_condition(RSA_dict_path):
                     
-                    RSA_static_dict_folds = {}
+                    RSA_dict_folds = {}
                     
                     for fold_idx in np.arange(self.num_fold):
                         
@@ -116,13 +118,13 @@ class Multi_Model_Analysis:
                         
                         RSA_dict = utils_.load(os.path.join(root, f'Analysis/RSA/{primate}/{criterion}', f'{RSA_dict_path}.pkl'), verbose=True)
                         
-                        RSA_static_dict_folds[fold_idx] = RSA_dict
+                        RSA_dict_folds[fold_idx] = RSA_dict
                 
-                    return RSA_static_dict_folds
+                    return RSA_dict_folds
                 
                 if 'monkey' in primate.lower():
                 
-                    RSA_static_dict_folds = __RSA_layer_wise_pct_collect_single_condition(f'RSA_results_{criterion}')
+                    RSA_dict_folds = __RSA_layer_wise_pct_collect_single_condition(f'RSA_results_{criterion}')
                 
                 elif 'human' in primate.lower():
                     
@@ -130,15 +132,15 @@ class Multi_Model_Analysis:
                     
                     if unit_type == 'legacy':
                         
-                        RSA_static_dict_folds = __RSA_layer_wise_pct_collect_single_condition(f'-_mismatched_comparison/Human Selective V.S. NN Strong Selective/{used_id_num}/RSA_results_{criterion}_{used_id_num}_mismatched_Selective_Human_Strong_Selective_NN')
+                        RSA_dict_folds = __RSA_layer_wise_pct_collect_single_condition(f'-_mismatched_comparison/Human Selective V.S. NN Strong Selective/{used_id_num}/RSA_results_{criterion}_{used_id_num}_mismatched_Selective_Human_Strong_Selective_NN')
                                                                                                                                                                               
                     else:
                         
-                        RSA_static_dict_folds = __RSA_layer_wise_pct_collect_single_condition(f'{unit_type}/{used_id_num}/RSA_results_{criterion}_{unit_type}_{used_id_num}')
+                        RSA_dict_folds = __RSA_layer_wise_pct_collect_single_condition(f'{unit_type}/{used_id_num}/RSA_results_{criterion}_{unit_type}_{used_id_num}')
 
-                utils_.dump(RSA_static_dict_folds, RSA_static_dict_folds_path)
+                utils_.dump(RSA_dict_folds, RSA_static_dict_folds_path)
                 
-            return RSA_static_dict_folds
+            return RSA_dict_folds
         
         
         # -----
@@ -148,11 +150,19 @@ class Multi_Model_Analysis:
             
             if 'monkey' in primate.lower():
                 
+                Monkey_Neuron_Records_Process.__init__(self, )
+                
                 for criterion in criteria:
                 
                     _static(RSA_save_root_primate, primate=f'{primate}', criterion=f'{criterion}')
+                    
+                    for route in ['sig', 'p']:
+                        
+                        _temporal(RSA_save_root_primate, primate=f'{primate}', criterion=f'{criterion}', route=route)
                 
             elif 'human' in primate.lower():
+                
+                Human_Neuron_Records_Process.__init__(self, )
                 
                 for criterion in criteria:
                     
@@ -161,7 +171,11 @@ class Multi_Model_Analysis:
                         for used_id_num in [10, 50]:
                             
                             _static(RSA_save_root_primate, primate=f'{primate}', criterion=f'{criterion}', unit_type='legacy', used_id_num=used_id_num)
-            
+                            
+                            for route in ['sig', 'p']:
+                                
+                                _temporal(RSA_save_root_primate, primate=f'{primate}', criterion=f'{criterion}', unit_type='legacy', used_id_num=used_id_num, route=route)
+                                
                     elif 'pearson' == criterion:
 
                         for unit_type in ['legacy', 'qualified', 'selective', 'non_selective']:
@@ -169,7 +183,10 @@ class Multi_Model_Analysis:
                             for used_id_num in [10, 50]:
                                 
                                 _static(RSA_save_root_primate, primate=f'{primate}', criterion=f'{criterion}', unit_type=unit_type, used_id_num=used_id_num)
-                    
+                                
+                                for route in ['sig', 'p']:
+                                    
+                                    _temporal(RSA_save_root_primate, primate=f'{primate}', criterion=f'{criterion}', unit_type=unit_type, used_id_num=used_id_num, route=route)
                     else:
                         
                         raise ValueError
@@ -178,23 +195,83 @@ class Multi_Model_Analysis:
                 
                 raise ValueError
             
+        def _temporal(RSA_save_root_primate, primate='Monkey', criterion='pearson', unit_type:str=None, used_id_num:int=None, route:str='p'):
+            
+            utils_.make_dir(RSA_save_root_primate_criteria:=os.path.join(RSA_save_root_primate, f'{criterion}'))
+            
+            RSA_dict_folds = _RSA_layer_wise_pct_collect(RSA_save_root_primate_criteria, f'{primate}', f'{criterion}', unit_type=unit_type, used_id_num=used_id_num)
+            
+            # ---
+            similarity_folds_array = np.array([RSA_dict_folds[fold_idx]['similarity_temporal'] for fold_idx in range(self.num_fold)])
+            folds_mean = np.mean(similarity_folds_array, axis=0)
+            folds_std = np.std(similarity_folds_array, axis=0)
+            
+            if route == 'p':
+                
+                # --- init
+                p_temporal_FDR = np.zeros((len(self.layers), similarity_folds_array.shape[-1]))     # (num_layers, num_time_steps)
+                sig_temporal_FDR =  p_temporal_FDR.copy()
+                sig_temporal_Bonf = p_temporal_FDR.copy()
+                
+                similarity_p_perm_temporal = np.mean(np.array([RSA_dict_folds[fold_idx]['similarity_p_perm_temporal'] for fold_idx in range(self.num_fold)]), axis=0)
+                
+                for _ in range(len(self.layers)):
+                    (sig_temporal_FDR[_, :], p_temporal_FDR[_, :], alpha_Sadik_temporal, alpha_Bonf_temporal) = multipletests(similarity_p_perm_temporal[_, :], alpha=alpha, method=FDR_method)      # FDR
+                    sig_temporal_Bonf[_, :] = p_temporal_FDR[_, :]<alpha_Bonf_temporal     # Bonf correction
+            
+            elif route == 'sig':
+                
+                sig_temporal_FDR = np.mean(np.array([scipy.ndimage.gaussian_filter(RSA_dict_folds[fold_idx]['sig_temporal_FDR'], sigma=1) for fold_idx in range(self.num_fold)]), axis=0)
+                sig_temporal_Bonf = np.mean(np.array([scipy.ndimage.gaussian_filter(RSA_dict_folds[fold_idx]['sig_temporal_Bonf'], sigma=1) for fold_idx in range(self.num_fold)]), axis=0)
+                p_temporal_FDR =  np.mean(np.array([RSA_dict_folds[fold_idx]['p_temporal_FDR'] for fold_idx in range(self.num_fold)]), axis=0)
+            
+            RSA_dict_across_folds = {
+                'similarity_temporal': folds_mean,
+                'similarity_temporal_std': folds_std,
+                
+                'sig_temporal_FDR': sig_temporal_FDR,
+                'sig_temporal_Bonf': sig_temporal_Bonf,
+                
+                'p_temporal_FDR': p_temporal_FDR,
+                
+                }
+            
+            if 'monkey' in primate.lower():
+                extent = [self.ts.min()-5, self.ts.max()+5, -0.5, folds_mean.shape[0]-0.5]
+            elif 'human' in primate.lower():
+                extent = [-250, 1001, -0.5, folds_mean.shape[0]-0.5]
+            
+            fig = plt.figure(figsize=(10, folds_mean.shape[0]/4))
+            ax = fig.add_axes([0.125, 0.075, 0.75, 0.85])
+            
+            title = f'RSA temporal {primate} {criterion} {unit_type} {used_id_num} {self.model_structure}'
+            
+            Selectivity_Analysis_RSA.plot_temporal_correlation(self.layers, fig, ax, RSA_dict_across_folds, title=f'{title}', vlim=None, extent=extent)
+            
+            fig.savefig(os.path.join(RSA_save_root_primate_criteria, f'{title}_merged_by_{route}.png'))
+            plt.close()
+            
+            # ---
+
+            
         def _static(RSA_save_root_primate, primate='Monkey', criterion='pearson', unit_type:str=None, used_id_num:int=None):
             
             utils_.make_dir(RSA_save_root_primate_criteria:=os.path.join(RSA_save_root_primate, f'{criterion}'))
     
-            RSA_static_dict_folds = _RSA_layer_wise_pct_collect(RSA_save_root_primate_criteria, f'{primate}', f'{criterion}', unit_type=unit_type, used_id_num=used_id_num)
+            RSA_dict_folds = _RSA_layer_wise_pct_collect(RSA_save_root_primate_criteria, f'{primate}', f'{criterion}', unit_type=unit_type, used_id_num=used_id_num)
                 
-            similarity_folds_array = np.array([RSA_static_dict_folds[fold_idx]['similarity'] for fold_idx in range(self.num_fold)])
+            # --- merge
+            similarity_folds_array = np.array([RSA_dict_folds[fold_idx]['similarity'] for fold_idx in range(self.num_fold)])
             folds_mean = np.mean(similarity_folds_array, axis=0)
             folds_std = np.std(similarity_folds_array, axis=0)
             
-            similarity_p_folds = np.mean(np.array([RSA_static_dict_folds[fold_idx]['similarity_p'] for fold_idx in range(self.num_fold)]), axis=0)
+            similarity_p_folds = np.mean(np.array([RSA_dict_folds[fold_idx]['similarity_p'] for fold_idx in range(self.num_fold)]), axis=0)
             (sig_FDR, p_FDR, alpha_Sadik, alpha_Bonf) = multipletests(similarity_p_folds, alpha=alpha, method=FDR_method)    
     
             RSA_dict_across_folds = {
                 'similarity': folds_mean,
                 'similarity_std': folds_std,
-                'similarity_perm': np.max(np.array([RSA_static_dict_folds[fold_idx]['similarity_perm'] for fold_idx in range(self.num_fold)]), axis=0),
+                'similarity_perm': np.max(np.array([RSA_dict_folds[fold_idx]['similarity_perm'] for fold_idx in range(self.num_fold)]), axis=0),
                 
                 'p_FDR': p_FDR,
                 'similarity_p': similarity_p_folds,
@@ -203,6 +280,7 @@ class Multi_Model_Analysis:
                 'sig_Bonf': p_FDR<alpha_Bonf
                 }
             
+            # ---
             fig, ax = plt.subplots(figsize=(int(len(self.layers)/3), 6))
             title = f'RSA {primate} {criterion} {unit_type} {used_id_num} {self.model_structure}'
             Selectivity_Analysis_RSA.plot_static_correlation(self.layers, ax, RSA_dict_across_folds, title=title, legend=False)
@@ -225,7 +303,9 @@ class Multi_Model_Analysis:
             plt.close()
             
         # -----
+        _process(primate='Monkey')
         _process(primate='Human')
+        
     
     
     def plot_SVM_acc_multi_models(self, num_types=5):
@@ -420,7 +500,7 @@ class Multi_Model_Analysis:
             ax.set_title(f'{self.model_structure} {title}')
             
             plt.tight_layout()
-            #fig.savefig(os.path.join(ANOVA_save_root, f'{title}_folds.png'))
+            fig.savefig(os.path.join(ANOVA_save_root, f'{title}_folds.png'))
             fig.savefig(os.path.join(ANOVA_save_root, f'{title}_folds.eps'))
             plt.close()
         
@@ -516,34 +596,36 @@ def single_model_analysis(args, feature_folder):
 #     RSA_monkey.monkey_neuron_analysis(metrics=['euclidean', 'pearson'])
 #     
 #     del RSA_monkey
-#     
-#     RSA_human = Selectivity_Analysis_RSA.Selectiviy_Analysis_Correlation_Human(NN_root=feature_root, layers=layers, neurons=neurons)
-#     RSA_human.human_neuron_analysis()
-#     
-#     del RSA_human
 # =============================================================================
     
+    RSA_human = Selectivity_Analysis_RSA.Selectiviy_Analysis_Correlation_Human(NN_root=feature_root, layers=layers, neurons=neurons)
+    RSA_human.human_neuron_analysis()
+    
+    del RSA_human
+    
     # ----- 5. Feature
-    selectivity_feature_analyzer = Selectivity_Analysis_Feature.Selectivity_Analysis_Feature(
-                feature_root, 
-                'TSNE',
-                
-                # --- resnet18
-                layers=['L4_B2_neuron_1', 'L4_B2_neuron_2', 'avgpool', 'fc'], 
-                neurons=[25088, 25088, 512, 50]
-                
-                # --- resnet50
-                #layers=['L4_B3_neuron_2', 'L4_B3_neuron_3', 'avgpool', 'fc'], 
-                #neurons=[25088, 100352, 512, 50]
-                
-                # --- vgg
-                #layers=['L5_B3_neuron', 'neuron_1', 'neuron_2'], 
-                #neurons=[100352, 4096, 4096]
-                )
-    
-    selectivity_feature_analyzer.feature_analysis()
-    
-    del selectivity_feature_analyzer
+# =============================================================================
+#     selectivity_feature_analyzer = Selectivity_Analysis_Feature.Selectivity_Analysis_Feature(
+#                 feature_root, 
+#                 'TSNE',
+#                 
+#                 # --- resnet18
+#                 #layers=['L4_B2_neuron_1', 'L4_B2_neuron_2', 'avgpool', 'fc'], 
+#                 #neurons=[25088, 25088, 512, 50]
+#                 
+#                 # --- resnet50
+#                 layers=['L4_B3_neuron_2', 'L4_B3_neuron_3', 'avgpool', 'fc'], 
+#                 neurons=[25088, 100352, 512, 50]
+#                 
+#                 # --- vgg
+#                 #layers=['L5_B3_neuron', 'neuron_1', 'neuron_2'], 
+#                 #neurons=[100352, 4096, 4096]
+#                 )
+#     
+#     selectivity_feature_analyzer.feature_analysis()
+#     
+#     del selectivity_feature_analyzer
+# =============================================================================
     
     # --- 
     end_time = time.time()
@@ -578,18 +660,18 @@ def Main_Analyzer(args):
     utils_._print('Starting Selective Analysis Experiment...')
     print(args)
 
-    for fold_idx in [0,1,2,3,4]:
+    for fold_idx in [0,1,2,3]:
         
-        single_model_analysis(args, f'Face Identity Resnet18_CelebA2622_fold_{fold_idx}')
+        single_model_analysis(args, f'Face Identity VGG16_fold_{fold_idx}')
         
         
 if __name__ == "__main__":
     
-    Main_Analyzer(args)
+    #Main_Analyzer(args)
     
-    #multi_model_analysis = Multi_Model_Analysis(feature_root_general='Face Identity Resnet18_CelebA2622_fold_')
+    multi_model_analysis = Multi_Model_Analysis(feature_root_general='Face Identity Resnet50_CelebA2622_fold_')
     
-    #multi_model_analysis.plot_ANOVA_pct_multi_models()
-    #multi_model_analysis.plot_Encode_pct_multi_models()
-    #multi_model_analysis.plot_RSA_pct_multi_models()
-    #multi_model_analysis.plot_SVM_acc_multi_models()
+    multi_model_analysis.plot_ANOVA_pct_multi_models()
+    multi_model_analysis.plot_Encode_pct_multi_models()
+    multi_model_analysis.plot_RSA_pct_multi_models()
+    multi_model_analysis.plot_SVM_acc_multi_models()

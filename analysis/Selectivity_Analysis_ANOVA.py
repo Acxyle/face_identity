@@ -33,6 +33,14 @@ class ANOVA_analyzer():
         assert root[-1] != '/', f"[Codinfo] root {root} should not end with '/'"
         
         self.root = os.path.join(root, 'Features/')     # <- folder for feature maps, which should be generated before analysis
+   
+        if not os.path.exists(self.root):
+            try:
+                self.root = os.path.join(root, 'Features(spike)')     # FIXME --- this should triger the branch of process of spike trains
+                os.path.exists(self.root)
+            except:
+                raise RuntimeWarning(f'[Codwarning] can not find the root of [{self.root}]')
+
         self.dest = os.path.join(root, 'Analysis/')    # <- folder for analysis results
         utils_.make_dir(self.dest)
         
@@ -42,6 +50,9 @@ class ANOVA_analyzer():
         self.layers = layers
         self.neurons = neurons
         
+        if self.layers == None or self.neurons == None:
+            raise RuntimeError('[Coderror] invalid layers and/or neurons')
+        
         self.alpha = alpha
         self.num_classes = num_classes
         self.num_samples = num_samples
@@ -49,13 +60,6 @@ class ANOVA_analyzer():
         self.model_structure = root.split('/')[-1].split(' ')[-1]     # in current code, the 'root' file should list those information in structural name, arbitrary
 
         # some tests to check the saved files are valid and matchable with self.layers and self.neurons
-        if self.layers == None or self.neurons == None:
-            raise RuntimeError('[Coderror] invalid layers and/or neurons')
-            
-        if not os.path.exists(self.root):
-            raise RuntimeWarning(f'[Codwarning] can not find the root of [{self.root}]')
-        elif os.listdir(self.root) == []:
-            raise RuntimeWarning('[Codwarning] the path of feature directory is valid but found no file')
         
         #if set([f.split('.')[0] for f in os.listdir(self.root)]) != set(self.layers):     # [notice] can mute this message when segmental test
         #    raise AssertionError('[Coderror] the saved .pkl files must be exactly the same with attribute self.layers')
@@ -63,9 +67,9 @@ class ANOVA_analyzer():
         
     def calculation_ANOVA(self, ):
         
-        print('[Codinfo] Executing calculation_ANOVA...')
+        utils_._print('Executing calculation_ANOVA...')
         num_workers = int(os.cpu_count()/2)
-        print(f'[Codinfo] Executing parallel computation with num_workers={num_workers}')
+        utils_._print(f'Executing parallel computation with num_workers={num_workers}')
         
         idces_path = os.path.join(self.dest_ANOVA, 'ANOVA_idces.pkl')
         stats_path = os.path.join(self.dest_ANOVA, 'ANOVA_stats.pkl')
@@ -80,8 +84,8 @@ class ANOVA_analyzer():
             
             for idx_l, layer in enumerate(self.layers):     # for each layer
     
-                feature = utils_.load(os.path.join(self.root, layer+'.pkl'), verbose=False)
-                    
+                feature = utils_.load_feature(os.path.join(self.root, layer+'.pkl'), verbose=True)
+
                 pl = np.zeros(feature.shape[1])       # p_value_list for all neuron
                     
                 if feature.shape[0] != self.num_classes*self.num_samples or feature.shape[1] != self.neurons[idx_l]:     #  feature check
@@ -98,8 +102,7 @@ class ANOVA_analyzer():
             utils_.dump(ANOVA_idces, idces_path)
             utils_.dump(ANOVA_stats, stats_path)
             
-            print('[Codinfo] Selectivity_Neuron_ANOVA Calculation Done.')
-            print('[Codinfo] pvalue.csv and neuron_idx.pkl files have been saved in {}'.format(self.dest_ANOVA))
+            utils_._print('[Codinfo] ANOVA results have been saved in {}'.format(self.dest_ANOVA))
             
             self.ANOVA_idces = ANOVA_idces
             self.ANOVA_stats = ANOVA_stats
@@ -163,15 +166,7 @@ class ANOVA_analyzer():
         
         # --- all
         _plot_single_figure(self.layers, ratio, layers_color_list, 'sensitive unit ratio')
-        
-        # --- act
-        neuron_layer_idx, neuron_layer, _ = utils_.activation_function(self.model_structure, self.layers)
-        
-        ratio_neuron = [ratio[_] for _ in neuron_layer_idx]
-        layers_color_list_neuron = [layers_color_list[_] for _ in neuron_layer_idx]
-                
-        _plot_single_figure(neuron_layer, ratio_neuron, layers_color_list_neuron, 'sensitive unit ratio neuron')
-                                
+                            
         
     # FIXME ----- test version, need to remove the use of **kwargs
     def plot_ANOVA_model_comparison(self, comparing_models_list):
@@ -362,17 +357,3 @@ def color_column(layers, constant_colors=False):
     return layers_color_list
 
 
-if __name__ == "__main__":
-    
-    model_name = 'vgg16_bn'
-    
-    model_ = vgg.__dict__[model_name](num_classes=50)
-    layers, neurons, shapes = utils_.generate_vgg_layers_list_ann(model_, model_name)
-    
-    analyzer = ANOVA_analyzer(root='/home/acxyle-workstation/Downloads/Face Identity SpikingVGG16bn_LIF_T4_vggface/', 
-                              alpha=0.01, num_classes=50, num_samples=10, layers=layers, neurons=neurons)
-    
-    analyzer.calculation_ANOVA()
-    analyzer.plot_ANOVA_pct()
-
-    #analyzer.plot_ANOVA_model_comparison(['Identity_VGG16bn_ReLU_CelebA2622_Neuron'])

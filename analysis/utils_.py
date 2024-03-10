@@ -6,6 +6,7 @@ Created on Wed Feb  8 15:12:39 2023
 @author: acxyle
 """
 import torch
+import torchvision
 import torchvision.transforms as transforms
 
 import pickle
@@ -20,6 +21,7 @@ import random
 import datetime
 #import cv2
 
+from spikingjelly.activation_based import surrogate, neuron, functional
 from spikingjelly.activation_based.model.tv_ref_classify import utils
 from spikingjelly.activation_based import functional
 
@@ -33,6 +35,50 @@ from tqdm import tqdm
 sys.path.append('../')
 import models_
 
+from spikingjelly import visualizing
+from spikingjelly.activation_based import tensor_cache
+
+import subprocess
+
+
+#TODO ----- need to find a solution to save small pieces and merge them into one single feature map
+def spikes_to_frs(feature, select_ratio=0, **kwargs):
+    """
+        in this function, the feature is compressed by sipikingjelly module, it demands 60GB+ for the first act layer 
+        if the A2S time step is greatre than 64
+        please read the tutorial of spikingjelly for more information of compression of spikes
+        if zlib is used, the compressed file may greater than the original one when the data is diverse
+    """
+    assert feature[0][0].dtype==torch.uint8, "the data must be compressed 'bool spikes'."
+
+    target_T_idx = int(feature[0][2][1]*select_ratio)
+
+    feature = [np.mean(tensor_cache.bool_spike_to_float(*_).type(torch.uint8).numpy()[-target_T_idx:, :], axis=0) for _ in tqdm(feature, desc='bool_spikes -> frs')]
+    feature = np.array(feature).astype(np.float32)
+
+    return feature
+
+def bool_spikes_to_spikes(feature, data_type='ndarray'):
+    assert feature[0][0].dtype==torch.uint8, "the data must be compressed 'bool spikes'."
+    
+    if data_type == 'tensor':
+        feature = [tensor_cache.bool_spike_to_float(*_).type(torch.uint8) for _ in tqdm(feature, desc='bool_spikes - > spikes')]
+        feature = torch.stack(feature)
+        
+    elif data_type == 'ndarray':
+        
+        feature = [tensor_cache.bool_spike_to_float(*_).type(torch.uint8).numpy() for _ in tqdm(feature, desc='bool_spikes - > spikes')]
+        feature = np.array(feature)
+    
+    else:
+        raise ValueError
+        
+    return feature
+
+def _file_system_type(path):
+    result = subprocess.check_output(['df', '-T', path], encoding='utf-8')
+    lines = result.splitlines()
+    return lines[1].split()[1]
 
 
 def _is_binary(input):
@@ -53,7 +99,6 @@ def _print(content, message_type='[Codinfo]', symbol='-', padding=2, border_leng
     else:
         border = symbol * 20
 
-    print(border)
     print(formatted_row)
 
 
@@ -76,6 +121,8 @@ def plot_pie_chart(fig, ax, values, labels, title=None, colors=None, explode=Non
     """
     
     """
+    plt.rcParams.update({"font.family": "Times New Roman"})
+    
     if explode is None:
         explode = np.zeros(len(values))
     
@@ -91,7 +138,7 @@ def plot_pie_chart(fig, ax, values, labels, title=None, colors=None, explode=Non
         if values[i] < 10:  # Adjust threshold for small slices
             x, y = ax.patches[i].theta1, ax.patches[i].r
             ax.annotate(label + " - " + str(values[i]) + "%", xy=(x, y), xytext=(x+1.2, y+0.5),
-                         arrowprops=dict(facecolor='black', shrink=0.05))
+                         arrowprops=dict(facecolor='black', shrink=0.05), fontsize=20)
     
     ax.set_title(f'{title}', x=0.45, y=0.45)
     
@@ -179,7 +226,7 @@ def makeSignificanceBar(x, y, p, ax):
     
     starY=np.mean(y)+myRange(ax.get_ylim())*offset
     
-    text = ax.text(np.mean(x), starY, stars, horizontalalignment='center', backgroundcolor='none')
+    text = ax.text(np.mean(x), starY, stars, horizontalalignment='center', backgroundcolor='none', fontsize=14)
     text.set_label('sigstar_stars')
     
     Y = ax.get_ylim()
@@ -313,8 +360,18 @@ def pickle_load_tqdm(file_path, cmd='rb'):
             loaded_file = pickle.load(f)
         return loaded_file
         
+# -----
+def load_feature(file_path, **kwargs):
+    
+    feature = load(file_path, **kwargs)
+    
+    if isinstance(feature, list):
+        feature = spikes_to_frs(feature, **kwargs)
+    
+    return feature
+
 # FIXME -----
-def load(file_path, cmd='rb', load_type='pickle', verbose=True):
+def load(file_path, cmd='rb', load_type='pickle', verbose=True, **kwargs):
     
     assert cmd in ['r', 'rb', 'r+', 'rb+']
     
@@ -341,7 +398,9 @@ def load(file_path, cmd='rb', load_type='pickle', verbose=True):
     
     return loaded_file
 
+
 # FIXME --- test version, create a visible progress bar for loading and saving
+# FIXME --- add time stamp?
 class tqdm_file_object:
     def __init__(self, file_path, mode='rb', verbose=True):
         self.file = open(file_path, mode)
@@ -395,11 +454,100 @@ class tqdm_file_object:
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
 
-# -----
-# FIXME --- does this function really in need?
-def generate_vgg_layers(model, model_name, T=4):     # FIXME add T and other useful attributes
+
+        
+# ----------------------------------------------------------------------------------------------------------------------
+def get_layers_and_units(model_name:str, target_layers:str='full', **kwargs):
+    """
+        ...
+    """
+    model_name = model_name.lower()
     
+    # ---
+    if 'vgg' in model_name:
+        
+        layers, neurons, shapes = generate_vgg_layers(model_name, **kwargs)
+    
+    elif 'resnet' in model_name:
+        
+        layers, neurons, shapes = generate_resnet_layers(model_name, **kwargs)
+        
+    # ---
+    if target_layers == 'full':
+    
+        return layers, neurons, shapes
+    
+    elif target_layers == 'feature':
+        
+        return key_layers_selection(model_name, layers, neurons, shapes, act_only=False, **kwargs)
+        
+    elif target_layers == 'act':
+        
+        return key_layers_selection(model_name, layers, neurons, shapes, act_only=True, **kwargs)
+        
+    else:
+        
+        raise ValueError(f"model '{model_name}' is not supported")
+        
+        
+# ----------------------------------------------------------------------------------------------------------------------
+def key_layers_selection(model_name, layers:list[str], neurons:list[int]=None, shapes:list[int]=None, act_only:bool=False, 
+                         return_idx:bool=False, **kwargs):
+    """
+        ...
+    """
+    # ----- init
+    if 'spiking' in model_name:
+        act = 'sn'
+    else:
+        act = 'an'
+    
+    # ----- determine layers
+    if act_only:
+        layers_ = [i for i in layers if f'{act}' in i]
+    else:
+        if 'vgg' in model_name.lower() or 'baseline' in model_name.lower():
+            layers_ = [i for i in layers if f'{act}' in i or 'Pool' in i or 'fc_3' in i]
+        elif 'resnet' in model_name.lower():
+            layers_ = [i for i in layers if f'{act}' in i or 'Pool' in i or 'fc' in i]
+        else:
+            raise ValueError(f'[Coderror] Invalid model_name [{model_name}]')
+        
+    idx = [layers.index(i) for i in layers_]
+    layers = layers_
+    
+    if neurons is not None:
+        neurons = [neurons[i] for i in idx]
+    
+    if shapes is not None:
+        shapes = [shapes[i] for i in idx]
+    
+    # --- return
+    if not return_idx:
+        return layers, neurons, shapes
+    else:
+        return idx, layers, neurons, shapes
+    
+
+# ----------------------------------------------------------------------------------------------------------------------
+def generate_vgg_layers(model_name, T=4, num_classes=50, feature_shape=(3,224,224), **kwargs):
+    """
+        1. done
+        2. need to write a contentional version of layer names
+    """
+    
+    _print(f'Generating layers name for {model_name}...')
+    
+    # assume the SNN vgg has identical feature map shape with ANN vgg
+    if 'spiking' in model_name or 'sew' in model_name:
+        model_name = '_'.join(model_name.split('_')[1:])
+        act = 'sn'
+    else:
+        act = 'an'
+
+    # --- structural init
     model_dict = {'vgg5':'O', 'vgg11': 'A', 'vgg13': 'B', 'vgg16': 'D', 'vgg19': 'E'}
+    
     cfgs = {
         'O': [64, 'M', 128, 128, 'M'],
         'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
@@ -408,60 +556,72 @@ def generate_vgg_layers(model, model_name, T=4):     # FIXME add T and other use
         'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
     }
 
-    cfg = model_dict[model_name.split('_')[1]]
-    cfg = cfgs[cfg]
-    
-    layers = []     # [target] generate required layer name list
-    cba = ['conv', 'bn', 'neuron'] 
-    ca = ['conv', 'neuron']
+    # --- 0. init
+    cba = ['Conv', 'BN', f'{act}']
+    ca = ['Conv', f'{act}']
+        
+    layers = [] 
     
     _l = 1
     _b = 1
-    for v in cfg:
+    
+    # --- 1. features
+    for v in cfgs[model_dict[model_name.split('_')[0]]]:     # for each block
         
         if v == 'M':
-            temp = ['L'+str(_l)+'_maxpool']
-            layers += temp
-            _b = 0
+            layers.append(f'L{_l}_MaxPool')
+            _b = 1
             _l += 1
+            
         else:
             if 'bn' in model_name:
-                temp = ['L'+str(_l)+'_B'+str(_b)+'_'+_i for _i in cba]
-                layers += temp      # the basic structure of layer with BN
-
+                layers += [f'L{_l}_B{_b}_{_}' for _ in cba]
             else:
-                temp = ['L'+str(_l)+'_B'+str(_b)+'_'+_i for _i in ca]
-                layers += temp
-        _b += 1
+                layers += [f'L{_l}_B{_b}_{_}' for _ in ca]
+                
+            _b += 1
     
-    layers.append('AdptiveAvgP')
+    layers.append('AvgPool')
     
+    # --- 2. classifier
     if '5' in model_name:
-        classifier_A = ['fc_1', 'neuron_1', 'dropout_1', 'fc_2']
-        for classifier_layer in classifier_A:
-            layers.append(classifier_layer)
+        layers += ['fc_1', f'{act}_1', 'dp_1', 'fc_2']
+        
     else:
-        classifier_B = ['fc_1', 'neuron_1', 'dropout_1', 'fc_2', 'neuron_2', 'dropout_2', 'fc_3']
-        for classifier_layer in classifier_B:
-            layers.append(classifier_layer)
+        layers += ['fc_1', f'{act}_1', 'dp_1', 'fc_2', f'{act}_2', 'dp_2', 'fc_3']     # add neuron_3 if manually addede the results after act for fc_3
     
-    x = torch.randn(T, 1, 3, 224, 224)
+    # ----- dummy img
+    x = torch.randn(1, *feature_shape)
     
+    # --- dummny model
+    model = models_.vgg.__dict__[model_name](num_classes=num_classes)
+    
+    # --- dummy forward
     features = model(x)
     functional.reset_net(model)
     
-    neurons = []
+    units = []
     shapes = []
-    for idx, layer in enumerate(features):
-        neurons.append(layer.mean(0).numel())
-        shapes.append(layer.mean(0).squeeze(0).detach().cpu().numpy().shape)
+    for idx, _ in enumerate(features):
+        units.append(_.mean(0).detach().cpu().numel())
+        shapes.append(_.mean(0).squeeze(0).detach().cpu().numpy().shape)
             
-    return layers, neurons, shapes
+    return layers, units, shapes
 
 
-def generate_resnet_layers_list(model, model_name, T=4):     # return layers and neurons
+# ----------------------------------------------------------------------------------------------------------------------
+def generate_resnet_layers(model_name, T=4, num_classes=50, feature_shape=(3,224,224), **kwargs):     # return layers and neurons
+    """
+        ...
+    """
     
-    model_dict = {'spiking_resnet18': [2, 2, 2, 2], 
+    model_dict = {'resnet18': [2, 2, 2, 2], 
+                  'resnet34': [3, 4, 6 ,3], 
+                  'resnet50': [3, 4, 6, 3], 
+                  'resnet101': [3, 4, 23, 3], 
+                  'resnet152': [3, 8, 36, 3],
+        
+                  'spiking_resnet18': [2, 2, 2, 2], 
                   'spiking_resnet34': [3, 4, 6 ,3], 
                   'spiking_resnet50': [3, 4, 6, 3], 
                   'spiking_resnet101': [3, 4, 23, 3], 
@@ -473,53 +633,66 @@ def generate_resnet_layers_list(model, model_name, T=4):     # return layers and
                   'sew_resnet101': [3, 4, 23, 3], 
                   'sew_resnet152': [3, 8, 36, 3],}
     
-    layers = ['conv_0', 'bn_0', 'neuron_0', 'maxpool_0']
-    single_bottleneck_features = ['conv01', 'bn01', 'neuron01', 'conv02', 'bn02', 'neuron02', 'conv03', 'bn03', 'add_residual', 'neuron03']
-    single_basicblock_features = ['conv01', 'bn01', 'neuron01', 'conv02', 'bn02', 'add_residual', 'neuron02']
-    x = torch.randn(T, 1, 3, 224, 224)     # [notice] ransom sample used to collect the layer info
+    if 'spiking' in model_name or 'sew' in model_name:
+        act = 'sn'
+    else:
+        act = 'an'
     
-    if '18' in model_name or '34' in model_name:
-        blocks = model_dict[model_name]
-        layers_ = layers
-        for idx, i in enumerate(blocks):   # each layer
-            for j in range(i):          # each block
-                temp = []
-                for each_layer in single_basicblock_features:
-                    temp.append('L'+str(idx+1)+'_B'+str(j+1)+'_'+each_layer)
-                layers_ += temp
-        layers_ += ['avgpool', 'fc']
-        
-        features = model(x)
-        neurons_ = []
-        shapes_ = []
-        for idx, layer in enumerate(features):
-            neurons_.append(layer.mean(0).numel())
-            shapes_.append(layer.mean(0).squeeze(0).detach().cpu().numpy().shape)
+    layers = ['Conv_0', 'BN_0', f'{act}_0', 'MaxPool_0']
+    
+    if 'sew' in model_name:
+        single_bottleneck_features = ['Conv_1', 'BN_1', f'{act}_1', 'Conv_2', 'BN_2', f'{act}_2', 'Conv_3', 'BN_3', f'{act}_3', 'Residual']
+        single_basicblock_features = ['Conv_1', 'BN_1', f'{act}_1', 'Conv_2', 'BN_2', f'{act}_2', 'Residual']
+    else:
+        single_bottleneck_features = ['Conv_1', 'BN_1', f'{act}_1', 'Conv_2', 'BN_2', f'{act}_2', 'Conv_3', 'BN_3', 'Residual', f'{act}_3']
+        single_basicblock_features = ['Conv_1', 'BN_1', f'{act}_1', 'Conv_2', 'BN_2', 'Residual', f'{act}_2']
+     
+    # --- dummy img
+    if 'spiking' in model_name or 'sew' in model_name:
+        x = torch.randn(T, 1, *feature_shape)     # dummy img
+    else:
+        x = torch.randn(1, *feature_shape)
+    
+    # --- dummy model
+    if model_name in models_.spiking_resnet.__all__:
+        model = models_.spiking_resnet.__dict__[model_name](spiking_neuron=neuron.IFNode, num_classes=num_classes)
+        functional.set_step_mode(model, step_mode='m')
+    
+    elif model_name in models_.sew_resnet.__all__:
+        model = models_.sew_resnet.__dict__[model_name](spiking_neuron=neuron.IFNode, num_classes=num_classes, detach_reset=True, cnf='ADD')
+        functional.set_step_mode(model, step_mode='m')
     
     else:
-        blocks = model_dict[model_name]
-        layers_ = layers
-        for idx, i in enumerate(blocks):   # each layer
-            for j in range(i):          # each block
-                temp = []
-                for each_layer in single_bottleneck_features:
-                    temp.append('L'+str(idx+1)+'_B'+str(j+1)+'_'+each_layer)
-                layers_ += temp
-        layers_ += ['avgpool', 'fc']
-        
-        features = model(x)     # [notice] 如果不需要生成 neurons，只需要生成 layers，则无需使用 model 进行一次 inference
-        neurons_ = []
-        shapes_ = []
-        for idx, layer in enumerate(features):
-            neurons_.append(layer.mean(0).numel())
-            shapes_.append(layer.mean(0).squeeze(0).detach().cpu().numpy().shape)
+        model = models_.resnet.__dict__[model_name](num_classes=num_classes)   # no this resnet
     
-    #[notice] this step is important for spikingjelly SNN and any other architectures without neuron reset
+    # --- dummy forward
+    if '18' in model_name or '34' in model_name:
+        target_blocks = single_basicblock_features
+    else:
+        target_blocks = single_bottleneck_features
+    
+    for idx, i in enumerate(model_dict[model_name]):   # each layer
+        for j in range(i):          # each block
+            layers += [f'L{idx+1}_B{j+1}_{_}' for _ in target_blocks]
+            
+    layers += ['AvgPool', 'fc']     # manually change to fit different model
+    
+    features = model(x)
+    
+    assert isinstance(features, list), 'features is not list'
+    
+    units = []
+    shapes = []
+    for idx, layer in enumerate(features):
+        units.append(layer.mean(0).numel())
+        shapes.append(layer.mean(0).squeeze(0).detach().cpu().numpy().shape)
+    
     functional.reset_net(model)
     
-    return layers_, neurons_, shapes_
+    return layers, units, shapes
 
 
+# ----------------------------------------------------------------------------------------------------------------------
 # -----
 def rename():
     
@@ -582,162 +755,8 @@ def rename():
             new_name = '_'.join(file.split('_')[:-1]) + '_neuron_3.pkl'
             
             os.rename(os.path.join(root, file), os.path.join(root, new_name))
-        
-        
-# ----------------------------------------------------------------------------------------------------------------------
-def get_layers_and_units(model):
-    
-    if 'vgg' in model.lower():
-        
-        if 'spiking' in model.lower():
-        
-            model_name = '_'.join(model.split('_')[1:])
-        
-        else:
-            
-            model_name = model.lower()
-            
-        model_ = models_.vgg.__dict__[model_name](num_classes=50)
-        
-        return generate_vgg_layers_list_ann(model_, model_name)
-        
-
-    elif 'resnet' in model.lower():
-        
-        if 'spiking' in model.lower() or 'sew' in model.lower():
-            
-            model_name = '_'.join(model.split('_')[1:])
-            
-        else:
-            
-            model_name = model.lower()
-        
-        model_ = models_.resnet.__dict__[model_name](num_classes=50)
-        
-        return generate_resnet_layers_list_ann(model_, model_name)
-        
-    else:
-        
-        raise ValueError(f"[Codwarning] model '{model}' not supported")
-        
-        
-# ----------------------------------------------------------------------------------------------------------------------
-def generate_resnet_layers_list_ann(model, model_name):     # return layers and neurons
-    
-    model_dict = {'resnet18': [2, 2, 2, 2], 
-                  'resnet34': [3, 4, 6 ,3], 
-                  'resnet50': [3, 4, 6, 3], 
-                  'resnet101': [3, 4, 23, 3], 
-                  'resnet152': [3, 8, 36, 3],}
-    
-    layers = ['conv_0', 'bn_0', 'neuron_0', 'maxpool_0']
-    
-    single_bottleneck_features = ['conv_1', 'bn_1', 'neuron_1', 'conv_2', 'bn_2', 'neuron_2', 'conv_3', 'bn_3', 'add_residual', 'neuron_3']
-    single_basicblock_features = ['conv_1', 'bn_1', 'neuron_1', 'conv_2', 'bn_2', 'add_residual', 'neuron_2']
-    x = torch.randn(1, 3, 224, 224)
-    
-    if '18' in model_name or '34' in model_name:
-        blocks = model_dict[model_name]
-        layers_ = layers
-        for idx, i in enumerate(blocks):   # each layer
-            for j in range(i):          # each block
-                temp = []
-                for each_layer in single_basicblock_features:
-                    temp.append('L'+str(idx+1)+'_B'+str(j+1)+'_'+each_layer)
-                layers_ += temp
-        layers_ += ['avgpool', 'fc']
-        
-        features = model(x)
-        
-        neurons_ = []
-        shapes_ = []
-        for idx, layer in enumerate(features):
-            neurons_.append(layer.numel())
-            shapes_.append(layer.squeeze(0).detach().cpu().numpy().shape)
-    
-    else:
-        blocks = model_dict[model_name]
-        layers_ = layers
-        for idx, i in enumerate(blocks):   # each layer
-            for j in range(i):          # each block
-                temp = []
-                for each_layer in single_bottleneck_features:
-                    temp.append('L'+str(idx+1)+'_B'+str(j+1)+'_'+each_layer)
-                layers_ += temp
-        layers_ += ['avgpool', 'fc']
-        
-        features = model(x)     
-        neurons_ = []
-        shapes_ = []
-        for idx, layer in enumerate(features):
-            neurons_.append(layer.numel())
-            shapes_.append(layer.squeeze(0).detach().cpu().numpy().shape)
-    
-    return layers_, neurons_, shapes_
 
 
-def generate_vgg_layers_list_ann(model, model_name, x = torch.randn(1, 3, 224, 224)):
-    
-    model_dict = {'vgg5':'O', 'vgg11': 'A', 'vgg13': 'B', 'vgg16': 'D', 'vgg19': 'E'}
-    cfgs = {
-        'O': [64, 'M', 128, 128, 'M'],
-        'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
-        'B': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
-        'D': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
-        'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
-    }
-
-    cfg = model_dict[model_name.split('_')[0]]
-    cfg = cfgs[cfg]
-    
-    layers = []     # [target] generate required layer name list
-    cba = ['conv', 'bn', 'neuron'] 
-    ca = ['conv', 'neuron']
-    
-    _l = 1
-    _b = 1
-    for v in cfg:
-        
-        if v == 'M':
-            temp = ['L'+str(_l)+'_maxpool']
-            layers += temp
-            _b = 0
-            _l += 1
-        else:
-            if 'bn' in model_name:
-                temp = ['L'+str(_l)+'_B'+str(_b)+'_'+_i for _i in cba]
-                layers += temp      # the basic structure of layer with BN
-
-            else:
-                temp = ['L'+str(_l)+'_B'+str(_b)+'_'+_i for _i in ca]
-                layers += temp
-        _b += 1
-    
-    layers.append('AdptiveAvgP')
-    
-    if '5' in model_name:
-        classifier_A = ['fc_1', 'neuron_1', 'dropout_1', 'fc_2']
-        for classifier_layer in classifier_A:
-            layers.append(classifier_layer)
-    else:
-        classifier_B = ['fc_1', 'neuron_1', 'dropout_1', 'fc_2', 'neuron_2', 'dropout_2', 'fc_3']
-        for classifier_layer in classifier_B:
-            layers.append(classifier_layer)
-            
-    #layers.append('sigmoid')
-
-    features = model(x)
-    
-    neurons = []
-    shapes = []
-    for idx, layer in enumerate(features):
-        neurons.append(layer.mean(0).numel())
-        shapes.append(layer.mean(0).squeeze(0).detach().cpu().numpy().shape)
-            
-    return layers, neurons, shapes
-
-
-# -----
 def params_affine_from_spikingjelly04(params, verbose=True):
     print('[Codinfo] Executing params_affine_from_spikingjelly04...')
     if verbose:
@@ -858,40 +877,7 @@ def describe_model(layers, neurons, shapes):
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# FIXME --- make full use of this design
 
-def activation_function(model_name, layers, neurons=None):
-    
-    if 'vgg' in model_name.lower() or 'baseline' in model_name.lower():
-        
-        return activation_function_vgg(layers, neurons)
-    
-    elif 'resnet' in model_name.lower():
-        
-        return activation_function_resnet(layers, neurons)
-
-def activation_function_vgg(layers:list[str], neurons:list[int]=None):
-    """
-        the final layer is 'fc_3' or 'neuron_3' depends on the model
-    """
-    layers_ = [i for i in layers if 'neuron' in i or 'pool' in i or 'fc_3' in i]
-    idx = [layers.index(i) for i in layers_]
-    layers = layers_
-    
-    if neurons is not None:
-        neurons = [neurons[i] for i in idx]
-    
-    return idx, layers, neurons
-    
-def activation_function_resnet(layers:list[str], neurons:list[int]=None):
-    
-    layers_ = [i for i in layers if 'neuron' in i or 'pool' in i or 'fc' in i]
-    idx = [layers.index(i) for i in layers_]
-    layers = layers_
-    
-    if neurons is not None:
-        neurons = [neurons[i] for i in idx]
-    return idx, layers, neurons
 
 
 # FIXME --- Vanilla SNN, 意义不明

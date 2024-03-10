@@ -33,6 +33,7 @@ from scipy.integrate import quad, IntegrationWarning
 from sklearn.manifold import TSNE
 
 import utils_
+import utils_bio_cells
 import utils_similarity
 
 import Selectivity_Analysis_Feature
@@ -56,7 +57,7 @@ class Human_Neuron_Records_Process():
                  ):
 
         self.root_process = os.path.join(root, 'osfstorage-archive-supp/')     # <- contains the processed Bio data (eg. PSTH) calculated from Matlab
-        self.root_data = os.path.join(root, 'osfstorage-archive/')      # <- contains the raw Bio data from resources, only used for [human_neuron_get_firing_rate], expand it to PSTH
+        self.root_data = os.path.join(root, 'osfstorage-archive/')      # <- contains the raw Bio data from resources, only used for [human_cell_FiringRate], expand it to PSTH
         
         self.human_neuron_stats = os.path.join(root, 'human_neuron_stats/')
         utils_.make_dir(self.human_neuron_stats)
@@ -82,18 +83,73 @@ class Human_Neuron_Records_Process():
         self.preStim = 500
         self.postStim = 1000
         self.timelim = [0, 2000]
-
         
+        self.ts = np.arange(-250, 1001, 50)
+        
+        # ---
+        CelebA_img_idx_new = sio.loadmat(os.path.join(self.root_data, 'SingleNeuron/Code/CelebA_Image_Code_new.mat'))
+        img_idces_new = CelebA_img_idx_new['im_code'].reshape(-1)     # img_idx linked ID, 50 IDs in total
+        
+        id_img_idces = np.array([_.reshape(-1)-1 for _ in CelebA_img_idx_new['id_code'].reshape(-1)])     # each ID contains 10 imgs
+        
+        self.img_idces_new_dict = {_:img_idces_new[_] for _ in range(len(img_idces_new))}     # {img number: ID}
+        self.id_img_idces_dict = {_:id_img_idces[_] for _ in range(len(id_img_idces))}     # {ID: 10 img numbers}     0-based
+        
+ 
     # ===== module 1, obtain response map
+    def human_cell_FeatureMap(self, used_id_num:int=50, used_cell_type:str='all'):
+        
+        feature_path = os.path.join(self.human_neuron_stats, f'feature_{used_cell_type}.pkl')
+        
+        if os.path.exists(feature_path):
+            
+            feature_dict = utils_.load(feature_path)
+            
+            meanFR_id = feature_dict['FR_id']
+            meanFR_PSTH_id = feature_dict['psth_id']
+            
+        else:
+            
+            used_ids = self.human_corr_select_sub_identities(used_id_num)
+            used_cells = self.human_neuron_obtain_used_cells(used_cell_type)
+            
+            # --- init
+            meanFR_dict = self.human_cell_SortFR(data_type='default')
+            meanFR_baseline_dict = self.human_cell_SortFR(data_type='base')
+            
+            meanFR = meanFR_dict['meanFR']     # (2082, 500), with nan
+            meanFR_PSTH = meanFR_dict['meanFR_PSTH']     # (2080, 500, time_steps) with nan
+        
+            # --- normalize firing rates
+            FR_baseline = np.nanmean(meanFR_baseline_dict['meanFR'], axis=1) + 1e-8    # (num_cells, 1)
+            
+            normalized_meanFR = meanFR/np.expand_dims(FR_baseline, axis=1)     # (num_cells, num_imgs)
+            normalized_meanFR_PSTH = meanFR_PSTH/np.expand_dims(FR_baseline, axis=(1,2))     # (num_cells, num_imgs, num_time_steps)
+            
+            # --- -> (50, num_cells)
+            meanFR_id = np.nanmean(normalized_meanFR.reshape(-1, 50, 10), axis=2)[np.ix_(used_cells, used_ids)].T     # (num_selected_ids, num_cells)
+            meanFR_PSTH_id = np.nanmean(normalized_meanFR_PSTH.reshape(-1, 50, 10, 31), axis=2)[np.ix_(used_cells, used_ids)].T     # (num_time_steps, num_selected_ids, num_cells)
+            
+            # -----
+            feature_dict = {
+                'FR_id': meanFR_id,
+                'psth_id': meanFR_PSTH_id
+                }
+            
+            utils_.dump(feature_dict, feature_path)
+        
+        return meanFR_id, meanFR_PSTH_id
+    
+    
     # ----- 1. calculate FR from raw records
     # FIXME
-    def human_neuron_sort_FR(self, reject_rate:float=0.15, data_type:str='default', data_set:str='CelebA'):
+    def human_cell_SortFR(self, reject_rate:float=0.15, data_type:str='default'):
         """
             currently the results is not identical with the MATLAB version, need to fix, and upgrade
             -----
             this function calculates the sorted mean firing rates (entire trial: 0ms - 2000ms) and qualified cells
             
-            this function use reject_rate (default: 0.15) and experiment performance to filter out unwanted cells. After 
+            this function use reject_rate (default: 0.15) and experiment performance to filter unwanted cells. After 
             that, for each neuron, retrieve session_idx first, then based on it's back_id, the imgs used for one-back trial, to 
             remove repeated neuron responses. Third, place all responses into a (cell_num, img_num) matrix. Finally, make a 
             correction due to experiment errors.
@@ -131,235 +187,208 @@ class Human_Neuron_Records_Process():
         
         if os.path.exists(meanFR_path):
             
-            meanFR_dict = utils_.pickle_load(meanFR_path)
+            meanFR_dict = utils_.load(meanFR_path)
             
         else:
             
             print('[Codinfo] Calculating sorted meanFR...')
             
-            if data_set == 'CelebA':
+            # ----- obtain firing rate (FR) and peri-stimulus histogram (PSTH)
+            FR_stats = self.human_cell_FiringRate()
+            
+            if data_type == 'base':
+                FR_list = [FR_stats[_]['spike_count_250_500'] for _ in range(len(FR_stats))]
+            elif data_type == 'trial':
+                FR_list = [FR_stats[_]['spike_count_0_2000'] for _ in range(len(FR_stats))]
+            elif data_type == 'default':
+                FR_list = [FR_stats[_]['spike_count'] for _ in range(len(FR_stats))]
+            else:
+                raise ValueError(f'[Codinfo] invalid data_type [{data_type}]')
                 
-                # ----- obtain firing rate (FR) and peri-stimulus histogram (PSTH)
-                FR_stats = self.human_neuron_get_firing_rate()
-                
-                if data_type == 'base':
-                    FR_list = [FR_stats[_]['spike_count_250_500'] for _ in range(len(FR_stats))]
-                elif data_type == 'trial':
-                    FR_list = [FR_stats[_]['spike_count_0_2000'] for _ in range(len(FR_stats))]
-                elif data_type == 'default':
-                    FR_list = [FR_stats[_]['spike_count'] for _ in range(len(FR_stats))]
-                else:
-                    raise ValueError(f'[Codinfo] data_type [{data_type}] is invalid')
-                    
-                FR_PSTH_list = [FR_stats[_]['PSTH_250'] for _ in range(len(FR_stats))]
-        
-                # ----- obtain behavior data
-                beh_stats = self.human_neuron_get_beh()
-                behavior = beh_stats['beh']
-                
-                # --- 1.1 1st condition, firing rate
-                cell_reject = np.array([]).astype(int)
-                for cell_idx in range(len(FR_stats)):  
-                    if np.nanmean(FR_stats[cell_idx]['spike_count_0_2000']) < reject_rate:  
-                        cell_reject = np.append(cell_reject, cell_idx)
-                
-                # --- 1.2 2nd condition, manually "exclude sessions 12(only has 117 trials) and 18(only 1 neuron kept and patients did not pay attention)"
-                neuron_session_idces = self.Spikes['vCell'].reshape(-1)-1     # 1-based (MATLAB) -> 0-based (Python)
-                exclude_cell = np.array([index for index, value in enumerate(neuron_session_idces) if value == 11 or value == 17])
-                cell_reject = np.union1d(cell_reject, exclude_cell)
-         
-                qualified_cells = np.setdiff1d(np.arange(len(FR_stats)), cell_reject)     # qualified neurons with 2 conditions
-                
-                # ----- build [im_code] img_idces and img_idces_new dict
-                # --- 1.2.1 old (wrong) img_idces and id_img dict
-                CelebA_img_idces = sio.loadmat(os.path.join(self.root_data, 'SingleNeuron/Code/CelebA_Image_Code.mat'))
-                img_idces = CelebA_img_idces['im_code'].reshape(-1)     # [idx as right number: ID]
-                adjust_idx = CelebA_img_idces['AdjustInd'].reshape(-1).astype(np.int16) - 1   # [idx as right number: wrong number]
-                
-                self.img_idces_dict = {_:img_idces[_] for _ in range(len(img_idces))}     # {right number: ID}
-                self.adjust_idx_dict = {adjust_idx[_].astype(int): _ for _ in range(len(adjust_idx)) if adjust_idx[_] > -1}     # {wrong number: right number}
-                
-                # --- 1.2.2 new img_idces and id_img dict
-                CelebA_img_idx_new = sio.loadmat(os.path.join(self.root_data, 'SingleNeuron/Code/CelebA_Image_Code_new.mat'))
-                img_idces_new = CelebA_img_idx_new['im_code'].reshape(-1)     # img_idx linked ID, 50 IDs in total
-                
-                id_img_idces = np.array([_.reshape(-1)-1 for _ in CelebA_img_idx_new['id_code'].reshape(-1) ])     # each ID contains 10 imgs
-                
-                self.img_idces_new_dict = {_:img_idces_new[_] for _ in range(len(img_idces_new))}     # {img number: ID}
-                self.id_img_idces_dict = {_:id_img_idces[_] for _ in range(len(id_img_idces))}     # {ID: 10 img numbers}     0-based
-                
-                # ----- start meanFR calculation [notice] this process is for all 2082 cells, including the filtered cells
-                meanFR = np.full((len(FR_stats), 500), np.nan)     # empty response map waited to receive values
-                meanFR_PSTH = np.full((len(FR_stats), 500, 31), np.nan)
-                
-                for cell_idx in tqdm(range(len(FR_stats))):     # for each neuron
-                    
-                    # --- init
-                    FR = FR_list[cell_idx]
-                    FR_PSTH = FR_PSTH_list[cell_idx]
-                
-                    # --- 2.1 retrive session_idx
-                    session_idx = neuron_session_idces[cell_idx]     # get session idx
-                
-                    displayed_image_sequence = behavior[session_idx]['code'].copy()     # delete back_id in img_list, 1-based
-                    back_id = behavior[session_idx]['back_id'].copy()     # 
-                    
-                    # --- 2.2 remove unwanted records
-                    displayed_image_sequence = np.delete(displayed_image_sequence, back_id) - 1     # img idx, 0-based
-
-                    FR = np.delete(FR, back_id)   # remove back_id in neuron response
-                    FR_PSTH = np.delete(FR_PSTH, back_id, axis=0)
-                    
-                    # --- manually set the responses of error image as np.nan
-                    if session_idx < 10:
-                        error_image_idces = []
-                        for _ in [51, 52, 53]:
-                            error_image_idces.append(np.where(img_idces==_)[0].item())     # [77, 97, 122], 0-based
-                            
-                        for _ in error_image_idces:
-                            error_position = [_ for _ in np.where(displayed_image_sequence==_)[0]]
-                            for __ in error_position:
-                                FR[__] = np.nan
-                                FR_PSTH[__, :] = np.full(FR_PSTH.shape[1], np.nan)
-                    
-                    # --- 2.3 sort displayed_image_sequence and corresponding responses
-                    sort_idx = np.argsort(displayed_image_sequence)     # the index of 'Code' in ascending order
-                    sorted_image_idces = displayed_image_sequence[sort_idx]     
-                    FR = FR[sort_idx]     # sorted FR based on the index of 'Code', make the responses align with the image idces
-                    FR_PSTH = FR_PSTH[sort_idx, :]
-                    
-                    # --- 3 correction and store into FR matrix
-                    if session_idx < 10:     # for the first 10 sessions
-                        
-                        adjustFR = np.full(500, np.nan)  
-                        adjustFR_PSTH = np.full((500, 31), np.nan)
-                        
-                        if len(displayed_image_sequence) != 500:     # 3: (498); 7 (645); 8: (499)
+            FR_PSTH_list = [FR_stats[_]['PSTH_250'] for _ in range(len(FR_stats))]
     
-                            new_FR = np.full(500, np.nan)  
-                            new_FR_PSTH = np.full((500, 31), np.nan)
-                            
-                            for _ in range(500):     # for each img_idx, wrong_label
-                                used_imgs = np.where(sorted_image_idces == _)[0]     # for most of the cases, 1 record for 1 img
-                                if len(used_imgs) != 0:
-                                    new_FR[_] = np.mean(FR[used_imgs])   
-                                    new_FR_PSTH[_, :] = np.mean(FR_PSTH[used_imgs, :], axis=0)
-                                    
-                            for _ in range(500):    
-                                if adjust_idx[_] >= 0:    
-                                    adjustFR[_] = new_FR[adjust_idx[_]]     # put the firing rate of wrong labeled img to the right position
-                                    adjustFR_PSTH[_, :] = new_FR_PSTH[adjust_idx[_], :]
-                        else:
-                            
-                            for _ in range(500):
-                                if adjust_idx[_] >= 0:
-                                    adjustFR[_] = FR[adjust_idx[_]]
-                                    adjustFR_PSTH[_, :] = FR_PSTH[adjust_idx[_], :]
+            # ----- obtain behavior data
+            beh_stats = self.human_neuron_get_beh()
+            behavior = beh_stats['beh']
+            
+            # --- 1.1 1st condition, firing rate
+            cell_reject = np.array([]).astype(int)
+            for cell_idx in range(len(FR_stats)):  
+                if np.nanmean(FR_stats[cell_idx]['spike_count_0_2000']) < reject_rate:  
+                    cell_reject = np.append(cell_reject, cell_idx)
+            
+            # --- 1.2 2nd condition, manually "exclude sessions 12(only has 117 trials) and 18(only 1 neuron kept and patients did not pay attention)"
+            neuron_session_idces = self.Spikes['vCell'].reshape(-1)-1     # 1-based (MATLAB) -> 0-based (Python)
+            exclude_cell = np.array([index for index, value in enumerate(neuron_session_idces) if value == 11 or value == 17])
+            cell_reject = np.union1d(cell_reject, exclude_cell)
+     
+            qualified_cells = np.setdiff1d(np.arange(len(FR_stats)), cell_reject)     # qualified neurons with 2 conditions
+            
+            # ----- build [im_code] img_idces and img_idces_new dict
+            # --- 1.2.1 old (wrong) img_idces and id_img dict
+            self.CelebA_img_idces = sio.loadmat(os.path.join(self.root_data, 'SingleNeuron/Code/CelebA_Image_Code.mat'))
+            img_idces = self.CelebA_img_idces['im_code'].reshape(-1)     # [idx as right number: ID]
+            adjust_idx = self.CelebA_img_idces['AdjustInd'].reshape(-1).astype(np.int16) - 1   # [idx as right number: wrong number]
+            
+            self.img_idces_dict = {_:img_idces[_] for _ in range(len(img_idces))}     # {right number: ID}
+            self.adjust_idx_dict = {adjust_idx[_].astype(int): _ for _ in range(len(adjust_idx)) if adjust_idx[_] > -1}     # {wrong number: right number}
+            
+            # --- 1.2.2 new img_idces and id_img dict
+            CelebA_img_idx_new = sio.loadmat(os.path.join(self.root_data, 'SingleNeuron/Code/CelebA_Image_Code_new.mat'))
+            img_idces_new = CelebA_img_idx_new['im_code'].reshape(-1)     # img_idx linked ID, 50 IDs in total
+            
+            id_img_idces = np.array([_.reshape(-1)-1 for _ in CelebA_img_idx_new['id_code'].reshape(-1) ])     # each ID contains 10 imgs
+            
+            self.img_idces_new_dict = {_:img_idces_new[_] for _ in range(len(img_idces_new))}     # {img number: ID}
+            self.id_img_idces_dict = {_:id_img_idces[_] for _ in range(len(id_img_idces))}     # {ID: 10 img numbers}     0-based
+            
+            # ----- start meanFR calculation [notice] this process is for all 2082 cells, including the filtered cells
+            meanFR = np.full((len(FR_stats), 500), np.nan)     # empty response map waited to receive values
+            meanFR_PSTH = np.full((len(FR_stats), 500, 31), np.nan)
+            
+            for cell_idx in tqdm(range(len(FR_stats))):     # for each neuron
+                
+                # --- init
+                FR = FR_list[cell_idx]
+                FR_PSTH = FR_PSTH_list[cell_idx]
+            
+                # --- 2.1 retrive session_idx
+                session_idx = neuron_session_idces[cell_idx]     # get session idx
+            
+                displayed_image_sequence = behavior[session_idx]['code'].copy()     # delete back_id in img_list, 1-based
+                back_id = behavior[session_idx]['back_id'].copy()     # 
+                
+                # --- 2.2 remove unwanted records
+                displayed_image_sequence = np.delete(displayed_image_sequence, back_id) - 1     # img idx, 0-based
+
+                FR = np.delete(FR, back_id)   # remove back_id in neuron response
+                FR_PSTH = np.delete(FR_PSTH, back_id, axis=0)
+                
+                # --- manually set the responses of error image as np.nan
+                if session_idx < 10:
+                    error_image_idces = []
+                    for _ in [51, 52, 53]:
+                        error_image_idces.append(np.where(img_idces==_)[0].item())     # [77, 97, 122], 0-based
                         
-                        meanFR[cell_idx, :] = adjustFR  # Note: Python uses 0-based indexing
+                    for _ in error_image_idces:
+                        error_position = [_ for _ in np.where(displayed_image_sequence==_)[0]]
+                        for __ in error_position:
+                            FR[__] = np.nan
+                            FR_PSTH[__, :] = np.full(FR_PSTH.shape[1], np.nan)
+                
+                # --- 2.3 sort displayed_image_sequence and corresponding responses
+                sort_idx = np.argsort(displayed_image_sequence)     # the index of 'Code' in ascending order
+                sorted_image_idces = displayed_image_sequence[sort_idx]     
+                FR = FR[sort_idx]     # sorted FR based on the index of 'Code', make the responses align with the image idces
+                FR_PSTH = FR_PSTH[sort_idx, :]
+                
+                # --- 3 correction and store into FR matrix
+                if session_idx < 10:     # for the first 10 sessions
+                    
+                    adjustFR = np.full(500, np.nan)  
+                    adjustFR_PSTH = np.full((500, 31), np.nan)
+                    
+                    if len(displayed_image_sequence) != 500:     # 3: (498); 7 (645); 8: (499)
+
+                        new_FR = np.full(500, np.nan)  
+                        new_FR_PSTH = np.full((500, 31), np.nan)
+                        
+                        for _ in range(500):     # for each img_idx, wrong_label
+                            used_imgs = np.where(sorted_image_idces == _)[0]     # for most of the cases, 1 record for 1 img
+                            if len(used_imgs) != 0:
+                                new_FR[_] = np.mean(FR[used_imgs])   
+                                new_FR_PSTH[_, :] = np.mean(FR_PSTH[used_imgs, :], axis=0)
+                                
+                        for _ in range(500):    
+                            if adjust_idx[_] >= 0:    
+                                adjustFR[_] = new_FR[adjust_idx[_]]     # put the firing rate of wrong labeled img to the right position
+                                adjustFR_PSTH[_, :] = new_FR_PSTH[adjust_idx[_], :]
+                    else:
+                        
+                        for _ in range(500):
+                            if adjust_idx[_] >= 0:
+                                adjustFR[_] = FR[adjust_idx[_]]
+                                adjustFR_PSTH[_, :] = FR_PSTH[adjust_idx[_], :]
+                    
+                    meanFR[cell_idx, :] = adjustFR  # Note: Python uses 0-based indexing
+                    meanFR_PSTH[cell_idx, :, :] = adjustFR_PSTH
+                    
+                else:     # for the rest 30 sessions
+                    
+                    adjustFR = np.full(500, np.nan)
+                    adjustFR_PSTH = np.full((500, 31), np.nan)
+                
+                    if len(displayed_image_sequence) != 500:     # 11: (161); 13: (452)
+
+                        for _ in range(500):
+                            used_imgs = np.where(sorted_image_idces == _)[0]
+                            if len(used_imgs) != 0:
+                                adjustFR[_] = np.mean(FR[used_imgs])
+                                adjustFR_PSTH[_, :] = np.mean(FR_PSTH[used_imgs, :], axis=0)
+                                
+                        meanFR[cell_idx, :] = adjustFR
                         meanFR_PSTH[cell_idx, :, :] = adjustFR_PSTH
                         
-                    else:     # for the rest 30 sessions
-                        
-                        adjustFR = np.full(500, np.nan)
-                        adjustFR_PSTH = np.full((500, 31), np.nan)
-                    
-                        if len(displayed_image_sequence) != 500:     # 11: (161); 13: (452)
-
-                            for _ in range(500):
-                                used_imgs = np.where(sorted_image_idces == _)[0]
-                                if len(used_imgs) != 0:
-                                    adjustFR[_] = np.mean(FR[used_imgs])
-                                    adjustFR_PSTH[_, :] = np.mean(FR_PSTH[used_imgs, :], axis=0)
-                                    
-                            meanFR[cell_idx, :] = adjustFR
-                            meanFR_PSTH[cell_idx, :, :] = adjustFR_PSTH
-                            
-                        else:
-                            meanFR[cell_idx, :] = FR
-                            meanFR_PSTH[cell_idx, :, :] = FR_PSTH
-                               
-                # --- plot the raw response map, follow the order of cell and img along x and y axis
-                # --- [notice] please refer [meanFR figs] to check the figs
-                #plt.rcParams.update({"font.family": "Times New Roman"})
-                #fig, ax = plt.subplots(figsize=(20,10))
-                #meanFR_ = meanFR.copy()
-                #c = ax.imshow(meanFR_.T, aspect='auto', cmap='turbo')
-                #fig.colorbar(c)
-                #ax.set_ylabel('img idx', fontsize=18)
-                #ax.set_xlabel('cell idx', fontsize=18)
-                #ax.set_title('raw response map', fontsize=20)
-                #title = 'raw response map (with nan values)'
-                #plt.savefig(f'{title}.png', bbox_inches='tight')
-                #plt.savefig(f'{title}.pdf', format='pdf', bbox_inches='tight')
+                    else:
+                        meanFR[cell_idx, :] = FR
+                        meanFR_PSTH[cell_idx, :, :] = FR_PSTH
+                           
+            # --- 4. repair because of image errors
+            print('[Codinfo] Start images repair...')
+            
+            # --- 4.1. face 121 is a mis-identified photo of identity 6, replace the FR to average FR of other 9 faces
+            meanFR[:, 120] = np.nanmean(meanFR[:, self.id_img_idces_dict[5][:-1]], 1)
+            meanFR_PSTH[:, 120, :] = np.nanmean(meanFR_PSTH[:, self.id_img_idces_dict[5][:-1], :], 1)
+            
+            # --- 4.2. replace the problemd face with mean of that ID for the problemed ID (only for the first 381 neurons),in
+            # which another 2 faces(2 trials) were mis-identified, results are similar when replaced with Nan
+            defective_ids = [17, 39]
+            for _ in defective_ids:
+                 defective_imgs = self.id_img_idces_dict[_][-1]
+                 meanFR[:381, defective_imgs] = np.nanmean(meanFR[:381, self.id_img_idces_dict[_][:-1]], 1)
+                 meanFR_PSTH[:381, defective_imgs, :] = np.nanmean(meanFR_PSTH[:381, self.id_img_idces_dict[_][:-1], :], 1)
+            
+            # --- 4.3 update
+            # [notice] consider to remove session 12 because here's a lot of nan values for session 12 (cell 415 to 432) (1-based)
+            # [notice] until now the feature map is still based on img_idx, i.e. the adjacent 10 imgs does not belong
+            # to one class, below section sorts feature map based on ID. The finally output has similiar order as NN feature map
+            
+            # --- 5. sort the feature map based on ID
+            print('[Codinfo] Start sorting based on ID...')
+            for cell_idx in tqdm(range(meanFR.shape[0]), desc='Sorting'):
                 
-                # --- 4. repair because of image errors
-                print('[Codinfo] Start images repair...')
-                # --- 4.1. face 121 is a mis-identified photo of identity 6, replace the FR to average FR of other 9 faces
-                meanFR[:, 120] = np.nanmean(meanFR[:, self.id_img_idces_dict[5][:-1]], 1)
-                meanFR_PSTH[:, 120, :] = np.nanmean(meanFR_PSTH[:, self.id_img_idces_dict[5][:-1], :], 1)
+                FR = meanFR[cell_idx, :].copy()
+                FR_PSTH = meanFR_PSTH[cell_idx, :, :].copy()
                 
-                # --- 4.2. replace the problemd face with mean of that ID for the problemed ID (only for the first 381 neurons),in
-                # which another 2 faces(2 trials) were mis-identified, results are similar when replaced with Nan
-                defective_ids = [17, 39]
-                for _ in defective_ids:
-                     defective_imgs = self.id_img_idces_dict[_][-1]
-                     meanFR[:381, defective_imgs] = np.nanmean(meanFR[:381, self.id_img_idces_dict[_][:-1]], 1)
-                     meanFR_PSTH[:381, defective_imgs, :] = np.nanmean(meanFR_PSTH[:381, self.id_img_idces_dict[_][:-1], :], 1)
+                FR_ID = []
+                FR_PSTH_ID = []
                 
-                # --- 4.3 update
-                # [notice] consider to remove session 12 because here's a lot of nan values for session 12 (cell 415 to 432) (1-based)
-                # [notice] until now the feature map is still based on img_idx, i.e. the adjacent 10 imgs does not belong
-                # to one class, below section sorts feature map based on ID. The finally output has similiar order as NN feature map
+                for ID in range(50):
+                    sorted_FR = [FR[_] for _ in sorted(self.id_img_idces_dict[ID])]
+                    FR_ID.append(sorted_FR)
+                    
+                    sorted_FR_PSTH = [FR_PSTH[_, :] for _ in sorted(self.id_img_idces_dict[ID])]
+                    FR_PSTH_ID.append(sorted_FR_PSTH)
                 
-                # ----- [notice] for the MATLAB version feturemap, ignore below opration
-                # --- 5. sort the feature map based on ID
-                print('[Codinfo] Start sorting based on ID...')
-                for cell_idx in tqdm(range(meanFR.shape[0]), desc='Sorting'):
-                    
-                    FR = meanFR[cell_idx, :].copy()
-                    FR_PSTH = meanFR_PSTH[cell_idx, :, :].copy()
-                    
-                    FR_ID = []
-                    FR_PSTH_ID = []
-                    
-                    for ID in range(50):
-                        sorted_FR = [FR[_] for _ in sorted(self.id_img_idces_dict[ID])]
-                        FR_ID.append(sorted_FR)
-                        
-                        sorted_FR_PSTH = [FR_PSTH[_, :] for _ in sorted(self.id_img_idces_dict[ID])]
-                        FR_PSTH_ID.append(sorted_FR_PSTH)
-                    
-                    FR_ID = np.array(FR_ID).reshape(-1)
-                    meanFR[cell_idx, :] = FR_ID
-                    
-                    FR_PSTH_ID = np.array(FR_PSTH_ID).reshape(-1, 31)
-                    meanFR_PSTH[cell_idx, :, :] = FR_PSTH_ID
-                    
-                #-------------------------------------------------------------------------------------------------------
-                meanFR_dict = {
-                    'meanFR': meanFR,
-                    'meanFR_PSTH': meanFR_PSTH,
-                    'qualified_cells': qualified_cells,
-                    }
+                FR_ID = np.array(FR_ID).reshape(-1)
+                meanFR[cell_idx, :] = FR_ID
                 
-                utils_.pickle_dump(meanFR_path, meanFR_dict)
+                FR_PSTH_ID = np.array(FR_PSTH_ID).reshape(-1, 31)
+                meanFR_PSTH[cell_idx, :, :] = FR_PSTH_ID
+                
+            #-------------------------------------------------------------------------------------------------------
+            meanFR_dict = {
+                'meanFR': meanFR,
+                'meanFR_PSTH': meanFR_PSTH,
+                'qualified_cells': qualified_cells,
+                }
+            
+            utils_.dump(meanFR_dict, meanFR_path)
                     
-            else:
-                
-                raise RuntimeError('[Coderror] data_set not a_licable')
-                
-                # [notice] legacy from MATLAB code, not in use for current task
-                #FR = np.array([])
-                #for _ in range(1, imgNum+1):
-                #    defective_imgs = np.where(sorted_image_idces ==_)
-                #    if not defective_imgs:
-                #        FR = np.concatenate((FR, FR[defective_imgs]))
-                #meanFR[cell_idx-1,:] = FR;
-
         return meanFR_dict
         
-    def human_neuron_get_firing_rate(self, time_window=250, time_step=50):  
+    
+    def human_cell_FiringRate(self, time_window=250, time_step=50):  
         """
             the saved FR_stats['FR'] is identical with FR.m of source MATLAB code
             -----
@@ -408,7 +437,7 @@ class Human_Neuron_Records_Process():
             
             time_stamps_all_cells = [_.reshape(-1) for _ in self.Spikes['timestampsOfCellAll'].reshape(-1)]
             
-            sessions = self.get_session_idces()     # <- stores time periods of each trial (each session_idx)
+            sessions = utils_bio_cells.get_session_idces()     # <- stores time periods of each trial (each session_idx)
             session_idx_dir = os.path.join(self.root_data, 'Events Files')     # <- store timestamps for each responses, self.root_data: osfstorage-archive
             
             # consider add a code like self.get_periods() to make the code more clear and easy to read
@@ -436,18 +465,18 @@ class Human_Neuron_Records_Process():
             for i in tqdm(range(len(time_stamps_all_cells)), desc='Cell stats dict'):
                 FR_stats[i] = pl[i]
                 
-            utils_.pickle_dump(file_path, FR_stats)
+            utils_.dump(FR_stats, file_path)
         
         return FR_stats
         
     # FIXME ---
-    def human_neuron_FR_stats_plot(self, init:float=0.15):
+    def human_plot_FR_PDF(self, init:float=0.15):
         """
             1. bio data > 0, so use feature/scaling_factor rather than (feature-min(feature))/scaling_factor
             2. this function did not remove the responses of repeated images
         """
         
-        FR_stats = self.human_neuron_get_firing_rate()
+        FR_stats = self.human_cell_FiringRate()
         
         feature = [FR_stats[_]['spike_count_0_2000'] for _ in range(len(FR_stats))]     
         feature = np.array([np.mean(_[~np.isnan(_)]) for _ in feature])     # (2082,)
@@ -457,17 +486,18 @@ class Human_Neuron_Records_Process():
         init_th = init/scaling_factor
         feature = feature/scaling_factor     # (0, 1)
         
-        fig = self.neuron_FR_stats_plot(feature=feature, init_threshold=init_th, scaling_factor=scaling_factor)
+        fig = self.plot_FR_PDF(feature=feature, init_threshold=init_th, scaling_factor=scaling_factor)
         
         plt.tight_layout()
         
         fig.savefig(os.path.join(self.human_neuron_stats, 'neuron PDF.png'))
         fig.savefig(os.path.join(self.human_neuron_stats, 'neuron PDF.eps'))
     
+    
     # ------------------------------------------------------------------------------------------------------------------
     # FIXME --- needed to be simplified
     @staticmethod
-    def neuron_FR_stats_plot(model_structure:str='human MTL', target:str='cell', feature:np.array=None, init_threshold=None, scaling_factor:float=1.):
+    def plot_FR_PDF(model_structure:str='human MTL', target:str='cell', feature:np.array=None, init_threshold=None, scaling_factor:float=1.):
         """
             this function plots the log gaussian hist and PDF of human neuron data
         """
@@ -599,7 +629,7 @@ class Human_Neuron_Records_Process():
             beh_dict = []
             Acc = []
             
-            sessions = self.get_session_idces()     # <- stores time periods of each trial
+            sessions = utils_bio_cells.get_session_idces()     # <- stores time periods of each trial
             
             for session in tqdm(sessions, desc='Processing session behavior data'):     # for each session
                 
@@ -623,6 +653,7 @@ class Human_Neuron_Records_Process():
             utils_.pickle_dump(file_path, beh_stats)
             
         return beh_stats
+    
             
     def GetBehavior3(self, participant_idx, session_idx, data_set='CelebA'):     
         """
@@ -643,15 +674,9 @@ class Human_Neuron_Records_Process():
 
         if len(behavior_data_dict['iT']['TRIAL_START']) < len(behavior_data_dict['code']):     # no such case in current experiments
             raise RuntimeError(f'Error Detected: {path}')    
-            
-            # ----- legacy from MATLAB code
-            #behavior_data_dict['code'] = behavior_data_dict['code'][:len_iT]
-            #behavior_data_dict['back_id'] = behavior_data_dict['back_id'][np.where(behavior_data_dict['back_id']<=(len_iT+1))[0]]
-            #behavior_data_dict['vResp'] = behavior_data_dict['vResp'][:len_iT]
-            #behavior_data_dict['RT'] = behavior_data_dict['RT'][:len_iT]
-            #behavior_data_dict['vCorr'] = behavior_data_dict['vCorr'][:len_iT]
 
         return behavior_data_dict
+    
     
     def behavior_data_dict_correction(self, path:str):
         """
@@ -749,6 +774,7 @@ class Human_Neuron_Records_Process():
         
         return behavior_data_dict
     
+    
     def behavior_data_dict_format_transformation(self, path):
         """
             load and convert experimental data from MATLAB structure to Python dict. In fact, the files contain detailed 
@@ -786,86 +812,7 @@ class Human_Neuron_Records_Process():
         
         return data_dict
     
-    def get_session_idces(self):
-        """
-            Those are raw neural responses collected by Dr. Cao.
-            The CelebA/FBI/NavFace indicates the used datasets, refer to: https://www.biorxiv.org/content/10.1101/2020.09.01.278283v2.abstract
-            Those are manually selected files
-        """
-        sessions = [
-                'p6WV_CelebA_Sess1',
-                'p6WV_CelebA_Sess2',
-                'p7WV_CelebA_Sess1',
-                'p7WV_CelebA_Sess2',
-                'p7WV_CelebA_Sess3',
-                'p7WV_CelebA_Sess4',
-                'p9WV_CelebA_Sess1',
-                'p9WV_CelebA_Sess2',
-                'p9WV_CelebA_Sess3',
-                'p9WV_CelebA_Sess4',
-                'p10WV_CelebA_S2_FBI_S2',
-                'p10WV_CelebA_Sess3',
-                'p10WV_Loc2_S1_CelebA_S1_FBI_S1',
-                'p11WV_CelebA_S1_FBI_S1_Loc2_S1',
-                'p11WV_CelebA_S2_FBI_S2_Loc2_S2',
-                'p11WV_CelebA_S3_FBI_S3_Loc2_S3',
-                'p11WV_CelebA_S4_FBI_S4_Loc2_S4',
-                'p11WV_CelebA_Sess5',
-                'p13WV_CelebA_Sess1',
-                'p14WV_CelebA_S1_FBI_S1',
-                'p14WV_CelebA_S2_FBI_S2',
-                'p14WV_CelebA_S3_FBI_S3',
-                'p14WV_CelebA_S4_FBI_S4',
-                'p15WV_CelebA_S1_FBI_S1',
-                'p15WV_CelebA_S2_FBI_S2',
-                'p16WV_CelebA_S1',
-                'p16WV_CelebA_S2_NavFace_S1',
-                'p16WV_CelebA_S3_NavFace_S3',
-                'p16WV_CelebA_S4_NavObj_S2',
-                'p16WV_CelebA_S5_FBI_S1_NavFace_S4',
-                'p16WV_CelebA_S6_NavFace_S5',
-                'p18WV_CelebA_S1_FBI_S1',
-                'p18WV_CelebA_S2_NavFace_S1',
-                'p18WV_CelebA_S3_NavFace_S2',
-                'p18WV_CelebA_S4',
-                'p19WV_CelebA_S1_NavFace_S1',
-                'p19WV_CelebA_S2',
-                'p20WV_CelebA_S1_NavFace_S1',
-                'p20WV_CelebA_S2_NavFace_S2',
-                'p20WV_CelebA_S3_FBI_S1']
-        
-        return sessions
-    
-    def get_session_attr(self):
-        """
-            this function wraps one single session information with the stats belongs the corresponding patient
-        """
-        
-        sessions = self.get_session_idces()
-        
-        sessions_attr = []
-        
-        for idx, session in enumerate(sessions):
-            
-            patient = session.split('_')[0]
-            
-            sessions_tmp = [_ for _ in sessions if patient in _]
 
-            patient_sessions_num = len(sessions_tmp)
-            patient_session_idx = sessions_tmp.index(session)
-            
-            session_attr_single = [
-                idx,
-                session,
-                patient,
-                patient_sessions_num,
-                patient_session_idx
-                ]
-            
-            sessions_attr.append(session_attr_single)
-        
-        return sessions_attr
-    
     # --------------
     def human_plot_pie_chart(self, ):
         """
@@ -875,9 +822,9 @@ class Human_Neuron_Records_Process():
         plt.rcParams.update({"font.family": "Times New Roman"})
         plt.rcParams.update({'font.size': 14})
         
-        cell_types = self.human_identity_cell_selection()
+        cell_stats = self.human_identity_cell_selection()
 
-        bio_pct = cell_types['cell_types_dict']
+        bio_pct = cell_stats['cell_types_dict']
         
         tmp = [bio_pct[_] for _ in bio_pct.keys() if 'non' in _]
         tmp = [__ for _ in tmp for __ in _]
@@ -892,7 +839,7 @@ class Human_Neuron_Records_Process():
         
         values = [len(bio_pct_new[_]) for _ in bio_pct_new.keys()]
 
-        labels = [f's_SI ({values[0]})', f'w_SI ({values[1]})', f's_MI ({values[2]})', f'w_MI ({values[3]})', f'NE ({values[4]})']
+        labels = [f's_si ({values[0]})', f's_wsi ({values[1]})', f's_mi ({values[2]})', f's_wmi ({values[3]})', f'n_e ({values[4]})']
         
         colors = ['#ff9999','#66b3ff','#99ff99','#ffcc99', '#c2c2f0']
         explode = np.array([0.5, 0.1, 0.5, 0.1, 0.])
@@ -904,56 +851,82 @@ class Human_Neuron_Records_Process():
         utils_.plot_pie_chart(fig, ax, values, labels, title, colors, explode)
         
         fig.savefig(os.path.join(self.human_neuron_stats, 'bio_pct_pie_chart.png'))
-        fig.savefig(os.path.join(self.human_neuron_stats, 'bio_pct_pie_chart.eps'))
+        fig.savefig(os.path.join(self.human_neuron_stats, 'bio_pct_pie_chart.svg'), transparent=True)
         
         plt.close()
         
     # ===== module 2. obtain identity-selective cells
     def human_identity_cell_selection(self, ):
         """
-            this function select identity_sensitive cells, identity_encode cells and identity_selective cells
+            this function aims to capture identity_sensitive cells, identity_encode cells and identity_selective cells
             
-            the MATLAB code based on: https://uk.mathworks.com/matlabcentral/fileexchange/22088-repeated-measures-anova?s_tid=mwa_osa_a
+            the original ANOVA(MATLAB) code is based on: https://uk.mathworks.com/matlabcentral/fileexchange/22088-repeated-measures-anova?s_tid=mwa_osa_a
             
-                "This program was originally released when MATLAB had no support for repeated measures ANOVA. However, 
+                "This program was originally released when MATLAB had no support for Repeated Measures ANOVA. However, 
                 since a few releases ago, MATLAB statistics toolbox has added this functionality (see the fitrm function). 
                 Thus this program is now deprecated and is not recommended anymore. The issue is that it only support a 
                 very small subclass of the problems that fitrm can solve. Also, it might not have been tested as extensively 
-                as fitrm so it is possible that it does not produce correct results in all cases.
-                I keep the program as it is here but it will not be maintained any more."
+                as fitrm so it is possible that it does not produce correct results in all cases."
             
-            hence, the ANOVA function used in this code is f_oneway() from stats, the results are significantly different 
-            with the results from anova_rm() of MATLAB. The results from f_oneway() are averagely higher than anova_rm()
+            instead, the ANOVA function used in this Python code is f_oneway(). The statistic values are significantly different 
+            from the results from anova_rm() of MATLAB, but the selected cells are highly consistent.
             
-            The selection for ANOVA:
+            Possible choices for ANOVA:
                 
-            - [in use] f_oneway(): merge all data and analysis in one time
+            - f_oneway(): merge all data and analysis in one time (use this one)
             - smf(): mixed effect model
-            
-            [notice] the s_si comes from MATLAB and python are the same
+
         """
-        
-        save_path = os.path.join(self.human_neuron_stats, 'cell_types.pkl')
+
+        save_path = os.path.join(self.human_neuron_stats, 'cell_stats.pkl')
         
         if os.path.exists(save_path):
             
-            cell_stats = utils_.pickle_load(save_path)
+            cell_stats = utils_.load(save_path, verbose=False)
             
         else:
-        
+            
+            def _get_session_attr():
+
+                sessions = utils_bio_cells.get_session_idces()
+                
+                sessions_attr = []
+                
+                for idx, session in enumerate(sessions):
+                    
+                    patient = session.split('_')[0]
+                    
+                    sessions_tmp = [_ for _ in sessions if patient in _]
+
+                    patient_sessions_num = len(sessions_tmp)
+                    patient_session_idx = sessions_tmp.index(session)
+                    
+                    session_attr_single = [
+                        idx,
+                        session,
+                        patient,
+                        patient_sessions_num,
+                        patient_session_idx
+                        ]
+                    
+                    sessions_attr.append(session_attr_single)
+                
+                return sessions_attr
+            
             # -----
-            meanFR_dict = self.human_neuron_sort_FR(data_type='default')
+            meanFR_dict = self.human_cell_SortFR(data_type='default')
             
             meanFR = meanFR_dict['meanFR']
             qualified_cells = meanFR_dict['qualified_cells']
             
             # -----
             neuron_session_idces = self.Spikes['vCell'].reshape(-1) - 1     # 0-based to 1-based
-            sessions = self.get_session_idces()
+            sessions = utils_bio_cells.get_session_idces()
             
-            sessions_attr = self.get_session_attr()
+            sessions_attr = _get_session_attr()
             
             cell_attr = {}
+            
             for _ in range(2082):
                 
                 session_idx = neuron_session_idces[_]
@@ -978,15 +951,13 @@ class Human_Neuron_Records_Process():
             # -----
             meanFR[np.isnan(meanFR)] = 0     # <- convert NaN values to 0
             
-            meanFR_ = []
             p_list = []
             encode_id = {}
            
             for cell_idx in tqdm(range(meanFR.shape[0]), desc='cell ANOVA'):     # for each cell
                 
-                meanFR_single_cell = [meanFR[cell_idx, self.id_img_idces_dict[_]] for _ in range(50)]    # list, (50, 10)
-                meanFR_.append(np.array(meanFR_single_cell))
-                
+                meanFR_single_cell = list(meanFR[cell_idx].reshape(50, 10))    # list, (50, 10)
+
                 # ----- 1. one way ANOVA
                 p = stats.f_oneway(*meanFR_single_cell)[1]    
                 p_list.append(p)
@@ -1041,16 +1012,16 @@ class Human_Neuron_Records_Process():
             ns_non_encode = np.intersect1d(ns, non_encode)     # 109
             
             cell_types_dict = {
-                'sensitive_si': s_si,
-                'sensitive_wsi': s_wsi,
-                'sensitive_mi': s_mi,
-                'sensitive_wmi': s_wmi,
-                'sensitive_non_encode': s_non_encode,
-                'non_sensitive_si': ns_si,
-                'non_sensitive_wsi': ns_wsi,
-                'non_sensitive_mi': ns_mi,
-                'non_sensitive_wmi': ns_wmi,
-                'non_sensitive_non_encode': ns_non_encode
+                's_si': s_si,
+                's_wsi': s_wsi,
+                's_mi': s_mi,
+                's_wmi': s_wmi,
+                's_non_encode': s_non_encode,
+                'ns_si': ns_si,
+                'ns_wsi': ns_wsi,
+                'ns_mi': ns_mi,
+                'ns_wmi': ns_wmi,
+                'ns_non_encode': ns_non_encode
                 }
             
             cell_stats = {
@@ -1059,23 +1030,13 @@ class Human_Neuron_Records_Process():
                 'cell_types_dict': cell_types_dict
                 }
             
-            utils_.pickle_dump(save_path, cell_stats)
-        
-        # ----- plot
-        #for cell_idx in np.intersect1d(si, qualified_cells):
-        #    meanFR_id = meanFR_[cell_idx]
-        #    fig, ax = plt.subplots(figsize=(10,10))
-        #    ax.scatter(np.arange(50), np.mean(meanFR_id, axis=1))
-        #    ax.hlines(np.mean(meanFR_id)+2*np.std(meanFR_id), 0, 49, color='red', label='th')
-        #    ax.hlines(np.mean(meanFR_id)+2*np.std(np.mean(meanFR_id, axis=1)), 0, 49, color='teal', label='ref')
-        #    ax.set_title(f'{cell_idx}')
-        #    ax.legend()
-        #    plt.show()
+            utils_.dump(cell_stats, save_path)
         
         return cell_stats
         
-    def human_neuron_stacked_encode_map(self, ):
-        
+    
+    #FIXME --- refer to the fig of NN
+    def human_cell_stacked_responses(self, num_types=5):
         """
             [task] this function should provide the 
         """
@@ -1083,145 +1044,93 @@ class Human_Neuron_Records_Process():
         # ---
         plt.rcParams.update({"font.family": "Times New Roman"})
         plt.rcParams.update({'font.size': 14})
-        
-        colorpool_jet = plt.get_cmap('jet', 50)
-        colors = [colorpool_jet(i) for i in range(50)]
-        
-        # --- load cell_types
+
+        # --- load cell_stats
         cell_stats = self.human_identity_cell_selection()
         idx_dict = cell_stats['cell_types_dict']
         
         # --- load feature
-        meanFR_dict = self.human_neuron_sort_FR(data_type='default')
+        meanFR_dict = self.human_cell_SortFR(data_type='default')
         meanFR = meanFR_dict['meanFR']
-        
-        feature = meanFR.T
+
+        feature = meanFR.T     
         feature[np.isnan(feature)] = 0
         
-        # --- 
-        y_lim_min = np.min(feature)
-        y_lim_max = np.max(feature)
-        
-        fig, ax = plt.subplots(figsize=(26, 10))
-        gs_main = gridspec.GridSpec(2, 5, figure=fig)
-        
-        tqdm_bar = tqdm(total=10, desc='Human Neurons')
-        
-        i_ = 0
-        for i in range(2):
-            for j in range(5):
-                # Define a sub-grid within the current cell of the main grid
-                gs_sub = gridspec.GridSpecFromSubplotSpec(1, 2, width_ratios=[4, 1], subplot_spec=gs_main[i, j])
-
-                ax_left = fig.add_subplot(gs_sub[0])
-                ax_right = fig.add_subplot(gs_sub[1])
+        # ---
+        if num_types == 5:
+           
+            idx_dict = {
+                's_si': idx_dict['sensitive_si'],
+                's_wsi': idx_dict['sensitive_wsi'],
                 
-                if i_ != 0:
-                    ax_left.set_xticks([])
-                    ax_left.set_yticks([])
-
-                ax_right.set_xticks([])
-                ax_right.set_yticks([])
+                's_mi': idx_dict['sensitive_mi'],
+                's_wmi': idx_dict['sensitive_wmi'],
                 
-                if idx_dict[list(idx_dict.keys())[i_]].size == 0:
-                    pct = len(idx_dict[list(idx_dict.keys())[i_]])/feature.shape[1]*100
-                    ax_left.set_title(list(idx_dict.keys())[i_] + f'[{pct:.2f}% | {len(idx_dict[list(idx_dict.keys())[i_]])}/{feature.shape[1]}]')
-                    ax_right.set_title('th')
-                    i_ += 1
-                else:
-                    feature_test = feature[:, idx_dict[list(idx_dict.keys())[i_]]]     # (500, num_units)
-                    feature_test_mean = feature_test.reshape(50, 10, -1)     # (50, 10, num_units)
-                    
-                    # -----
-                    x = np.array([[[_] for _ in range(50)]*feature_test_mean.shape[2]]).reshape(-1)
-                    y = np.mean(feature_test_mean, axis=1).T.reshape(-1)     # (50, num_classes)
-                    
-                    c = np.array(colors)
-                    c = np.tile(c, [feature_test_mean.shape[2], 1])
-                    #c = np.repeat(c, 10, axis=0)     # <- for each img
-                    
-                    # -----
-                    ax_left.scatter(x, y, color=c, alpha=0.7, marker='.', s=10)     # use small size to replace adjustable alpha
-                    # -----
-                    
-                    pct = len(idx_dict[list(idx_dict.keys())[i_]])/feature.shape[1]*100
-                    ax_left.set_title(list(idx_dict.keys())[i_] + f' [{pct:.2f}% | {len(idx_dict[list(idx_dict.keys())[i_]])}/{feature.shape[1]}]')
-                    # -----
-                    
-                    feature_test_mean = np.mean(feature_test_mean, axis=1)     # (50, num_units)
-                    # ----- stats: mean for each ID
-                    values = feature_test_mean.reshape(-1)    # (50*num_units)
-                    if np.std(values) == 0:
-                        pass
-                    else:
-                        kde_mean = gaussian_kde(values)
-                        x_vals_mean = np.linspace(np.min(values), np.max(values)*1.1, 1000)
-                        y_vals_mean = kde_mean(x_vals_mean)
-                        ax_right.plot(y_vals_mean, x_vals_mean, color='blue')
-                        
-                    # ----- stats: threshold (mean+2std of all 500 values)
-                    values = np.mean(feature_test, axis=0) + 2*np.std(feature_test, axis=0)     # (units,)
-                    if np.std(values) == 0:
-                        pass
-                    else:
-                        kde = gaussian_kde(values)
-                        x_vals = np.linspace(np.min(values), np.max(values)*1.1, 1000)
-                        y_vals = kde(x_vals)
-                        ax_right.plot(y_vals, x_vals, color='red')
-                    
-                        y_vals_max = np.max(y_vals)
-                        x_vals_max = x_vals[np.where(y_vals==y_vals_max)[0].item()]
-                        
-                        ax_left.hlines(x_vals_max, 0, 50, colors='red', alpha=0.75, linestyle='--')
-                        ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='red', alpha=0.75, linestyle='--')
-                    
-                    # ----- stats: ref (mean+2std of all 50 mean values)
-                    values = np.mean(feature_test_mean, axis=0) + 2*np.std(feature_test_mean, axis=0)     # (units,)
-                    
-                    if np.std(values) == 0:
-                        pass
-                    else:
-                        kde = gaussian_kde(values)
-                        x_vals = np.linspace(np.min(values), np.max(values)*1.1, 1000)
-                        y_vals = kde(x_vals)
-                        ax_right.plot(y_vals, x_vals, color='teal')
-                    
-                        y_vals_max = np.max(y_vals)
-                        x_vals_max = x_vals[np.where(y_vals==y_vals_max)[0].item()]
-                        
-                        ax_left.hlines(x_vals_max, 0, 50, colors='teal', alpha=0.75, linestyle='--')
-                        ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors='teal', alpha=0.75, linestyle='--')
-                    
-                    ax_left.set_ylim([y_lim_min, y_lim_max/2])
-                    ax_right.set_ylim([y_lim_min, y_lim_max/2])
-                    ax_right.set_title('th')
-                    
-                    i_ += 1
-                tqdm_bar.update(1)
-               
+                'n_e': np.concatenate((idx_dict['sensitive_non_encode'], 
+                        idx_dict['non_sensitive_si'], 
+                        idx_dict['non_sensitive_wsi'], 
+                        idx_dict['non_sensitive_mi'], 
+                        idx_dict['non_sensitive_wmi'], 
+                        idx_dict['non_sensitive_non_encode'])).astype(np.int64)
+                }
+        
+            # init the canvas
+            fig, ax = plt.subplots(figsize=(26, 6))
+            gs_main = gridspec.GridSpec(1, 5, figure=fig)
+    
+            plot_single(fig, gs_main, 5, idx_dict, feature, 50, 10)
+        
+        
+        elif num_types == 10:
+
+            idx_dict = {
+                's_si': idx_dict['sensitive_si'],
+                's_wsi': idx_dict['sensitive_wsi'],
+                
+                's_mi': idx_dict['sensitive_mi'],
+                's_wmi': idx_dict['sensitive_wmi'],
+                
+                's_non_encode': idx_dict['sensitive_non_encode'],
+                
+                'ns_si': idx_dict['non_sensitive_si'],
+                'ns_wsi': idx_dict['non_sensitive_wsi'],
+                
+                'ns_mi': idx_dict['non_sensitive_mi'],
+                'ns_wmi': idx_dict['non_sensitive_wmi'],
+                
+                'ns_non_encode': idx_dict['non_sensitive_non_encode']
+                }
+        
+            # init the canvas
+            fig, ax = plt.subplots(figsize=(26,10))
+            gs_main = gridspec.GridSpec(2, 5, figure=fig)
+    
+            plot_single(fig, gs_main, 5, idx_dict, feature, 50, 10)
+        
+        # -----
         ax.axis('off')
-        ax.plot([],[],color='blue',label='mean')
-        ax.plot([],[],color='teal',label='ref')
-        ax.plot([],[],color='red',label='threshold')
+        ax.plot([],[],color='blue', linestyle='--', label='mean')
+        ax.plot([],[],color='teal', linestyle='--', label='ref')
+        ax.plot([],[],color='red', linestyle='--', label='threshold')
         
         fig.suptitle('Human MTL Neuron Responses for Human Faces', y=0.97, fontsize=20)
         fig.legend(loc='lower center', bbox_to_anchor=(0.5, -0.05), ncol=3, bbox_transform=plt.gcf().transFigure)
         
         plt.tight_layout()
-        fig.savefig(os.path.join(self.human_neuron_stats, 'Human MTL Neuron Responses for Human Faces.png'), bbox_inches='tight')
-        fig.savefig(os.path.join(self.human_neuron_stats, 'Human MTL Neuron Responses for Human Faces.eps'), bbox_inches='tight', format='eps')
-        fig.savefig(os.path.join(self.human_neuron_stats, 'Human MTL Neuron Responses for Human Faces.pdf'), bbox_inches='tight', format='pdf', transparent=True)
+        fig.savefig(os.path.join(self.human_neuron_stats, f'Human MTL Neuron Responses {num_types} types.png'), bbox_inches='tight')
+        fig.savefig(os.path.join(self.human_neuron_stats, f'Human MTL Neuron Responses {num_types} types.svg'), bbox_inches='tight')
+       
         plt.close()
 
+
     # ===== module 3. raster plot
-    def human_neuron_raster_plot(self,  type_to_plot:list=None, plot_cell_num:int=10):
+    def human_neuron_raster_plot(self, type_to_plot:list=None, plot_cell_num:int=10):
         """
             this function calculates the dependencies to plot and depict cell responses in different ways,
             
             input: 
                 type_to_plot: plot what types of cell (default: all)
                 plot_cell_num: plot how many cells for each type, or plot all cells if the number of qualified cells is less than plot_cell_num  (default: 10)
-            
             
         """
         logging.getLogger('matplotlib').setLevel(logging.ERROR)
@@ -1236,14 +1145,14 @@ class Human_Neuron_Records_Process():
         colors = [colorpool_jet(i) for i in range(50)]
         
         # ----- Firing Rates and cells information
-        FR_stats = self.human_neuron_get_firing_rate()
+        FR_stats = self.human_cell_FiringRate()
         cell_stats = self.human_identity_cell_selection()
 
         # --- preperation
         neuron_session_idces = self.Spikes['vCell'].reshape(-1) - 1    # <- session_idx ID, 0-based
         time_stamps_all_cells = [_.reshape(-1) for _ in self.Spikes['timestampsOfCellAll'].reshape(-1)]
         
-        sessions = self.get_session_idces()     # <- stores time periods of each trial (each session_idx)
+        sessions = utils_bio_cells.get_session_idces()     # <- stores time periods of each trial (each session_idx)
         session_idx_dir = os.path.join(self.root_data, 'Events Files')     # <- store timestamps for each responses, self.root_data: osfstorage-archive
         
         all_periods = []     # provides the time range of one single trial with label
@@ -1256,12 +1165,12 @@ class Human_Neuron_Records_Process():
         behavior = beh_stats['beh']
         
         # ----- build [im_code] img_idces and img_idces_new dict
-        CelebA_img_idces = sio.loadmat(os.path.join(self.root_data, 'SingleNeuron/Code/CelebA_Image_Code.mat'))
-        img_idces = CelebA_img_idces['im_code'].reshape(-1)     # img_idx linked ID, 53 IDs in total, 3 unwanted
-        adjust_idx = CelebA_img_idces['AdjustInd'].reshape(-1).astype(np.int16) -1   # [notice] what the adjust_idx is?
+        self.CelebA_img_idces = sio.loadmat(os.path.join(self.root_data, 'SingleNeuron/Code/CelebA_Image_Code.mat'))
+        img_idces = self.CelebA_img_idces['im_code'].reshape(-1)     # img_idx linked ID, 53 IDs in total, 3 unwanted
+        adjust_idx = self.CelebA_img_idces['AdjustInd'].reshape(-1).astype(np.int16) -1   # [notice] what the adjust_idx is?
         
-        self.img_idces_dict = {_:img_idces[_] for _ in range(len(img_idces))}     # {img number: ID}
-        self.adjust_idx_dict = {adjust_idx[_].astype(int): _ for _ in range(len(adjust_idx)) if adjust_idx[_] > -1}     # {wrong number: right number}
+        img_idces_dict = {_:img_idces[_] for _ in range(len(img_idces))}     # {img number: ID}
+        adjust_idx_dict = {adjust_idx[_].astype(int): _ for _ in range(len(adjust_idx)) if adjust_idx[_] > -1}     # {wrong number: right number}
         
         # ---
         CelebA_img_idx_new = sio.loadmat(os.path.join(self.root_data, 'SingleNeuron/Code/CelebA_Image_Code_new.mat'))
@@ -1270,14 +1179,15 @@ class Human_Neuron_Records_Process():
         id_img_idces = CelebA_img_idx_new['id_code'].reshape(-1)     # each ID contains 10 imgs
         id_img_idces = np.array([_.reshape(-1)-1 for _ in id_img_idces])
         
-        self.img_idces_new_dict = {_:img_idces_new[_] for _ in range(len(img_idces_new))}     # {img number: ID}
-        self.id_img_idces_dict = {_:id_img_idces[_] for _ in range(len(id_img_idces))}     # {ID: 10 img numbers}     0-based
+        img_idces_new_dict = {_:img_idces_new[_] for _ in range(len(img_idces_new))}     # {img number: ID}
+        id_img_idces_dict = {_:id_img_idces[_] for _ in range(len(id_img_idces))}     # {ID: 10 img numbers}     0-based
         
         # ----- start plot for different types of cells
         if type_to_plot == None:
             type_to_plot = list(cell_stats['cell_types_dict'].keys())    
         
-        for cell_type in type_to_plot:  # for each neuron
+        # ---
+        for cell_type in type_to_plot:  # for each type
         
             cell_type_plot_path = os.path.join(cell_plot_path, f'{cell_type}')
             utils_.make_dir(cell_type_plot_path)
@@ -1291,22 +1201,22 @@ class Human_Neuron_Records_Process():
             else:
                 cell_to_plot = []
                 
-            for cell_idx in tqdm(cell_to_plot, desc=f'{cell_type}'):
+            for cell_idx in tqdm(cell_to_plot, desc=f'{cell_type}'):     # for each cell
 
-                self.session_idx = neuron_session_idces[cell_idx]  # session_idx
+                session_idx = neuron_session_idces[cell_idx]  # session_idx
                 
                 # ----- im_code: key is the img label, value is the corresponding ID label
-                if self.session_idx < 10:
-                    im_code = self.img_idces_dict
+                if session_idx < 10:
+                    im_code = img_idces_dict
                 else:
-                    im_code = self.img_idces_new_dict
+                    im_code = img_idces_new_dict
             
                 time_stamps = time_stamps_all_cells[cell_idx]
                 
-                periods = all_periods[self.session_idx]     # e.g (550, 3)
+                periods = all_periods[session_idx]     # e.g (550, 3)
                 
-                displayed_image_sequence = behavior[self.session_idx]['code']     # the displayed img list
-                back_id = behavior[self.session_idx]['back_id']     # local version, 0-based
+                displayed_image_sequence = behavior[session_idx]['code']     # the displayed img list
+                back_id = behavior[session_idx]['back_id']     # local version, 0-based
                 
                 # -----
                 FR_tmp = FR_stats[cell_idx]['spike_count'].copy()     # FR for this cell
@@ -1331,14 +1241,6 @@ class Human_Neuron_Records_Process():
                     FR_ID.append(FR_tmp[np.where(displayed_ID_sequence==ID)[0]])
                     PSTH_ID.append(FR_PSTH[np.where(displayed_ID_sequence==ID)[0], :])
                     
-                # ----- stats
-                FR_ID_all = np.array([__ for _ in FR_ID for __ in _])
-                FR_ID_all_mean = np.mean(FR_ID_all)
-                FR_ID_std = np.std(FR_ID_all)
-                
-                FR_ID_mean = np.array([np.mean(_) for _ in FR_ID])
-                FR_ID_ref = np.std(FR_ID_mean)
-                
                 # ----- return jagged periods_and_infos
                 periods_and_infos = []
                 
@@ -1347,129 +1249,38 @@ class Human_Neuron_Records_Process():
                     positions = np.where(displayed_ID_sequence == ID)[0]
                     
                     img_labels = displayed_image_sequence[positions]
-                    ID = np.array([im_code[_] for _ in img_labels])
+                    _ID = np.array([im_code[_] for _ in img_labels])
                     
-                    if np.unique(ID) != ID:
-                        raise RuntimeError(f'[Codinfo] ID check failed for [{ID}]')
+                    if np.unique(_ID) != ID:
+                        raise RuntimeError(f"ID check failed for '{ID}'")
                     
                     period = periods[positions, :]     # order in experiment | trial start time | trial end time
-                    period = np.hstack((period, np.vstack((img_labels, ID)).T))     # | order in experiment | trial start time | trial end time | img label | ID | session |
+                    period = np.hstack((period, np.vstack((img_labels, _ID)).T))     # | order in experiment | trial start time | trial end time | img label | ID | session |
                     
                     periods_and_infos.append(period[period[:,0].argsort()])     # legacy design from MATLAB code, not necessary
     
                 # ----- this should return neat spikes_to_plot of (500,)
-                spikes_to_plot = self.getTimestampsOfBubbles(time_stamps, periods_and_infos)
+                spikes_to_plot = utils_bio_cells.getTimestampsOfBubbles(time_stamps, periods_and_infos, session_idx, adjust_idx_dict, id_img_idces_dict)
             
                 # ----- plot
                 fig = plt.figure(figsize=(30, 20))
     
                 # --- subplot_1
-                spikeheight = 2
-                spikewidth = 2
-                
                 axes_0 = plt.gcf().add_axes([0.05, 0.45, 0.55, 0.475])
-                
-                self.plotSpikeRasterMain(axes_0, spikes=spikes_to_plot, colors=colors, spikeheight=spikeheight, spikewidth=spikewidth)
-                
-                axes_0.vlines(500, -1, 501, linestyle='-', alpha=0.75, color='gray', label='image on')
-                axes_0.vlines(1500, -1, 501, linestyle='--', alpha=0.75, color='gray', label='image off')
-                
-                axes_0.vlines(750, -1, 501, linestyle='-', alpha=0.75, color='tomato', label='count on')
-                axes_0.vlines(1750, -1, 501, linestyle='--', alpha=0.75, color='tomato', label='count off')
-                
-                axes_0.set_xlim([0, 2000])
-                axes_0.set_ylim([- spikeheight/2, 500 + spikeheight/2])
-                
-                axes_0.tick_params(axis='both', labelsize=20, width=2, length=5, labelcolor='black', labelbottom=True)
-                axes_0.set_xlabel('Time (ms)', fontsize=24)
-                axes_0.set_ylabel('Image (10 imgs per ID)', fontsize=24)
+                utils_bio_cells._plot_spike_raster(axes_0, spikes_to_plot, colors)
 
-                axes_0.set_title('Raster Plot', fontsize=28)
-                axes_0.legend(fontsize=24, loc='upper right')
-                
                 # --- subplot_2
                 axes_1 = plt.gcf().add_axes([0.65, 0.45, 0.3, 0.475])
-                
-                axes_1.barh(np.arange(50), FR_ID_mean, color=colors)
-                
-                sem_list = [np.std(FR_ID[_])/np.sqrt(len(FR_ID[_])) for _ in range(len(FR_ID))]
-                
-                for idx, _ in enumerate(FR_ID):
-                    
-                    axes_1.scatter(FR_ID_mean[idx] + sem_list[idx], idx, color='black', marker='d')
-                    axes_1.scatter(FR_ID_mean[idx] - sem_list[idx], idx, color='black', marker='d')
-    
-                    axes_1.hlines(idx, FR_ID_mean[idx] - sem_list[idx], FR_ID_mean[idx] + sem_list[idx], linestyle='--', color='black')
-                
-                axes_1.vlines(FR_ID_all_mean+2*FR_ID_std, -1, 50, linestyle='--', alpha=0.75, color='red', label='threshold')
-                axes_1.vlines(FR_ID_all_mean+2*FR_ID_ref, -1, 50, linestyle='--', alpha=0.75, color='teal', label='ref')
-                
-                axes_1.tick_params(axis='both', labelsize=20, width=2, length=5, labelcolor='black', labelbottom=True)
-                axes_1.set_xlabel('Firing Rate (Hz)', fontsize=24)
-                axes_1.set_ylabel('ID', fontsize=24)
-                #axes_1.set_yticks([])
-                
-                axes_1.set_xlim([0, np.max([np.max(FR_ID_mean) + np.max(sem_list), FR_ID_all_mean+2*FR_ID_std])*1.2])
-                axes_1.set_ylim([-0.5, 49.5])
-    
-                axes_1.legend(fontsize=24)
-                axes_1.set_title('Mean Firing Rate [750ms - 1750ms] (with SE)', fontsize=28)
-                
+                utils_bio_cells._plot_bar_chart(axes_1, FR_ID, colors)
+               
                 # --- subplots_3
-                PSTH_ID_ = np.array([np.mean(_, axis=0) for _ in PSTH_ID])
-                
                 axes_2 = plt.gcf().add_axes([0.05, 0.05, 0.55, 0.325])
-                
-                fig_psth = axes_2.imshow(PSTH_ID_, origin='lower', aspect='auto', cmap='turbo')
-                axes_2.set_xticks([0,5,10,15,20,25,30])
-                axes_2.set_xticklabels([250, 500, 750, 1000, 1250, 1500, 1750], fontsize=20)
-                axes_2.tick_params(axis='both', labelsize=20, width=2, length=5, labelcolor='black', labelbottom=True)
-                axes_2.set_xlabel('Time (ms) [250ms - 2000ms]', fontsize=24)
-                axes_2.set_ylabel('ID', fontsize=24)
-                #axes_2.set_yticks([])
-                axes_2.set_title('PSTH [window: 50ms, step: 250ms]', fontsize=28)
-                
-                cbar_ax = fig.add_axes([0.6125, 0.05, 0.01, 0.325])  # [left, bottom, width, height]
-                cbar = fig.colorbar(fig_psth, cax=cbar_ax)
-                cbar.ax.tick_params(labelsize=24)
-                
+                utils_bio_cells._plot_psth(fig, axes_2, PSTH_ID)
+   
                 # --- subplot_4
                 # ----- the displayed statistics exclude back_id
-                all_neurons_of_this_session = cell_stats['cell_attr'][cell_idx]['all_neurons_of_this_session']
-                all_neurons_of_this_patient = cell_stats['cell_attr'][cell_idx]['all_neurons_of_this_patient']
-                
-                FR_all = [__ for _ in range(2082) for __ in FR_stats[_]['spike_count']]
-                FR_session = [__ for _ in all_neurons_of_this_session for __ in FR_stats[_]['spike_count']]
-                FR_patient = [__ for _ in all_neurons_of_this_patient for __ in FR_stats[_]['spike_count']]
-                
-                data = [
-                    [int(np.max(FR_tmp)), int(np.max(FR_session)), int(np.max(FR_patient)), int(np.max(FR_all))],
-                    [int(np.min(FR_tmp)), int(np.min(FR_session)), int(np.min(FR_patient)), int(np.min(FR_all))],
-                    [int(np.median(FR_tmp)), int(np.median(FR_session)), int(np.median(FR_patient)), int(np.median(FR_all))],
-                    [np.mean(FR_tmp).round(2), np.mean(FR_session).round(2), np.mean(FR_patient).round(2), np.mean(FR_all).round(2)],
-                    [np.std(FR_tmp).round(2), np.std(FR_session).round(2), np.std(FR_patient).round(2), np.std(FR_all).round(2)]
-                    ]
-                
-                # ----- 
-                
-                col_labels = ['cell', f'session\n({len(all_neurons_of_this_session)})', f'patient\n({len(all_neurons_of_this_patient)})', 'all cells\n(2082)']
-                row_labels = ['max', 'min', 'median', 'mean', 'std']
-                
-                ccolors = plt.cm.BuPu(np.linspace(0, 0.5, len(col_labels)))
-                rcolors = plt.cm.BuPu(np.linspace(0, 0.5, len(row_labels)))
-                
                 axes_3 = plt.gcf().add_axes([0.7, 0.05, 0.25, 0.325])
-                axes_3.axis('tight')
-                axes_3.axis('off')
-                table = axes_3.table(cellText=data, colLabels=col_labels, rowLabels=row_labels, 
-                        cellLoc='center', rowLoc='center', colColours=ccolors, rowColours=rcolors, loc='center',
-                        colWidths=[0.25]*4, 
-                        bbox=[0, 0, 1, 1])
-                
-                table.auto_set_font_size(False)
-                table.set_fontsize(26)
-                
-                axes_3.set_title('Statistic (Firing Rate)', fontsize=28)
+                utils_bio_cells._plot_table(axes_3, cell_stats, cell_idx, FR_stats, FR_tmp)
                 
                 # --- title
                 cell_attr = cell_stats['cell_attr'][cell_idx]
@@ -1479,399 +1290,202 @@ class Human_Neuron_Records_Process():
                     warnings.simplefilter(action='ignore')
                     
                     plt.tight_layout()
-                    #plt.show()
-                    
-                    plt.savefig(cell_type_plot_path + f'/{cell_idx}.png', bbox_inches='tight')
-                    plt.savefig(cell_type_plot_path + f'/{cell_idx}.eps', format='eps', bbox_inches='tight')
-                    plt.savefig(cell_type_plot_path + f'/{cell_idx}.pdf', format='pdf', bbox_inches='tight')
+
+                    plt.savefig(cell_type_plot_path + f'/{cell_idx}.svg', bbox_inches='tight')
                     plt.close()
-
-    def plotSpikeRasterMain(self, ax, spikes, colors, spikeheight=1, spikewidth=1, start_time=0, end_time=2000):
-        
-        """
-            [Oct 19, 2023]
-            some of the hyper paramaters are designed only for this experiments, needed to be changed in future use
-        """
-
-        if len(spikes) != 0:
-            for idx, _ in enumerate(spikes):     # for each trial
-                if _[3] is not np.nan and _[3].size != 0:
-
-                    n = _[3].size
                     
-                    # ----- plot spikes
-                    ax.plot(
-                        np.vstack((_[3], _[3])), np.vstack(((idx - spikeheight/2)*np.ones(n), (idx + spikeheight/2)*np.ones(n))), 
-                        linewidth=spikewidth, color=colors[_[0]-1]
-                        )
-  
-    def getTimestampsOfBubbles(self, timestampsOfCell, periods_and_infos):
-        """
-            prepare bubbles trials for plotting of raster (with color info)
-            periods_and_infos: list of periods (each a list of trials)     [ order in experiment | trial start time | trial end time | img label | ID ]
-            
-            urut/nov09
-            
-            timestampsOfCell: disordered img sequence
-        """
-
-        spikes_to_plot = []
-
-        for inds in periods_and_infos:     # for each group
-          
-            trialTimestamps = self.getRelativeTimestamps(timestampsOfCell, inds)     # timestamps for one ID,  | ID | img_idx | img_num | timestamps |
-            
-            # ----- intergrity check
-            if self.session_idx < 10: 
-                img_idces = np.array([self.adjust_idx_dict[_] for _ in sorted([_[1] for _ in trialTimestamps])])     # img_idces correction
-            else:
-                img_idces = np.array(sorted([_[1] for _ in trialTimestamps]))
-                
-            # --- integrity check. ID must be one
-            ID = np.unique([trialTimestamps[_][0] for _ in range(len(trialTimestamps))]).item()
-
-            entire_imgs = self.id_img_idces_dict[ID-1]
-            
-            if img_idces.shape != entire_imgs.shape:
-                missed_imgs = np.setdiff1d(entire_imgs, img_idces)
-            
-                for _ in missed_imgs:
-                    trialTimestamps.append([ID, _, np.nan, np.nan])
-                
-            # --- sort based on label, this order is also the order in each folder
-            trialTimestamps = sorted(trialTimestamps, key=lambda x:x[1])
-            
-            # ----- add into all
-            for _ in trialTimestamps:
-                spikes_to_plot.append(_)
-        
-        return spikes_to_plot
-        
-    def getRelativeTimestamps(self, timestampsOfCell, periods):
-        """
-            reference timestamps to beginning of the trial
-            periods: each row is one trial. 3 columns: trial nr, from, to.
-            returns a cell array; each item contains the timestamps of one trial. the number of trials is equal to the number of rows in periods.
-            
-            urut/dec07
-            
-            modified: acxyle/Oct17,2023
-        """
-        
-        trialTimestamps = []
-        
-        for i in range(periods.shape[0]):     # for each trial
-            
-            inds = np.where((periods[i, 1] <= timestampsOfCell) & (timestampsOfCell <= periods[i, 2]))[0]
-            
-            # | ID | img_idx | img_num | timestamps |
-            trialTimestamps.append([periods[i, 4].astype(int), periods[i, 3].astype(int), periods.shape[0], (timestampsOfCell[inds] - periods[i, 1])/1000])
-            
-        return trialTimestamps
-
+    
     # ===== module 4. corr
     #FIXME, this for loop has problem, this will only take the results of the final iteration
-    def human_neuron_DSM_process_sub_id(self, metrics:list[str]=None, used_cell_types:list[str]=None, used_id_nums:list[int]=None):
+    def human_neuron_DSM_process(self, metric='pearson', used_cell_type='qualified', used_id_num=50, permutation=True, num_perm=1000, vectorize=False, **kwargs):
         """
-            
-        """
-        for metric in metrics:
-            
-            for used_cell_type in used_cell_types:
-                
-                for used_id_num in used_id_nums:
-                    
-                    selected_ids, human_DM_dict = self.human_neuron_DSM_process(metric, used_cell_type, used_id_num)
-        
-        return selected_ids, human_DM_dict
-    
-    def human_neuron_DSM_process(self, metric, used_cell_type, used_id_num, num_perm=1000):
-        """
-            this function calculates the human pairwise distance matrices based on selected_ids and Used_cell_type, 
+            this function calculates the human pairwise distance matrices based on used_ids and used_cell_type, 
             
             input:
-                selected_ids: default all 50 ids
+                used_ids: default all 50 ids
                 used_cell_type: default qualified 1,577 cells
         """
-        # ---
-        selected_ids = self.human_corr_select_sub_identities(used_id_num)
-        
-        # ---
+        # --- 
         save_root = os.path.join(self.human_neuron_stats, 'corr')
         utils_.make_dir(save_root)
         
         save_root = os.path.join(save_root, metric)
         utils_.make_dir(save_root)
 
-        # ---
-        used_cells = self.human_neuron_obtain_used_cells(used_cell_type)
+        # --- init
+        used_ids = self.human_corr_select_sub_identities(used_id_num)
+        used_cells = self.human_neuron_obtain_used_cells()[used_cell_type]
             
         if used_cells.size == 0:
             
-            return None, None
+            return None
     
         else:
             
-            save_path = os.path.join(save_root, f'Human_DM_dict_{used_cell_type}_{len(selected_ids)}.pkl')
-            
-            # --- init
-            self.meanFR = self.meanFR_dict['meanFR']     # (2082, 500)
-            self.meanFR_PSTH = self.meanFR_dict['meanFR_PSTH']
-        
-            # --- normalize firing rates
-            FR_baseline = np.nanmean(self.meanFR_baseline_dict['meanFR'][used_cells, :], axis=1, keepdims=True)
-            
-            self.normalized_meanFR = self.meanFR[used_cells, :]/FR_baseline     # (num_cells, num_imgs)
-            self.normalized_meanFR_PSTH = self.meanFR_PSTH[used_cells, :, :]/FR_baseline.reshape(-1, 1, 1)     # (num_cells, num_imgs, num_time_steps)
-            
-            # --- 
-            self.meanFR_id = np.nanmean(self.normalized_meanFR.reshape(-1, 50, 10), axis=2)[:, selected_ids].T     # (num_selected_ids, num_cells)
-            self.meanFR_PSTH_id = np.nanmean(self.normalized_meanFR_PSTH.reshape(-1, 50, 10, 31), axis=2)[:, selected_ids, :].T     # (num_time_steps, num_selected_ids, num_cells)
-            
+            save_path = os.path.join(save_root, f'Human_DM_dict_{used_cell_type}_{used_id_num}.pkl')
+
             if os.path.exists(save_path):
                 
-                print(f'[Codinfo] Loading Human_neuron_DM for {metric} {used_cell_type} {len(selected_ids)}...')
-                
-                human_DM_dict = utils_.pickle_load(save_path)
+                human_DM_dict = utils_.load(save_path)
                 
             else:
                 
-                print(f'[Codinfo] Calculating Human_neuron_DM for {metric} {used_cell_type} {len(selected_ids)}...')
+                # --- 
+                FR_id, psth_id = self.human_cell_FeatureMap()
                 
-                # --- for static meanFR
-                human_DM_v = utils_similarity.selectivity_analysis_calculation(metric, self.meanFR_id)['vector']     # (num_selected_ids*(num_selected_ids-1)/2, )
-                human_DM_v_perm = np.array([_['vector'] for _ in Parallel(n_jobs=-1)(delayed(utils_similarity.selectivity_analysis_calculation)(metric, self.meanFR_id[np.random.permutation(len(selected_ids))]) for _ in tqdm(range(num_perm), desc='Human corr'))])
+                FR_id = FR_id[np.ix_(used_ids, used_cells)]
+                psth_id = np.array([_[np.ix_(used_ids, used_cells)] for _ in psth_id])
                 
-                # --- for temporal
-                human_DM_v_temporal = np.full((self.meanFR_PSTH_id.shape[0], human_DM_v.size), np.nan)     # (31, 1225)
-                human_DM_v_perm_temporal = np.full((self.meanFR_PSTH_id.shape[0], num_perm, human_DM_v.size), np.nan)     # (31, 1000, 1225)
+                # ---
+                num_samples = FR_id.shape[0]
+                num_steps = psth_id.shape[0]
                 
-                for t in tqdm(range(self.meanFR_PSTH_id.shape[0]), desc='Human corr temporal'):     # for each time point
-    
-                    human_DM_v_temporal[t, :] = utils_similarity.selectivity_analysis_calculation(metric, self.meanFR_PSTH_id[t])['vector']
-                    human_DM_v_perm_temporal[t, :, :] = np.array([_['vector'] for _ in Parallel(n_jobs=-1)(delayed(utils_similarity.selectivity_analysis_calculation)(metric, self.meanFR_PSTH_id[t, np.random.permutation(len(selected_ids))]) for _ in range(num_perm))])
-                    
-                # --- seal data
                 human_DM_dict = {
-                    'human_DM_v': human_DM_v, 
-                    'human_DM_v_perm': human_DM_v_perm,
-                    'human_DM_v_temporal': human_DM_v_temporal,
-                    'human_DM_v_perm_temporal': human_DM_v_perm_temporal,
-                    'selected_ids': selected_ids
+                    'human_DM': utils_similarity.DSM_calculation(metric, FR_id, vectorize=vectorize), 
+                    'human_DM_temporal': np.array([utils_similarity.DSM_calculation(metric, psth_id[_, :, :], vectorize=vectorize) for _ in range(num_steps)]),
                     }
                 
-                utils_.pickle_dump(save_path, human_DM_dict)
+                if permutation:
+                
+                    human_DM_dict.update({
+                        'human_DM_perm': np.array([utils_similarity.DSM_calculation(metric, FR_id[np.random.permutation(num_samples)], vectorize=vectorize) for _ in range(num_perm)]),
+                        'human_DM_temporal_perm': np.array([np.array([utils_similarity.DSM_calculation(metric, psth_id[t, np.random.permutation(num_samples), :], vectorize=vectorize) for _ in range(num_perm)]) for t in range(num_steps)])
+                        })
+                
+                utils_.dump(human_DM_dict, save_path)
             
-            return selected_ids, human_DM_dict
+            return human_DM_dict
+    
     
     # FIXME - the MATLAB souce code is actually using 48 ids for all 50 ids, let's try the difference first
     def human_corr_select_sub_identities(self, used_id_num:int=None, cell_type='selective_cells'):
-        
+        """
+            Dr CAO provided: [5, 9, 13, 14, 22, 23, 27, 35, 37, 39]
+            Calculated here: [5, 9, 13, 14, 23, 27, 29, 35, 42, 44]
+            
+            return:
+                dict
+        """
         # --- init
-        self.meanFR_dict = self.human_neuron_sort_FR(data_type='default')
-        self.meanFR_baseline_dict = self.human_neuron_sort_FR(data_type='base')
-        
         self.cell_stats = self.human_identity_cell_selection()
-        self.FR_stats = self.human_neuron_get_firing_rate()
+        #self.FR_stats = self.human_cell_FiringRate()
         
         encode_dict = self.cell_stats['encode_id']     # encode_dict
         cell_types_dict = self.cell_stats['cell_types_dict']     # ID cells
         
         # --- rebuild wanted cells
-        all_selective_cells = {_:cell_types_dict[_] for _ in cell_types_dict.keys() if 'non_sensitive' not in _ and 'non_encode' not in _}
-        all_selective_cells = [__ for _ in all_selective_cells.values() for __ in _]
+        all_selective_cells = {_:cell_types_dict[_] for _ in cell_types_dict.keys() if 'ns' not in _ and 'non_encode' not in _}
+        all_selective_cells = [__ for _ in all_selective_cells.values() for __ in _]     # (155,)
         
         # --- calculate
         if cell_type == 'selective_cells':     # for ID encoded by ID cells
             encoded_id_pool = np.concatenate(np.array([[__ for _ in encode_dict[cell_idx].values() for __ in _] for cell_idx in all_selective_cells], dtype=object))
         elif cell_type == 'encode_cells':     # for ID encoded by all Encode cells
-            encoded_id_pool =np.concatenate(np.array([[__ for _ in encode_dict[cell_idx].values() for __ in _] for cell_idx in encode_dict.keys()], dtype=object))
+            encoded_id_pool = np.concatenate(np.array([[__ for _ in encode_dict[cell_idx].values() for __ in _] for cell_idx in encode_dict.keys()], dtype=object))
  
         # ----- select used_id_num
         if used_id_num is None:
-            selected_ids = [6, 10, 14, 15, 23, 24, 28, 36, 38, 40]
+            used_ids = [6, 10, 14, 15, 23, 24, 28, 36, 38, 40]
         elif used_id_num is not None and used_id_num > 48:     # [notice] 'selective' human cells only encode 48 ids
-            selected_ids = list(np.arange(50))
+            used_ids = list(np.arange(50))
         elif used_id_num is not None:
-            selected_ids = list(self.human_corr_used_ids_selection(encoded_id_pool, used_id_num).keys())[:used_id_num]
+            used_ids = list(used_ids_selection(encoded_id_pool, used_id_num).keys())[:used_id_num]
         else:
             raise RuntimeError('[Coderror] invalid used_id_num')
         
-        return sorted(selected_ids)
+        return sorted(used_ids)
     
-    def human_corr_used_ids_selection(self, encoded_id_pool, used_id_num):
+
+    def human_neuron_obtain_used_cells(self, ):
         """
-            Dr CAO provided: [6, 10, 14, 15, 23, 24, 28, 36, 38, 40]
-            Calculated here: [6, 10, 14, 15, 24, 28, 30, 36, 43, 45]
-            
-            return:
-                dict
+            for bio cells, 'qualified' != 'all'
         """
-            
-        freq = dict(Counter(encoded_id_pool))
-        freq={int(k):v for k,v in sorted(freq.items(), key=lambda x:x[1], reverse=True)}
+
+        if not hasattr(self, 'cell_stats'):
+            self.cell_stats = self.human_identity_cell_selection()
         
-        return {k:v for idx, (k,v) in enumerate(freq.items(), 0) if idx < used_id_num}
+        units_type_dict = self.cell_stats['cell_types_dict']
+        
+        units_type_dict['qualified'] = np.array([_ for _ in list(self.cell_stats['encode_id'].keys())])
+        units_type_dict['all'] = np.arange(2082)
+        
+        upgraded_cell_types_dict = {
+                'selective': ['s_si', 's_wsi', 's_mi', 's_wmi'],
+                'non_selective': ['s_non_encode', 'ns_si', 'ns_wsi', 'ns_mi', 'ns_wmi', 'ns_non_encode'],
+                'strong_selective': ['s_si', 's_mi'],
+                'weak_selective': ['s_wsi', 's_wmi'],
+                
+                'sensitive': ['s_si', 's_wsi', 's_mi', 's_wmi', 's_non_encode'],
+                'non_sensitive': ['ns_si', 'ns_wsi', 'ns_mi', 'ns_wmi', 'ns_non_encode'],
+                'all_sensitive_si': ['s_si', 's_wsi'],
+                'all_sensitive_mi': ['s_mi', 's_wmi']
+                                    }
+        
+        for k, v in upgraded_cell_types_dict.items():
+            units_type_dict[k] = np.concatenate([self.cell_stats['cell_types_dict'][_] for _ in v])
+        
+        return units_type_dict
     
-    def human_neuron_obtain_used_cells(self, used_cell_type):
+    
+    # ------------------------------------------------------------------------------------------------------------------
+    def human_neuron_Gram_process(self, kernel='linear', used_cell_type='qualified', used_id_num=50, permutation=True, num_perm=1000, save=True, **kwargs):
         
-        # --- 1.
-        if used_cell_type == 'qualified':
-            used_cells = np.array(list(self.cell_stats['encode_id'].keys()))
-            
-        # --- 2-5
-        elif used_cell_type == 'selective':     # 'selective' = 's_si' + 's_wsi' + 's_mi' + 's_wmi'
-            used_cells = np.concatenate(np.array([
-                                        self.cell_stats['cell_types_dict']['sensitive_si'],
-                                        self.cell_stats['cell_types_dict']['sensitive_wsi'],
-                                        self.cell_stats['cell_types_dict']['sensitive_mi'],
-                                        self.cell_stats['cell_types_dict']['sensitive_wmi'], ], dtype=object))
-            
-        elif used_cell_type == 'strong_selective':     # 'strong_selective' = 's_si' + 's_mi'
-            used_cells = np.concatenate(np.array([
-                                        self.cell_stats['cell_types_dict']['sensitive_si'],
-                                        self.cell_stats['cell_types_dict']['sensitive_mi'],], dtype=object))
-            
-        elif used_cell_type == 'weak_selective':     # 'weak_selective' =  's_wsi' + 's_wmi'
-            used_cells = np.concatenate(np.array([
-                                        self.cell_stats['cell_types_dict']['sensitive_wsi'],
-                                        self.cell_stats['cell_types_dict']['sensitive_wmi'], ], dtype=object))
-            
-        elif used_cell_type == 'non_selective':     # 'non_sensitive' = 's_non_encode' + 'ns_si' + 'ns_wsi' + 'ns_mi' + 'ns_wmi' + 'ns_non_encode'
-            used_cells = np.concatenate(np.array([
-                                        self.cell_stats['cell_types_dict']['sensitive_non_encode'],
-                                        self.cell_stats['cell_types_dict']['non_sensitive_si'],
-                                        self.cell_stats['cell_types_dict']['non_sensitive_wsi'],
-                                        self.cell_stats['cell_types_dict']['non_sensitive_mi'],
-                                        self.cell_stats['cell_types_dict']['non_sensitive_wmi'],
-                                        self.cell_stats['cell_types_dict']['non_sensitive_non_encode'], ], dtype=object))
+        utils_.make_dir(os.path.join(self.human_neuron_stats, 'gram'))
+        utils_.make_dir(os.path.join(self.human_neuron_stats, 'gram', f'{kernel}'))
         
-        # --- 6-15
-        elif used_cell_type == 'sensitive_si':
-            used_cells = self.cell_stats['cell_types_dict']['sensitive_si']
+        if kernel == 'rbf' and 'threshold' in kwargs:
+            file_path = os.path.join(self.human_neuron_stats, 'gram', f'{kernel}', f"CKA_results_{kernel}_{kwargs['threshold']}_{used_cell_type}_{used_id_num}.pkl")
+        elif kernel == 'linear':
+            file_path = os.path.join(self.human_neuron_stats, 'gram', f'{kernel}', f"CKA_results_{kernel}_{used_cell_type}_{used_id_num}.pkl")
+        else:
+            raise ValueError(f'[Coderror] Invalid kernel [{kernel}]')
+
+        if os.path.exists(file_path):
             
-        elif used_cell_type == 'sensitive_wsi':
-            used_cells = self.cell_stats['cell_types_dict']['sensitive_wsi']
+            results = utils_.load(file_path)
             
-        elif used_cell_type == 'sensitive_mi':
-            used_cells = self.cell_stats['cell_types_dict']['sensitive_mi']
-            
-        elif used_cell_type == 'sensitive_wmi':
-            used_cells = self.cell_stats['cell_types_dict']['sensitive_wmi']
-            
-        elif used_cell_type == 'sensitive_non_encode':
-            used_cells = self.cell_stats['cell_types_dict']['sensitive_non_encode']
-            
-            
-        elif used_cell_type == 'non_sensitive_si':
-            used_cells = self.cell_stats['cell_types_dict']['non_sensitive_si']
-            
-        elif used_cell_type == 'non_sensitive_wsi':
-            used_cells = self.cell_stats['cell_types_dict']['non_sensitive_wsi']
-            
-        elif used_cell_type == 'non_sensitive_mi':
-            used_cells = self.cell_stats['cell_types_dict']['non_sensitive_mi']
-            
-        elif used_cell_type == 'non_sensitive_wmi':
-            used_cells = self.cell_stats['cell_types_dict']['non_sensitive_wmi']
-        
-        elif used_cell_type == 'non_sensitive_non_encode':
-            used_cells = self.cell_stats['cell_types_dict']['non_sensitive_non_encode']
-            
-        # --- 16-17
-        elif used_cell_type == 'sensitive':
-            used_cells = np.concatenate(np.array([
-                                        self.cell_stats['cell_types_dict']['sensitive_si'],
-                                        self.cell_stats['cell_types_dict']['sensitive_wsi'],
-                                        self.cell_stats['cell_types_dict']['sensitive_mi'],
-                                        self.cell_stats['cell_types_dict']['sensitive_wmi'], 
-                                        self.cell_stats['cell_types_dict']['sensitive_non_encode'], ], dtype=object))
-            
-        elif used_cell_type == 'non_sensitive':
-            used_cells = np.concatenate(np.array([
-                                        self.cell_stats['cell_types_dict']['non_sensitive_si'],
-                                        self.cell_stats['cell_types_dict']['non_sensitive_wsi'],
-                                        self.cell_stats['cell_types_dict']['non_sensitive_mi'],
-                                        self.cell_stats['cell_types_dict']['non_sensitive_wmi'],
-                                        self.cell_stats['cell_types_dict']['non_sensitive_non_encode'], ], dtype=object))
-            
-        # --- 18-19
-        elif used_cell_type == 'encode':
-            used_cells = np.concatenate(np.array([
-                                        self.cell_stats['cell_types_dict']['sensitive_si'],
-                                        self.cell_stats['cell_types_dict']['sensitive_wsi'],
-                                        self.cell_stats['cell_types_dict']['sensitive_mi'],
-                                        self.cell_stats['cell_types_dict']['sensitive_wmi'], 
-                                        
-                                        self.cell_stats['cell_types_dict']['non_sensitive_si'],
-                                        self.cell_stats['cell_types_dict']['non_sensitive_wsi'],
-                                        self.cell_stats['cell_types_dict']['non_sensitive_mi'],
-                                        self.cell_stats['cell_types_dict']['non_sensitive_wmi'], ], dtype=object))
-            
-        elif used_cell_type == 'non_encode':
-            used_cells = np.concatenate(np.array([
-                                        self.cell_stats['cell_types_dict']['sensitive_non_encode'],
-                                        self.cell_stats['cell_types_dict']['non_sensitive_non_encode'], ], dtype=object))
-            
-        # --- 20-21
-        elif used_cell_type == 'all_sensitive_si':
-            used_cells = np.concatenate(np.array([
-                                        self.cell_stats['cell_types_dict']['sensitive_si'],
-                                        self.cell_stats['cell_types_dict']['sensitive_wsi'], ], dtype=object))
-            
-        elif used_cell_type == 'all_sensitive_mi':
-            used_cells = np.concatenate(np.array([
-                                        self.cell_stats['cell_types_dict']['sensitive_mi'],
-                                        self.cell_stats['cell_types_dict']['sensitive_wmi'], ], dtype=object))
-        
         else:
             
-            raise RuntimeError(f'[Coderror] invalid used_cell_type [{used_cell_type}]')
-        
-        return used_cells
-    
-    @staticmethod
-    def _compare_beh_and_behm(behavior):
-        """
-            compare the beh_matlab and beh_python
-            [Oct 5, 2023] beh_python is identical with beh_matlab
-        """
-        # --- convert beh_matlab to python friendly structure
-        beh_m = sio.loadmat('/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Human/osfstorage-archive/SingleNeuron/FiringRate/Original Data/SortedFR_CelebA.mat')['beh'].reshape(-1)
-        beh_m = {_: beh_m[_] for _ in beh_m.dtype.names}
-        beh_m = [{__: beh_m[__][_].reshape(-1) for __ in behavior[0].keys()} for _ in range(40)]
-        
-        for i in range(40):
-            beh_m[i]['iT'] = {_: np.array([np.nan if ___.size == 0 else ___.item() for ___ in beh_m[i]['iT'][_]]) for _ in beh_m[i]['iT'].dtype.names}
+            used_ids = self.human_corr_select_sub_identities(used_id_num)
+            used_cells = self.human_neuron_obtain_used_cells()[used_cell_type]
             
-        for i in range(40):
-            beh_m[i]['T'] = {_: beh_m[i]['T'][_][0].reshape(-1).item() if beh_m[i]['T'][_][0].size == 1 else ['T'][_][0].reshape(-1) for _ in beh_m[i]['T'].dtype.names}
-        
-        for i in range(40):
-            beh_m[i]['back_id'] = beh_m[i]['back_id'] - 1
-        
-        # --- compare each segment
-        for i in range(40):
-            for key in behavior[i].keys():
-                if isinstance(behavior[i][key], np.ndarray):
-                    if not np.all(behavior[i][key][~np.isnan(behavior[i][key])] == beh_m[i][key][~np.isnan(beh_m[i][key])]):
-                        print(i, key, np.all(behavior[i][key][~np.isnan(behavior[i][key])] == beh_m[i][key][~np.isnan(beh_m[i][key])]))
-                if isinstance(behavior[i][key], dict):
-                    if 'iT' in key:
-                        for key_ in behavior[i][key].keys():
-                            if not np.all( behavior[i][key][key_][~np.isnan(behavior[i][key][key_])] == beh_m[i][key][key_][~np.isnan(beh_m[i][key][key_])] ):
-                                print(i, key, key_, np.all( behavior[i][key][key_][~np.isnan(behavior[i][key][key_])] == beh_m[i][key][key_][~np.isnan(beh_m[i][key][key_])] ))
-                    elif 'T' in key:
-                        for key_ in behavior[i][key].keys():
-                            if not behavior[i][key][key_]==beh_m[i][key][key_]:
-                                print(i, key, key_, behavior[i][key][key_]==beh_m[i][key][key_])
+            FR_id, psth_id = self.human_cell_FeatureMap()
+            
+            FR_id = FR_id[np.ix_(used_ids, used_cells)]
+            psth_id = np.array([_[np.ix_(used_ids, used_cells)] for _ in psth_id])
+            
+            if kernel == 'linear':
+                gram = utils_similarity.gram_linear
+            elif kernel =='rbf':
+                gram = utils_similarity.gram_rbf
+            
+            num_samples = FR_id.shape[0]
+            num_steps = psth_id.shape[0]
+            
+            results = {
+                'human_Gram': gram(FR_id, **kwargs), 
+                'human_Gram_temporal': np.array([gram(psth_id[_, :, :], **kwargs) for _ in tqdm(range(num_steps), desc='human_Gram_temporal')]),
+                }
+            
+            if permutation:
+            
+                results.update({
+                    'human_Gram_perm': np.array([gram(FR_id[np.random.permutation(num_samples)], **kwargs) for _ in tqdm(range(num_perm), desc='human_Gram_perm')]),
+                    'human_Gram_temporal_perm': np.array([np.array([gram(psth_id[t, np.random.permutation(num_samples), :], **kwargs) for _ in range(num_perm)]) for t in tqdm(range(num_steps), desc='human_Gram_temporal_perm')])
+                    })
+            
+            if save:
+                
+                utils_.dump(results, file_path)
+            
+        return results
                                 
     # ------------------------------------------------------------------------------------------------------------------
     # FIXME ----- make it contains more information
     def human_DR(self, NN_folder, layer='neuron_2'):
         
         coor_name = ''.join([NN_folder.split(' ')[-1], ' ', layer])
-        tsne_dict = utils_.pickle_load_tqdm(f'/home/acxyle-workstation/Downloads/{NN_folder}/Analysis/Dimension_Reduction/TSNE/tsne_all.pkl')
+        tsne_dict = utils_.load(f'/home/acxyle-workstation/Downloads/{NN_folder}/Analysis/Dimension_Reduction/TSNE/tsne_all.pkl')
         
         # --- default: all
         tsne = tsne_dict[layer]['tsne_dict']['all']
@@ -1892,7 +1506,7 @@ class Human_Neuron_Records_Process():
         id_labels = np.arange(1, 51)
         img_labels = np.array([np.array([_]*10) for _ in id_labels]).reshape(-1)
         
-        meanFR_dict = self.human_neuron_sort_FR()
+        meanFR_dict = self.human_cell_SortFR()
         cell_stats = self.human_identity_cell_selection()
         
         meanFR = meanFR_dict['meanFR']
@@ -1929,7 +1543,7 @@ class Human_Neuron_Records_Process():
         layer = 'neuron_2'
         sq = 0.035
         
-        feature = np.nan_to_num(self.human_neuron_sort_FR()['meanFR']).T
+        feature = np.nan_to_num(self.human_cell_SortFR()['meanFR']).T
         
         file_path = os.path.join(self.tsne_save_folder, f'{layer}_{DR_sub_type}_sq{sq}.pkl')
         
@@ -1943,7 +1557,6 @@ class Human_Neuron_Records_Process():
             gaussian_kernel = Selectivity_Analysis_Feature.Selectivity_Analysis_Feature.gausskernel(kernel_size, kernel_sigma)
             
             # --- calculate p values
-            
             p = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(Selectivity_Analysis_Feature.calculate_density_perm_p)(tsne, feature[:, i], num_perm=1000, kernel=gaussian_kernel) for i in tqdm(np.arange(feature.shape[1]), desc=f'{DR_sub_type}'))
             
             # --- wrap results and save
@@ -2149,6 +1762,125 @@ class Human_Neuron_Records_Process():
                 
 # ======================================================================================================================
 # ----- 
+def used_ids_selection(encoded_id_pool, used_id_num):
+      
+    freq = dict(Counter(encoded_id_pool))
+    freq={int(k):v for k,v in sorted(freq.items(), key=lambda x:x[1], reverse=True)}
+    
+    return {k:v for idx, (k,v) in enumerate(freq.items(), 0) if idx < used_id_num}
+
+
+def plot_single(fig, gs_main, num_types, idx_dict, feature, num_classes, num_samples, layer=None, percentile=99.):
+    """
+        [notice] no auto-adjust for figure size, the proper figsize must be manually appointed
+    """
+    colorpool_jet = plt.get_cmap('jet', 50)
+    colors = [colorpool_jet(i) for i in range(50)]
+    
+    tqdm_bar = tqdm(total=num_types, desc=f'{layer}')
+    
+    y_lim_min = np.min(feature)
+    
+    #y_lim_max = np.max(feature)     # this will extremely extend the radius by outliers
+    y_lim_max = np.percentile(feature, percentile)
+
+    y_lin_range = y_lim_max - y_lim_max
+    
+    num_cols = gs_main.ncols
+    num_rows = gs_main.nrows
+    
+    for i in range(num_rows):
+        for j in range(num_cols):
+            
+            unit_type = list(idx_dict.keys())[i*num_cols+j]
+            
+            gs_sub = gridspec.GridSpecFromSubplotSpec(1, 2, width_ratios=[4, 1], subplot_spec=gs_main[i, j])
+
+            ax_left = fig.add_subplot(gs_sub[0])
+            ax_right = fig.add_subplot(gs_sub[1])
+            
+            if (i+j) != 0:
+                ax_left.set_xticks([])
+                ax_left.set_yticks([])
+
+            if idx_dict[unit_type].size == 0:
+                ax_left.set_title(unit_type + ' [0.00%]')
+                ax_right.set_title('th')
+
+            else:
+                feature_test = feature[:, idx_dict[unit_type]]     # (500, num_units)
+
+                feature_test_mean = np.mean(feature_test.reshape(num_classes, num_samples, -1), axis=1)     # (50, num_units)
+                
+                num_units = len(idx_dict[unit_type])
+                
+                # -----
+                x = np.tile(np.arange(num_classes), num_units)     # (0,1,...,49,0,1,...)
+                y = feature_test_mean.T.reshape(-1)     # every 50 ids for unit by unit
+                
+                c = np.tile(np.array(colors), [num_units, 1])
+
+                # -----
+                ax_left.scatter(x, y, color=c, alpha=0.75, marker='.', s=1)     # use small size to replace adjustable alpha
+                # -----
+                
+                #pct = num_units/feature.shape[1]*100
+                pct = num_units/1577*100
+                
+                ax_left.set_title(unit_type + f' [{pct:.2f}%]')
+                # -----
+                
+                # ----- stats: mean firing rate for each id
+                values = feature_test_mean.reshape(-1)    # (50*num_units)
+                
+                plot_single_subsubplot(ax_left, ax_right, values, color='blue')
+                
+                # ----- stats: threshold (mean+2std of all 500 values)
+                values = np.mean(feature_test, axis=0) + 2*np.std(feature_test, axis=0)     # (num_units,)
+
+                plot_single_subsubplot(ax_left, ax_right, values, linestyle='dotted', color='red')
+                
+                # ----- stats: ref (mean+2std of all 50 mean values)
+                values = np.mean(feature_test_mean, axis=0) + 2*np.std(feature_test_mean, axis=0)     # (num_units,)
+                
+                plot_single_subsubplot(ax_left, ax_right, values, linestyle='dotted', color='teal')
+                
+                # -----
+                scaling_factor = 0.1
+                
+                ax_left.set_ylim([y_lim_min - y_lin_range*scaling_factor, y_lim_max + y_lin_range*scaling_factor])
+                ax_right.set_ylim([y_lim_min - y_lin_range*scaling_factor, y_lim_max + y_lin_range*scaling_factor])
+                ax_right.set_title('PDF')
+                ax_right.set_yticks([])
+                
+            tqdm_bar.update(1)
+
+def plot_single_subsubplot(ax_left, ax_right, values, linestyle=None, color=None, scaling_factor=0.1):
+    
+    if np.std(values) == 0:
+        pass
+    else:
+        kde = gaussian_kde(values)
+        
+        min_values = np.min(values)
+        max_values = np.max(values)
+        
+        values_range = max_values - min_values
+        
+        x_vals = np.linspace(min_values - scaling_factor*values_range, max_values + scaling_factor*values_range, 101)
+        y_vals = kde(x_vals)
+        ax_right.plot(y_vals, x_vals, linestyle=linestyle, color=color)
+    
+        y_vals_max = np.max(y_vals)
+        
+        if len(y_peak:=np.where(y_vals==y_vals_max)[0]) == 1:
+            x_vals_max = x_vals[y_peak.item()]
+        else:
+            x_vals_max = x_vals[y_peak[0]]
+        
+        ax_left.hlines(x_vals_max, 0, 50, colors=color, alpha=0.75, linestyle='--')
+        ax_right.hlines(x_vals_max, np.min(y_vals), np.max(y_vals), colors=color, alpha=0.75, linestyle='--')
+
 
 def DR_scatter(ax, tsne, img_labels, weights, encoded_ids):
     
@@ -2191,171 +1923,198 @@ class Monkey_Neuron_Records_Process():
     """
         considering the monkey data is a well sealed one, this dunction only (1) select the information used for this 
         work; (2) change the save format from .mat to .pkl 
+ 
     """
     
     def __init__(self, 
                  bio_root='/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Monkey/',  
                  seed=6
                  ):      
-        #super().__init__()
+        """
+            this function determines the time range of interest [-50, 200] from the original time range [-100, 380], which 
+            directly inherit from source Matlab code
+        """
         np.random.seed(seed)
-
+        
         self.bio_root = bio_root
+        self.ts = np.arange(-50, 201, 10)
         
-        self.ts = np.arange(-50,201,10)     # target time steps, manually selected from original [-100, 380] 
+        # ---
+        self.Monkey_data_restruction()
+        
+
+    def Monkey_data_restruction(self, ):
+        """
+            this function converts the original .mat file to a python dict and save
             
-        self.label = sio.loadmat(os.path.join(bio_root, 'Original Data/Label.mat'))['label'].reshape(-1)
+            The **img** FR and PSTH are not under the natural order but indices of displayed imgs. To calculate **ID** 
+            FR and PSTH for further analysis, **self.label** is needed to capture wanted features
+            
+            It is needed to highlight the **meanFR** calculated locally is not identical with the given **meanFR**. The 
+            used **meanFR** here is the given version rather than calculated from **FR**. Similarly, the local **meanPSTHID** 
+            is not identical with the given **meanPSTHID** but just with negligible difference
+        """
         
-        monkey_neuron_data_path = os.path.join(bio_root, 'Original Data/IT_FR_CA_Range70-180.mat')     # processed monkey neural data
-        #print(sio.whosmat(monkey_neuron_data_path))
+        data_path = os.path.join(self.bio_root, 'data.pkl')
         
+        monkey_neuron_data_path = os.path.join(self.bio_root, 'Original Data/IT_FR_CA_Range70-180.mat')     # processed monkey neural data
         monkey_neuron_data = sio.loadmat(monkey_neuron_data_path)
 
         monkey_dict_keys = [i for i in monkey_neuron_data.keys() if '__' not in i]
         monkey_dict = {_:monkey_neuron_data[_] for _ in monkey_dict_keys}     # rebuild the dict to store monkey IT MUA data
         
-        self.FR = monkey_dict['FR']     # [warning] no approach from 'FR' to 'meanFR'  
+        # -----
+        self.FR = monkey_dict['FR']
+        
+        # ---
         self.FR_countAll = self.FR['countAll'][0][0]     
         self.FR_countBase = self.FR['countBase'][0][0]
         self.FR_countVis = self.FR['countVis'][0][0]
         
-        # -----
+        # ---
         self.meanFR = monkey_dict['meanFR']     # (53, 500)
         self.meanBase = monkey_dict['meanBase']     # (53, 500)
         self.meanGray = monkey_dict['meanGray'].reshape(-1)     # (53, )
         self.meanVis = monkey_dict['meanVis']     # (53, 500)
-        # -----
         
+        # ---
         self.psthTime = monkey_dict['psthTime'].reshape(-1)     # (49,)
+        self.meanPSTH = monkey_dict['meanPSTH']     # (500, 49, 53), [disordered img idx, time steps, channels], normalized
+        self.meanPSTHID = monkey_dict['meanPSTHID']     # (50, 49, 53), [id idx, time steps, channels], normalized
         
-        # [notice] meanPSTHID is not identical with values calculated from meanPSTH
-        self.meanPSTH = monkey_dict['meanPSTH']     # (500, 49, 53), [disordered img idx, time steps, channels], normalized value
-        self.meanPSTHID = monkey_dict['meanPSTHID']     # (50, 49, 53), [id idx, time steps, channels], normalized value
-        
-
-    def Monkey_restructure(self, ):
-        
-        data_path = os.path.join(self.bio_root, 'data.pkl')
-        
+        # -----
         if os.path.exists(data_path):
-            
-            data = utils_.pickle_load(data_path)
-            
+            data = utils_.load(data_path)
         else:
-            
             data = {
                 'FR_count_all': self.FR_countAll,
                 'FR_count_base': self.FR_countBase,
                 'FR_count_vis': self.FR_countVis,
+                
                 'meanFR': self.meanFR,
                 'meanBase': self.meanBase,
                 'meanGray': self.meanGray,
                 'meanVis': self.meanVis,
+                
                 'psthTime': self.psthTime,
                 'meanPSTH': self.meanPSTH,
                 'meanPSTHID': self.meanPSTHID
                 }
             
-            utils_.pickle_dump(data_path, data)
+            utils_.dump(data, data_path)
             
         return data
-        
-    def Monkey_plot_sample_response(self):
-        
-        plt.rcParams.update({"font.family": "Times New Roman"})
-        plt.rcParams.update({'font.size': 18})
-        
-        # --- normalized
-        
-        norm_factor = np.nanmean(self.meanBase, axis=1)     # (1,53)
-        
-        meanPSTHIDNorm = np.array([self.meanPSTHID[:,t,:]/norm_factor for t in range(self.meanPSTHID.shape[1])])
-        meanPSTHIDNorm = np.mean(meanPSTHIDNorm, axis=2).T      # (ID, )
-        
-        fig, ax = plt.subplots(figsize=(10,10))
-        title = 'Monkey normalized channel-average PSTH'
-        plot_PSTH(fig, ax, meanPSTHIDNorm, title, self.psthTime, -50, 200)
-        
-        plt.tight_layout()
-        fig.savefig(os.path.join(self.bio_root, title+'.png'))
-        fig.savefig(os.path.join(self.bio_root, title+'.eps'))
     
-    #FIXME - add the entrence for other types of distance
-    #FIXME, this for loop has problem, this will only take the results of the final iteration
-    def monkey_neuron_DSM_process(self, metrics:list[str]=['pearson'], time_bin=10, num_perm=1000):
+    
+    def monkey_neuron_feature_process(self, time_bin=10):
+        """
+            return:
+                feature dict of 'FR_id' and 'psth_id' of natural order
+        """
+        
+        file_path = os.path.join(self.bio_root, 'features.pkl')
+        
+        if os.path.exists(file_path):
+            
+            feature_dict = utils_.load(file_path)
+            
+            FR_id = feature_dict['FR_id']
+            psth_id = feature_dict['psth_id']
+        
+        else:
+        
+            label = sio.loadmat(os.path.join(self.bio_root, 'Original Data/Label.mat'))['label'].reshape(-1)
+            
+            # ----- FR
+            sacling_factor = self.meanGray
+            FR_id = np.array([np.mean(self.meanFR[:, np.where(label==_)[0]], axis=1)/sacling_factor for _ in range(1, 51)])
+            
+            # ----- PSTH
+            if time_bin == 10:
+                used_psth = self.meanPSTH[:, [np.where(self.psthTime==_)[0][0] for _ in self.ts], :]
+                
+            else:
+                used_psth = np.zeros((self.meanPSTH.shape[0], len(self.ts), self.meanPSTH.shape[2]))     # (500, 26, 53) (img, time, unit)
+                for idx, tt in enumerate(self.ts): 
+                    used_psth[:, idx, :] = np.mean(self.meanPSTH[:, np.where(((tt-time_bin/2)<=self.psthTime) & (self.psthTime<=(tt+time_bin/2)))[0], :], axis=1)
+            
+            # ---
+            used_psth_id = np.array([np.mean(used_psth[np.where(label==_)[0], :, :], axis=0) for _ in  range(1, 51)])     
+            used_psth_id = np.transpose(used_psth_id, (1,0,2))     # (time, ID, unit)
+            
+            scaling_factor = np.mean(self.meanBase, axis=1)
+            psth_id = np.array([np.array([used_psth_id[i, j, :]/scaling_factor for j in range(50)]) for i in range(used_psth.shape[1])])     # (26, 50, 53)
+            
+            # ---
+            feature_dict = {
+                'FR_id': FR_id,
+                'psth_id': psth_id
+                }
+            
+            utils_.dump(feature_dict, file_path)
+            
+        return FR_id, psth_id
+        
+    
+    def monkey_neuron_DSM_process(self, metric='pearson', permutation=True, num_perm=1000, save=True, vectorize=False, **kwargs):
         """
             this function returns the correlation matrix and triangle from monkey neural responses.
             
             input
                 psthTime: 49 time steps for PSTH from -100 ms to 380 ms
-                meanPSTH: [500, 49, 53], [img, time steps, channels]
+                meanPSTH: [500, 49, 53], [img idx, time steps, channels]
                 label: label for 500 imgs
                 
             return
                 monkey_DM_v: condense form of tranformed DSM
                 monkey_DM_v_perm: condense form of transformed DSM with extra dimension of permutation
                 monkey_DM_v_temporal: condense form of transformed DSM with temporal dimension
-                monkey_DM_v_perm_temporal: condense form of transformed DSM with temporal dimension and permutation dimension
+                monkey_DM_v_temporal_perm: condense form of transformed DSM with temporal dimension and permutation dimension
+                
+            notice
+                the firing rates has been normalized by scaling_factors, FR uses meanGray and PSTH uses meanBase by default,
+                this selection inherits from the source Matlab code. meanGray is not identical with np.mean(meanBase, axis=1)
+                
+                the permutation before DSM_calculation is equal to shuffle the calculated DSM
+                
         """
         
         print('[Codinfo] Calculating monkey neuron stats...')
         
         utils_.make_dir(os.path.join(self.bio_root, 'corr'))
+        utils_.make_dir(os.path.join(self.bio_root, 'corr', f'{metric}'))
+        file_path = os.path.join(self.bio_root, 'corr', f'{metric}', 'Monkey_DM_dict_qualified_50.pkl')
         
-        for metric in metrics:
+        if os.path.exists(file_path):
             
-            utils_.make_dir(os.path.join(self.bio_root, 'corr', f'{metric}'))
-        
-            file_path = os.path.join(self.bio_root, 'corr', f'{metric}', 'Monkey_DM_dict_qualified_50.pkl')
+            results = utils_.load(file_path)
             
-            if os.path.exists(file_path):
+        else:
+
+            FR_id, psth_id = self.monkey_neuron_feature_process()
+            
+            num_samples = FR_id.shape[0]
+            num_steps = psth_id.shape[0]
+            
+            results = {
+                'monkey_DM': utils_similarity.DSM_calculation(metric, FR_id, vectorize=vectorize), 
+                'monkey_DM_temporal': np.array([utils_similarity.DSM_calculation(metric, psth_id[_, :, :], vectorize=vectorize) for _ in range(num_steps)]),
+                }
+            
+            if permutation:
+            
+                results.update({
+                    'monkey_DM_perm': np.array([utils_similarity.DSM_calculation(metric, FR_id[np.random.permutation(num_samples)], vectorize=vectorize) for _ in range(num_perm)]),
+                    'monkey_DM_temporal_perm': np.array([np.array([utils_similarity.DSM_calculation(metric, psth_id[t, np.random.permutation(num_samples), :], vectorize=vectorize) for _ in range(num_perm)]) for t in range(num_steps)])
+                    })
+            
+            if save:
                 
-                results = utils_.pickle_load(file_path)
-                
-            else:
-                # -----
-                if time_bin == 10:
-                    used_psth = self.meanPSTH[:, [np.where(self.psthTime==_)[0][0] for _ in self.ts], :]
-                    
-                else:
-                    used_psth = np.zeros((self.meanPSTH.shape[0], len(self.ts), self.meanPSTH.shape[2]))     # (500, 26, 53) (img, time, unit)
-                    for idx, tt in enumerate(self.ts): 
-                        used_psth[:, idx, :] = np.mean(self.meanPSTH[:, np.where(((tt-time_bin/2)<=self.psthTime) & (self.psthTime<=(tt+time_bin/2)))[0], :], axis=1)
-                
-                used_psth_id = np.array([np.mean(used_psth[np.where(self.label==_)[0], :, :], axis=0) for _ in  range(1, 51)])     
-                used_psth_id = np.transpose(used_psth_id, (1,0,2))     # (time, ID, unit)
-                
-                # [notice] meanGray != np.mean(meanBase, axis=1)
-                self.FR_id = np.array([np.mean(self.meanFR[:, np.where(self.label==_)[0]], axis=1)/self.meanGray for _ in range(1, 51)])
-                
-                scaling_factor = np.mean(self.meanBase,axis=1)
-                #sacling_factor = self.meanGray
-                
-                self.psth_id = np.array([np.array([used_psth_id[i, j, :]/scaling_factor for j in range(50)]) for i in range(used_psth.shape[1])])     # (26, 50, 53)
-                
-                # --- 
-                # for static meanFR
-                self.monkey_DM_v = utils_similarity.selectivity_analysis_calculation(metric, self.FR_id)['vector']
-                self.monkey_DM_v_perm = np.array([utils_similarity.selectivity_analysis_calculation(metric, self.FR_id[np.random.permutation(self.FR_id.shape[0]),:])['vector'] for _ in range(num_perm)])
-        
-                # for temporal PSTH
-                self.monkey_DM_v_temporal = np.array([utils_similarity.selectivity_analysis_calculation(metric, self.psth_id[_, :, :])['vector'] for _ in range(self.psth_id.shape[0])])
-                self.monkey_DM_v_perm_temporal = np.array([np.array([utils_similarity.selectivity_analysis_calculation(metric, self.psth_id[t, np.random.permutation(self.FR_id.shape[0]), :])['vector'] for _ in range(num_perm)]) for t in range(self.psth_id.shape[0])])
-                
-                # --- seal data
-                results = {
-                    'monkey_DM_v': self.monkey_DM_v,     # (1225,)
-                    'monkey_DM_v_perm': self.monkey_DM_v_perm,      # (1000, 1225)
-                    'monkey_DM_v_temporal': self.monkey_DM_v_temporal,     # (26, 1225)
-                    'monkey_DM_v_perm_temporal': self.monkey_DM_v_perm_temporal,     # (26, 1000, 1225)
-                    'FR_id': self.FR_id,
-                    'psth_id': self.psth_id
-                    }
-                
-                utils_.pickle_dump(file_path, results)
+                utils_.dump(results, file_path)
             
         return results
         
+    
     def monkey_neuron_DSM_plot(self,):
         
         plt.rcParams.update({"font.family": "Times New Roman"})
@@ -2377,6 +2136,90 @@ class Monkey_Neuron_Records_Process():
             plt.tight_layout()
             plt.savefig(os.path.join(self.bio_root, f'{title}.png'))
         
+    
+    def monkey_neuron_Gram_process(self, kernel='linear', permutation=True, num_perm=1000, save=True, **kwargs):
+        
+        utils_.make_dir(os.path.join(self.bio_root, 'gram'))
+        utils_.make_dir(os.path.join(self.bio_root, 'gram', f'{kernel}'))
+        
+        if kernel == 'rbf' and 'threshold' in kwargs:
+            file_path = os.path.join(self.bio_root, 'gram', f'{kernel}', f"CKA_results_{kernel}_{kwargs['threshold']}.pkl")
+        elif kernel == 'linear':
+            file_path = os.path.join(self.bio_root, 'gram', f'{kernel}', f"CKA_results_{kernel}.pkl")
+        else:
+            raise ValueError(f'[Coderror] Invalid kernel [{kernel}]')
+            
+        if os.path.exists(file_path):
+            
+            results = utils_.load(file_path)
+            
+        else:
+
+            FR_id, psth_id = self.monkey_neuron_feature_process()
+            
+            if kernel == 'linear':
+                gram = utils_similarity.gram_linear
+            elif kernel =='rbf':
+                gram = utils_similarity.gram_rbf
+            
+            num_samples = FR_id.shape[0]
+            num_steps = psth_id.shape[0]
+            
+            results = {
+                'monkey_Gram': gram(FR_id, **kwargs), 
+                'monkey_Gram_temporal': np.array([gram(psth_id[_, :, :], **kwargs) for _ in range(num_steps)]),
+                }
+            
+            if permutation:
+            
+                results.update({
+                    'monkey_Gram_perm': np.array([gram(FR_id[np.random.permutation(num_samples)], **kwargs) for _ in range(num_perm)]),
+                    'monkey_Gram_temporal_perm': np.array([np.array([gram(psth_id[t, np.random.permutation(num_samples), :], **kwargs) for _ in range(num_perm)]) for t in range(num_steps)])
+                    })
+            
+            if save:
+                
+                utils_.dump(results, file_path)
+            
+        return results
+    
+    
+    def Monkey_plot_sample_response(self, average=True):
+        """
+            this function plot the sample responses of monkey IT cells
+            
+            Parameter:
+                average: if True, plot the average responses across channels, otherwise plot the channel with strongest
+                reponses, i.e. channel 51 (0-based)
+        """
+        
+        # --- normalized
+        scaling_factor = np.mean(self.meanBase, axis=1)     # (53,)
+
+        meanPSTHIDNorm = self.meanPSTHID/scaling_factor     # [id idx, time steps, channels]
+        
+        if average:
+            meanPSTHIDNorm = np.mean(meanPSTHIDNorm, axis=2)     # [time, id]
+            title = 'Monkey normalized channel-average PSTH'
+        else:
+            target_channel = np.argmax(np.mean(meanPSTHIDNorm, axis=(0, 1)))
+            meanPSTHIDNorm = meanPSTHIDNorm[..., target_channel]
+            title = f'Monkey normalized channel {target_channel} PSTH'
+        
+        # -----
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        plt.rcParams.update({'font.size': 18})
+        
+        fig, ax = plt.subplots(figsize=(10, 10))
+        
+        plot_PSTH(fig, ax, meanPSTHIDNorm, title, self.psthTime, -50, 200)
+        
+        plt.tight_layout()
+        fig.savefig(os.path.join(self.bio_root, title+'.png'))
+        #fig.savefig(os.path.join(self.bio_root, title+'.eps'))
+        
+        plt.close()
+
 
 # ======================================================================================================================    
 def plot_PSTH(fig, ax, PSTH, title=None, time_point=None, time_start=None, time_end=None):
@@ -2402,8 +2245,7 @@ def plot_PSTH(fig, ax, PSTH, title=None, time_point=None, time_start=None, time_
     
     ax.set_ylim([0, PSTH.shape[0]-1])
     ax.set_title(title, fontsize=24)
-    
-    #plt.close()
+
           
 # ======================================================================================================================
 def calculate_firing_rate(time_stamps, session_idx, all_periods, time_window, num_frames, PSTH_start, time_step=50):
@@ -2473,31 +2315,47 @@ def extract_period_counts(time_stamps, periods, from_, to_):
         
         return count
     
+    
+# ----------------------------------------------------------------------------------------------------------------------
 if __name__ == "__main__":
-
+    # local debug...
+    
+    # --- local test
+    # 1. human analysis
     human_record_process = Human_Neuron_Records_Process()
     
-    #human_record_process.human_neuron_sort_FR(data_type='default')
+    #human_record_process.human_cell_SortFR(data_type='default')
     #human_record_process.human_identity_cell_selection()
     #human_record_process.human_neuron_raster_plot()
-    #human_record_process.human_neuron_stacked_encode_map()
-    #human_record_process.human_neuron_FR_stats_plot()
-    #human_record_process.human_neuron_DSM_process_sub_id(metrics=['pearson'], used_cell_types=['qualified', 'selective', 'non_selective'], used_id_nums=[10])
+    #human_record_process.human_cell_stacked_responses()
+    #human_record_process.human_plot_FR_PDF()
+    #human_record_process.human_neuron_DSM_process()
+    
+    for threshold in [0.5, 1.0, 2.0, 10.0]:
+        for used_cell_type in ['qualified', 'selective', 'non_selective', 'strong_selective', 'weak_selective']:
+            human_record_process.human_neuron_Gram_process(used_cell_type=used_cell_type)
+            human_record_process.human_neuron_Gram_process(kernel='rbf', threshold=threshold, used_cell_type=used_cell_type)
     
     #human_record_process.human_plot_pie_chart()
     
+    # 2. monkey analysis
     #monkey_record_process = Monkey_Neuron_Records_Process()
     
-    #monkey_record_process.Monkey_restructure()
+    #monkey_record_process.Monkey_data_restruction()
     #monkey_record_process.Monkey_plot_sample_response()
+    #monkey_record_process.monkey_neuron_feature_process()
     #monkey_record_process.monkey_neuron_DSM_process(metrics=['euclidean', 'pearson'])
     #monkey_record_process.monkey_neuron_DSM_plot()
+    #monkey_record_process.monkey_neuron_Gram_process()
     
-    for folder in [
-                    #'Face Identity Baseline', 'Face Identity VGG16', 
-                    'Face Identity VGG16bn',
-                    'Face Identity SpikingVGG16bn_IF_T4_CelebA2622', 'Face Identity SpikingVGG16bn_IF_T16_CelebA2622',
-                   'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622', 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622',
-                   'Face Identity SpikingVGG16bn_LIF_T4_vggface']:
-        
-        human_record_process.human_DR(folder)
+    # 3. Primate responses + NN coordinates test
+# =============================================================================
+#     for folder in [
+#                     #'Face Identity Baseline', 'Face Identity VGG16', 
+#                     'Face Identity VGG16bn',
+#                     'Face Identity SpikingVGG16bn_IF_T4_CelebA2622', 'Face Identity SpikingVGG16bn_IF_T16_CelebA2622',
+#                    'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622', 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622',
+#                    'Face Identity SpikingVGG16bn_LIF_T4_vggface']:
+#         
+#         human_record_process.human_DR(folder)
+# =============================================================================

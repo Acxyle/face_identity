@@ -114,7 +114,7 @@ class Selectivity_Analysis_Base():
         else:
             
             # -----
-            pl = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(self.rsa_computation_layer)(layer, first_corr=first_corr, second_corr=second_corr, FDR_test=FDR_test) for layer in tqdm(self.layers, desc='RSA monkey'))
+            pl = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(self.rsa_computation_layer)(layer, first_corr=first_corr, second_corr=second_corr, FDR_test=FDR_test) for layer in tqdm(self.layers, desc='RSA primate'))
             
             # --- sequential for debug use
             #pl = []
@@ -194,6 +194,10 @@ class Selectivity_Analysis_Base():
         
         # --- init, NN_DSM_v
         NN_DM = _vectorize_check(self.NN_DM_dict[layer])
+        
+        if np.isnan(NN_DM).all():
+            
+            NN_DM = np.full_like(self.primate_DM, np.nan)
         
         assert self.primate_DM.shape == NN_DM.shape
         
@@ -389,9 +393,9 @@ class Selectivity_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sel
             self.primate_DM_temporal_perm = np.array([np.array([_vectorize_check(__) for __ in _]) for _ in monkey_DM_dict['monkey_DM_temporal_perm']])
             
         # --- NN init
-        self.NN_DM_dict = self.NN_unit_DSM_process(first_corr, vectorize=False, **kwargs)     # layer - cell_type
+        self.NN_DM_dict = {k:v['qualified'] for k,v in self.NN_unit_DSM_process(first_corr, vectorize=False, **kwargs).items()}   # layer - cell_type
         ...
-        
+ 
         # ----- RSA calculation
         RSA_dict = self.rsa_analysis(first_corr, second_corr, **kwargs)
         
@@ -415,7 +419,7 @@ class Selectivity_Analysis_Correlation_Monkey(Monkey_Neuron_Records_Process, Sel
         
         # plot correlation for sample layer 
         layer = self.layers[np.argmax(similarity)]     # find the layer with strongest similarity score
-        NN_DM_v = _vectorize_check(self.NN_DM_dict[layer][neuron_type])
+        NN_DM_v = _vectorize_check(self.NN_DM_dict[layer])
         
         if not attach_psth:
             
@@ -546,7 +550,7 @@ class Selectivity_Analysis_Correlation_Human(Human_Neuron_Records_Process, Selec
     
         """
         # --- additional parameters
-        print(f'[Codinfo] Processing RSA for Human and NN ({self.model_structure})')
+        print(f'[Codinfo] Processing RSA for Human and NN | {self.model_structure} | {used_cell_type} | {used_id_num} | {first_corr} | {second_corr}')
         
         ...
         
@@ -568,7 +572,7 @@ class Selectivity_Analysis_Correlation_Human(Human_Neuron_Records_Process, Selec
             self.NN_DM_dict = {_: _vectorize_check(NN_DM_dict[_]['strong_selective'][np.ix_(self.used_id, self.used_id)]) for _ in NN_DM_dict.keys()}
         else:
             human_DM_dict = self.human_neuron_DSM_process(first_corr, used_cell_type, **kwargs)
-            self.NN_DM_dict = {_: _vectorize_check(NN_DM_dict[_][used_cell_type][np.ix_(self.used_id, self.used_id)]) for _ in NN_DM_dict.keys()}
+            self.NN_DM_dict = {_: _vectorize_check(NN_DM_dict[_][used_cell_type][np.ix_(self.used_id, self.used_id)]) if ~np.isnan(NN_DM_dict[_][used_cell_type]).all() else np.nan for _ in NN_DM_dict.keys()}
             
         self.primate_DM = _vectorize_check(human_DM_dict['human_DM'][np.ix_(self.used_id, self.used_id)])
         self.primate_DM_temporal = np.array([_vectorize_check(_[np.ix_(self.used_id, self.used_id)]) for _ in human_DM_dict['human_DM_temporal']])
@@ -1169,7 +1173,9 @@ def plot_temporal_correlation(layers, fig, ax, RSA_dict, error_control_measure='
 
 def _vectorize_check(input:np.ndarray):
     
-    if input.ndim == 2:
+    if np.isnan(input).all():
+        pass
+    elif input.ndim == 2:
         input = utils_similarity.RSM_vectorize(input)     # (50,50) -> (1225,)
     elif input.ndim == 1:
         pass
@@ -1192,7 +1198,17 @@ def _corr(second_corr):
         raise ValueError('[Coderror] invalid second_corr')
 
 def _spearmanr(x, y):
-    return spearmanr(x, y, nan_policy='omit').statistic
+    """
+        x: primate
+        y: NN
+    """
+    
+    if np.unique(y).size < 2 or np.any(np.isnan(y)):
+        rho = np.nan
+    else:
+        rho = spearmanr(x, y, nan_policy='omit').statistic
+        
+    return rho
 
 def _pearson(x, y):
     return np.corrcoef(x, y)[0, 1]
@@ -1200,13 +1216,6 @@ def _pearson(x, y):
 def _ccc(x, y):
     return utils_similarity._ccc(x, y)
 
-def spearmanr_(human_DM_v, NN_DM_v):
-    if np.unique(NN_DM_v).size < 2 or np.any(np.isnan(NN_DM_v)):
-        rho = np.nan
-    else:
-        rho = spearmanr(human_DM_v, NN_DM_v, nan_policy='omit').statistic
-        
-    return rho
     
 # ======================================================================================================================
 #FIXME 5-folds model training required

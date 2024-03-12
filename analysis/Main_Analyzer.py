@@ -641,12 +641,16 @@ def single_model_analysis(args, feature_folder):
     
     RSA_human = Selectivity_Analysis_RSA.Selectivity_Analysis_Correlation_Human(NN_root=feature_root, layers=layers, neurons=neurons)
     
+    #
+    # 
+    # 
+    # 
     for firsct_corr in ['euclidean', 'pearson', 'mahalanobis', 'spearman', 'concordance']:
         for second_corr in ['pearson', 'spearman', 'concordance']:
             for used_cell_type in ['legacy', 'qualified', 'selective', 'non_selective']:
                 for used_id_num in [50, 10]:
                     RSA_human.human_neuron_analysis(first_corr=firsct_corr, second_corr=second_corr, used_cell_type=used_cell_type, used_id_num=used_id_num)
-    
+
     del RSA_human
     
     # ----- 5. Feature
@@ -666,6 +670,7 @@ def single_model_analysis(args, feature_folder):
     
     CKA_human = Selectivity_Analysis_CKA.Selectivity_Analysis_Correlation_Human(NN_root=feature_root, layers=layers, neurons=neurons)
     
+    # 
     for used_cell_type in ['qualified', 'selective', 'non_selective', 'legacy']:
         for used_id_num in [50, 10]:
             CKA_human.human_neuron_analysis(kernel='linear', used_cell_type=used_cell_type, used_id_num=used_id_num)
@@ -695,17 +700,14 @@ def Main_Analyzer(args):
 
 # =============================================================================
 #     for _neuron in ['IF']:
-#     
 #         for _surrogate in ['ATan']:
-#             
 #             for _T in [16]:
-#                 
 #                 for _fold_idx in [1,2,3,4]:
-#        
 #                     single_model_analysis(args, f'Face Identity SpikingResnet18_{_neuron}_{_surrogate}_T{_T}_CelebA2622_fold_{_fold_idx}')
 # =============================================================================
-
-    single_model_analysis(args, 'Face Identity SpikingVGG16bn_LIF_T4')
+    
+    for fold_idx in [1,2,3,4]:
+        single_model_analysis(args, f'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_/-_Single Models/Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_{fold_idx}')
 
 if __name__ == "__main__":
     

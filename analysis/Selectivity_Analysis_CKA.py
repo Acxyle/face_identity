@@ -336,7 +336,7 @@ class Selectivity_Analysis_CKA_Base():
             
             fig, ax = plt.subplots(figsize=(np.array(cka_dict['cka_score_temporal'].T.shape)/3.7))
             
-            plot_temporal_correlation(layers, fig, ax, cka_dict, title=title, vlim=vlim, extent=extent)
+            plot_temporal_correlation(self.layers, fig, ax, cka_dict, title=title, vlim=vlim, extent=extent)
             utils_similarity.fake_legend_describe_numpy(cka_dict['cka_score_temporal'], ax, cka_dict[error_control_measure].astype(bool))
 
             plt.savefig(os.path.join(self.save_root, f'{title}.svg'))     
@@ -550,16 +550,16 @@ def plot_static_correlation(layers, ax, cka_dict, error_control_measure='sig_FDR
     
     similarity_ = similarity[~np.isnan(similarity)]
     if error_area:
-        y_radius = np.max(similarity_) - np.min(perm_mean[~np.isnan(perm_mean)])
+        y_radius = np.max(similarity_[np.isfinite(similarity_)]) - np.min(perm_mean[~np.isnan(perm_mean)])
     else:
-        y_radius = np.max(similarity_) - np.min(similarity_)
+        y_radius = np.max(similarity_[np.isfinite(similarity_)]) - np.min(similarity_[np.isfinite(similarity_)])
     
     if not vlim:
         if error_area:
-            ylim_bottom = np.min([np.min(similarity_), np.min(perm_mean[~np.isnan(perm_mean)])])
+            ylim_bottom = np.min([np.min(similarity_[np.isfinite(similarity_)]), np.min(perm_mean[~np.isnan(perm_mean)])])
         else:
-            ylim_bottom = np.min(similarity_)
-        ax.set_ylim([ylim_bottom-0.025*y_radius, np.max(similarity_)+0.05*y_radius])
+            ylim_bottom = np.min(similarity_[np.isfinite(similarity_)])
+        ax.set_ylim([ylim_bottom-0.025*y_radius, np.max(similarity_[np.isfinite(similarity_)])+0.05*y_radius])
     else:
         ax.set_ylim(vlim)
 

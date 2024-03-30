@@ -5,23 +5,7 @@ Created on Sun Feb 19 17:35:00 2023
 
 @author: acxyle
 
-#TODO
-    write a script to do feature analysis
-    
-    [Induction]
-    1. use spiking_model.py to seperate layers;
-    2. use spiking_intermediate_output.py to visualize and validate the features in diferent levels;
-    3. use spiking_featuremap.py to extract and save the feature.pkl
-    4. use Selectivity_Analyzer to execute analysis
-    
-#TODO
-    [Jan 3, 2023] add the k-folds comparisons
-    
-#TODO
-    [Jan 12, 2023] add the normalized pct curve
-    
-#TODO
-    [Jan 22, 2023] add the process for A2S models
+    ...
     
 """
 
@@ -38,12 +22,8 @@ import matplotlib.pyplot as plt
 
 from Bio_Cell_Records_Process import Human_Neuron_Records_Process, Monkey_Neuron_Records_Process
 
-import Selectivity_Analysis_ANOVA
-import Selectivity_Analysis_Encode
-import Selectivity_Analysis_DR_and_SM
-import Selectivity_Analysis_RSA
+import FSA_ANOVA, FSA_Encode, FSA_DRG, FSA_RSA, FSA_CKA
 import Selectivity_Analysis_Feature
-import Selectivity_Analysis_CKA
 
 import utils_
 import utils_similarity
@@ -60,7 +40,7 @@ parser.add_argument("--num_samples", type=int, default=10, help="[Codelp] set th
 parser.add_argument("--alpha", type=float, default=0.01, help='[Codelp] assign the alpha value for ANOVA')
 
 parser.add_argument("--root_dir", type=str, default="/home/acxyle-workstation/Downloads", help="[Codelp] root directory for features and neurons")
-parser.add_argument("--model", type=str, default='spiking_vgg16_bn')     # trigger
+parser.add_argument("--model", type=str, default='vgg16_bn')     # trigger
 
 # -----
 args = parser.parse_args()
@@ -194,6 +174,10 @@ class Multi_Model_Analysis(Monkey_Neuron_Records_Process, Human_Neuron_Records_P
             
         # FIXME --- need to upgrade and simplify
         def _temporal(RSA_save_root_primate, primate='Monkey', criterion='pearson', unit_type:str=None, used_id_num:int=None, route:str='p'):
+            """
+                this function uses 2 routes to obtain the target p values, route 'p' uses the mean values of all p values 
+                then calculate the FDR test again; route 'sig' uses the smoothed mean values of sig results(T/F) 
+            """
             
             utils_.make_dir(RSA_save_root_primate_criteria:=os.path.join(RSA_save_root_primate, f'{criterion}'))
             
@@ -253,31 +237,6 @@ class Multi_Model_Analysis(Monkey_Neuron_Records_Process, Human_Neuron_Records_P
             fig.savefig(os.path.join(RSA_save_root_primate_criteria, f'{title}_merged_by_{route}.png'))
             plt.close()
             
-            # ---
-            idx, layer_n, _, _ = utils_.activation_function(self.model_structure, self.layers)
-            RSA_dict_across_folds_neuron = {_:RSA_dict_across_folds[_][idx] for _ in RSA_dict_across_folds.keys()}
-            
-            folds_mean = folds_mean[idx]
-            
-            if 'monkey' in primate.lower():
-                extent = [self.ts.min()-5, self.ts.max()+5, -0.5, folds_mean.shape[0]-0.5]
-            elif 'human' in primate.lower():
-                extent = [-250, 1001, -0.5, folds_mean.shape[0]-0.5]
-            
-            fig = plt.figure(figsize=(10, folds_mean.shape[0]/4))
-            ax = fig.add_axes([0.125, 0.075, 0.75, 0.85])
-            
-            title = f'RSA act temporal {primate} {criterion} {unit_type} {used_id_num} {self.model_structure}'
-            Selectivity_Analysis_RSA.plot_temporal_correlation(layer_n, fig, ax, RSA_dict_across_folds_neuron, title=f'{title}', vlim=None, extent=extent)
-            
-            mask = RSA_dict_across_folds_neuron['sig_temporal_Bonf']
-            if not utils_._is_binary(mask):
-                mask = mask>(1-alpha)
-            utils_similarity.fake_legend_describe_numpy(RSA_dict_across_folds_neuron['similarity_temporal'], ax, mask.astype(bool))
-             
-            fig.savefig(os.path.join(RSA_save_root_primate_criteria, f'{title}_merged_by_{route}.png'))
-            plt.close()
-            
 
         def _static(RSA_save_root_primate, primate='Monkey', criterion='pearson', unit_type:str=None, used_id_num:int=None):
             
@@ -310,22 +269,11 @@ class Multi_Model_Analysis(Monkey_Neuron_Records_Process, Human_Neuron_Records_P
             title = f'RSA {primate} {criterion} {unit_type} {used_id_num} {self.model_structure}'
             Selectivity_Analysis_RSA.plot_static_correlation(self.layers, ax, RSA_dict_across_folds, title=title, legend=False)
             utils_similarity.fake_legend_describe_numpy(RSA_dict_across_folds['similarity'], ax, RSA_dict_across_folds['sig_FDR'].astype(bool))
-            
-            idx, layer_n, _, _ = utils_.activation_function(self.model_structure, self.layers)
-            RSA_dict_across_folds_neuron = {_:RSA_dict_across_folds[_][idx] for _ in RSA_dict_across_folds.keys()}
-            
+
             plt.tight_layout()
             fig.savefig(os.path.join(RSA_save_root_primate_criteria, f'{title}.png'))
             plt.close()
-            
-            fig, ax = plt.subplots(figsize=(int(len(layer_n)/3), 6))
-            title = f'RSA {primate} {criterion} {unit_type} {used_id_num} act {self.model_structure}'
-            Selectivity_Analysis_RSA.plot_static_correlation(layer_n, ax, RSA_dict_across_folds_neuron, title=title, legend=False)
-            utils_similarity.fake_legend_describe_numpy(RSA_dict_across_folds_neuron['similarity'], ax, RSA_dict_across_folds_neuron['sig_FDR'].astype(bool))
-            
-            plt.tight_layout()
-            fig.savefig(os.path.join(RSA_save_root_primate_criteria, f'{title}.png'))
-            plt.close()
+
             
         # -----
         _process(primate='Monkey')
@@ -482,91 +430,14 @@ class Multi_Model_Analysis(Monkey_Neuron_Records_Process, Human_Neuron_Records_P
         
         
     # ------------------------------------------------------------------------------------------------------------------
-    def plot_ANOVA_pct_multi_models(self, ):
-        
-        plt.rcParams.update({'font.size': 18})    
-        plt.rcParams.update({"font.family": "Times New Roman"})
-        
-        ANOVA_save_root = os.path.join(self.model_root, 'ANOVA')
-        utils_.make_dir(ANOVA_save_root)
-        
-        def _ANOVA_pct_collect():
-            
-            ANOVA_pct_folds_path = os.path.join(ANOVA_save_root, 'ANOVA_folds_array.pkl')
-            
-            if os.path.exists(ANOVA_pct_folds_path):
-                
-                ANOVA_folds_array = utils_.load(ANOVA_pct_folds_path)
-            
-            else:
-            
-                ANOVA_folds = {}
-        
-                for fold_idx in np.arange(1, self.num_fold):
-                    
-                    root = os.path.join(self.model_root+str(fold_idx))
-                    
-                    ANOVA_folds[fold_idx] = utils_.load(os.path.join(root, 'Analysis', 'ANOVA', 'ratio.pkl'), verbose=False)
-                    
-                ANOVA_folds_array = np.array([np.array(_) for _ in list(ANOVA_folds.values())])     # (num_folds, num_layers)
-                
-                utils_.dump(ANOVA_folds_array, ANOVA_pct_folds_path)
-            
-            return ANOVA_folds_array
-        
-        def _ANOVA_pct_plot(ax, layers, ANOVA_folds_array, title):
-            
-            folds_mean = np.mean(ANOVA_folds_array, axis=0)
-            folds_std = np.std(ANOVA_folds_array, axis=0)  
-            
-            ax.fill_between(np.arange(len(layers)), folds_mean-folds_std, folds_mean+folds_std, edgecolor=None, facecolor='skyblue', alpha=0.75)
-            ax.plot(np.arange(len(layers)), folds_mean, color='blue', linewidth=0.5)
-            ax.set_xticks(np.arange(len(layers)), layers, rotation='vertical')
-            ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
-            ax.set_title(f'{self.model_structure} {title}')
-            
-            plt.tight_layout()
-            fig.savefig(os.path.join(ANOVA_save_root, f'{title}_folds.png'))
-            fig.savefig(os.path.join(ANOVA_save_root, f'{title}_folds.eps'))
-            plt.close()
-        
-        # ---
-        ANOVA_folds_array = _ANOVA_pct_collect()
-        
-        # ---
-        fig, ax = plt.subplots(figsize=(18,10))
-        _ANOVA_pct_plot(ax, self.layers, ANOVA_folds_array, 'ANOVA_pct')
-
-        # ---
-        act_idx, act_layers, act_neurons, _ = utils_.activation_function(self.model_structure, self.layers, self.neurons)
-        ANOVA_folds_array = ANOVA_folds_array[:, act_idx]
-        
-        fig, ax = plt.subplots(figsize=(10,10))
-        _ANOVA_pct_plot(ax, act_layers, ANOVA_folds_array, 'ANOVA_pct_act')
-
-
-def remove_early_layer_features():
     
-    for fold_idx in tqdm(['IF', 'LIF']):
-        
-        feature_root = f'/home/acxyle-workstation/Downloads/Face Identity SpikingResnet18_{fold_idx}_T4_CelebA2622/Features'
-        
-        layers, neurons, shapes = utils_.get_layers_and_units(args.model)
-        
-        #utils_.describe_model(layers, neurons, shapes)
-        
-        feature_files = os.listdir(feature_root)
-        
-        for feature_file in feature_files:
-            
-            if feature_file.split('.')[0] not in layers[-12:]:
-                
-                os.remove(os.path.join(feature_root, feature_file))
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 def single_model_analysis(args, feature_folder):
-
+    """
+        used_id_num=10 is proved meaningless for CKA
+    """
     start_time = time.time()
     
     # --- init
@@ -580,104 +451,90 @@ def single_model_analysis(args, feature_folder):
     utils_.describe_model(layers, neurons, shapes)
     
     # ----- 1. ANOVA
-    ANOVA_analyzer = Selectivity_Analysis_ANOVA.ANOVA_analyzer(
-                                                               feature_root, 
-                                                               alpha=args.alpha, num_classes=args.num_classes, num_samples=args.num_samples, 
-                                                               layers=layers, neurons=neurons)
-    
+    ANOVA_analyzer = FSA_ANOVA.FSA_ANOVA(root=feature_root, layers=layers, neurons=neurons, alpha=args.alpha, num_classes=args.num_classes, num_samples=args.num_samples)
+         
     ANOVA_analyzer.calculation_ANOVA()
     ANOVA_analyzer.plot_ANOVA_pct()
     
     del ANOVA_analyzer     # release memory space
     
     # ----- 2. Encode
-    Encode_analyzer = Selectivity_Analysis_Encode.Encode_feaquency_analyzer(
-                                                                            feature_root, 
-                                                                            layers=layers, neurons=neurons)
+    Encode_analyzer = FSA_Encode.FSA_Encode(root=feature_root, layers=layers, neurons=neurons)
     
     Encode_analyzer.calculation_Encode()
-    
-    #Encode_analyzer.plot_Encode_pct(num_types=23)
-    #Encode_analyzer.plot_Encode_pct(num_types=5)
-    
-    #Encode_analyzer.plot_Encode_freq()
-    
-    # ---
-    #Encode_analyzer.SVM_analysis()
-    
-    # ---
-    #Encode_analyzer.plot_stacked_responses(num_types=5)
-    #Encode_analyzer.plot_stacked_responses(num_types=10)
-
-    #Encode_analyzer.plot_sample_responses()
-    
-    # FIXME ---
-    #Encode_analyzer.plot_unit_responses_PDF()
-    
-    #Encode_analyzer.plot_pct_pie_chart()
+    Encode_analyzer.plot_Encode_pct_single()
+    Encode_analyzer.plot_Encode_pct_comprehensive()
+    Encode_analyzer.plot_Encode_freq()
     
     del Encode_analyzer
 
-    # ----- 3. DR SM
-    #DR_analyzer = Selectivity_Analysis_DR_and_SM.Selectiviy_Analysis_DR(feature_root, layers=layers, neurons=neurons)
-    #DR_analyzer.selectivity_analysis_tsne()
-    #del DR_analyzer
+    Responses_analyzer = FSA_Encode.FSA_Responses(root=feature_root, layers=layers, neurons=neurons)
+    Responses_analyzer.plot_unit_responses()
+    Responses_analyzer.plot_stacked_responses(num_types=5)
+    Responses_analyzer.plot_responses_PDF()
+    Responses_analyzer.plot_pct_pie_chart()
     
-    # ---
-    SM_analyzer = Selectivity_Analysis_DR_and_SM.Selectivity_Analysis_SM(feature_root, layers=layers, neurons=neurons)
-    for metric in ['euclidean', 'pearson']:
-        SM_analyzer.selectivity_analysis_similarity_metrics(metric)
+    del Responses_analyzer
     
-    del SM_analyzer
+    SVM_analyzer = FSA_Encode.FSA_SVM(root=feature_root, layers=layers, neurons=neurons)
+    SVM_analyzer.process_SVM()    
+
+    del SVM_analyzer
+
+    # ----- 3. DR, DSM, Gram
+    DR_analyzer = FSA_DRG.FSA_DR(feature_root, layers=layers, neurons=neurons)
+    DR_analyzer.DR_TSNE()
+    del DR_analyzer
+    
+    DSM_analyzer = FSA_DRG.FSA_DSM(feature_root, layers=layers, neurons=neurons)
+    DSM_analyzer.process_DSM(metric='pearson')
+    del DSM_analyzer
+    
+    Gram_analyzer = FSA_DRG.FSA_Gram(feature_root, layers=layers, neurons=neurons)
+    Gram_analyzer.calculation_Gram(kernel='linear', normalize=True)
+    for threshold in [0.5, 1.0, 2.0, 10.0]:
+        Gram_analyzer.calculation_Gram(kernel='rbf', threshold=threshold)
+    del Gram_analyzer
 
     # ----- 4. RSA
-    RSA_monkey = Selectivity_Analysis_RSA.Selectivity_Analysis_Correlation_Monkey(NN_root=feature_root, layers=layers, neurons=neurons)
-
+    #for monkey experiments
+    RSA_monkey = FSA_RSA.RSA_Monkey(NN_root=feature_root, layers=layers, neurons=neurons)
+    
     for first_corr in ['euclidean', 'pearson', 'spearman', 'mahalanobis', 'concordance']:
         for second_corr in ['pearson', 'spearman', 'concordance']:
             RSA_monkey.monkey_neuron_analysis(first_corr=first_corr, second_corr=second_corr)
-
+            
     del RSA_monkey
+            
+    # for human experiments 
+    RSA_human = FSA_RSA.RSA_Human(NN_root=feature_root, layers=layers, neurons=neurons)
     
-    RSA_human = Selectivity_Analysis_RSA.Selectivity_Analysis_Correlation_Human(NN_root=feature_root, layers=layers, neurons=neurons)
-    
-    #
-    # 
-    # 
-    # 
-    for firsct_corr in ['euclidean', 'pearson', 'mahalanobis', 'spearman', 'concordance']:
+    for firsct_corr in ['euclidean', 'mahalanobis', 'spearman']:
         for second_corr in ['pearson', 'spearman', 'concordance']:
             for used_cell_type in ['legacy', 'qualified', 'selective', 'non_selective']:
                 for used_id_num in [50, 10]:
-                    RSA_human.human_neuron_analysis(first_corr=firsct_corr, second_corr=second_corr, used_cell_type=used_cell_type, used_id_num=used_id_num)
-
+                    RSA_human.process_RSA_human(first_corr=firsct_corr, second_corr=second_corr, used_cell_type=used_cell_type, used_id_num=used_id_num)
+    
     del RSA_human
     
-    # ----- 5. Feature
+    # ----- 5. CKA
+    CKA_monkey = FSA_CKA.CKA_Similarity_Monkey(feature_root, layers=layers, neurons=neurons)
+    CKA_monkey.process_CKA_monkey(kernel='linear', normalize=True)
+    for threshold in [0.5, 1.0, 2.0, 10.0]:
+        CKA_monkey.process_CKA_monkey(kernel='rbf', threshold=threshold)
+    
+    
+    CKA_human = FSA_CKA.CKA_Similarity_Human(feature_root, layers=layers, neurons=neurons)
+    for used_unit_type in ['legacy', 'qualified', 'selective', 'non_selective']:
+        CKA_human.process_CKA_human(kernel='linear', used_unit_type=used_unit_type)
+        for threshold in [0.5, 1.0, 10.0]:
+            CKA_human.process_CKA_human(kernel='rbf', threshold=threshold, used_unit_type=used_unit_type)
+    
+    
+    # ----- 6. Feature
     #selectivity_feature_analyzer = Selectivity_Analysis_Feature.Selectivity_Analysis_Feature(feature_root, 'TSNE')
     #selectivity_feature_analyzer.feature_analysis()
     #del selectivity_feature_analyzer
-    
-    
-    # ----- 6. CKA
-    CKA_monkey = Selectivity_Analysis_CKA.Selectivity_Analysis_CKA_Monkey(NN_root=feature_root, layers=layers, neurons=neurons)
-    
-    CKA_monkey.monkey_neuron_analysis(kernel='linear')
-    for threshold in [0.5, 1.0, 2.0, 10.0]:
-        CKA_monkey.monkey_neuron_analysis(kernel='rbf', threshold=threshold)
-    
-    del CKA_monkey
-    
-    CKA_human = Selectivity_Analysis_CKA.Selectivity_Analysis_Correlation_Human(NN_root=feature_root, layers=layers, neurons=neurons)
-    
-    # 
-    for used_cell_type in ['qualified', 'selective', 'non_selective', 'legacy']:
-        for used_id_num in [50, 10]:
-            CKA_human.human_neuron_analysis(kernel='linear', used_cell_type=used_cell_type, used_id_num=used_id_num)
-            for threshold in [0.5, 1.0, 2.0, 10.0]:
-                CKA_human.human_neuron_analysis(kernel='rbf', threshold=threshold, used_cell_type=used_cell_type, used_id_num=used_id_num)
-    
-    del CKA_human
     
     # --- 
     end_time = time.time()
@@ -706,8 +563,8 @@ def Main_Analyzer(args):
 #                     single_model_analysis(args, f'Face Identity SpikingResnet18_{_neuron}_{_surrogate}_T{_T}_CelebA2622_fold_{_fold_idx}')
 # =============================================================================
     
-    for fold_idx in [1,2,3,4]:
-        single_model_analysis(args, f'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_/-_Single Models/Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_{fold_idx}')
+    for fold_idx in [0,1,2,3,4]:
+        single_model_analysis(args, f'Face Identity VGG16bn_fold_/-_Single Models/Face Identity VGG16bn_fold_{fold_idx}')
 
 if __name__ == "__main__":
     

@@ -5,9 +5,7 @@ Created on Thu Feb  9 12:53:33 2023
 
 @author: acxyle
 
-    #TODO
-    build a compact script for (1) ANOVA analysis; (2) .pkl and .csv store; (3) plot; (4) comparisons
-    
+   
 """
 
 import os
@@ -23,25 +21,18 @@ from joblib import Parallel, delayed
 
 import utils_
 
-class ANOVA_analyzer():
-    """
-        in the update of Sept 6, 2023, this code receives the entire folder path as the input rather than the 'Features' path
-    """
-    def __init__(self, root='.../Face_Identity VGG16/', 
-                 alpha=0.01, num_classes=50, num_samples=10, layers=None, neurons=None):
-        
-        assert root[-1] != '/', f"[Codinfo] root {root} should not end with '/'"
-        
-        self.root = os.path.join(root, 'Features/')     # <- folder for feature maps, which should be generated before analysis
-   
-        if not os.path.exists(self.root):
-            try:
-                self.root = os.path.join(root, 'Features(spike)')     # FIXME --- this should triger the branch of process of spike trains
-                os.path.exists(self.root)
-            except:
-                raise RuntimeWarning(f'[Codwarning] can not find the root of [{self.root}]')
 
-        self.dest = os.path.join(root, 'Analysis/')    # <- folder for analysis results
+class FSA_ANOVA():
+    """
+        FSA: Face-Selectivity-Analysis
+        
+        the 'Features' contains all processed img fr, not spike
+    """
+    
+    def __init__(self, root='./Face_Identity VGG16', layers=None, neurons=None, num_classes=50, num_samples=10, alpha=0.01, **kwargs):
+        
+        self.root = os.path.join(root, 'Features')     # <- folder for feature maps, which should be generated before analysis
+        self.dest = os.path.join(root, 'Analysis')    # <- folder for analysis results
         utils_.make_dir(self.dest)
         
         self.dest_ANOVA = os.path.join(self.dest, 'ANOVA')
@@ -50,125 +41,172 @@ class ANOVA_analyzer():
         self.layers = layers
         self.neurons = neurons
         
-        if self.layers == None or self.neurons == None:
-            raise RuntimeError('[Coderror] invalid layers and/or neurons')
-        
         self.alpha = alpha
         self.num_classes = num_classes
         self.num_samples = num_samples
         
         self.model_structure = root.split('/')[-1].split(' ')[-1]     # in current code, the 'root' file should list those information in structural name, arbitrary
 
-        # some tests to check the saved files are valid and matchable with self.layers and self.neurons
+
+    def calculation_ANOVA(self, normalize=True, sort=True, num_workers=-1, **kwargs):
+        """
+            normalize: if True, normalize the feature map
+            sort: if True, sort the featuremap from lexicographic order (pytorch) into natural order
+            num_workers:
+        """
         
-        #if set([f.split('.')[0] for f in os.listdir(self.root)]) != set(self.layers):     # [notice] can mute this message when segmental test
-        #    raise AssertionError('[Coderror] the saved .pkl files must be exactly the same with attribute self.layers')
-        
-        
-    def calculation_ANOVA(self, ):
-        
-        utils_._print('Executing calculation_ANOVA...')
-        num_workers = int(os.cpu_count()/2)
-        utils_._print(f'Executing parallel computation with num_workers={num_workers}')
+        utils_._print('Executing calculation_ANOVA')
         
         idces_path = os.path.join(self.dest_ANOVA, 'ANOVA_idces.pkl')
         stats_path = os.path.join(self.dest_ANOVA, 'ANOVA_stats.pkl')
         
         if os.path.exists(idces_path) and os.path.exists(stats_path):
-            self.ANOVA_idces = utils_.load(idces_path, verbose=True)
-            self.ANOVA_stats = utils_.load(stats_path, verbose=True)
+            self.ANOVA_idces = utils_.load(idces_path)
+            self.ANOVA_stats = utils_.load(stats_path)
         
         else:
-            ANOVA_idces = {}
-            ANOVA_stats = {}     # <- p_values
+            self.ANOVA_idces = {}
+            self.ANOVA_stats = {}     # <- p_values
             
-            for idx_l, layer in enumerate(self.layers):     # for each layer
+            for idx, layer in enumerate(self.layers):     # for each layer
     
-                feature = utils_.load_feature(os.path.join(self.root, layer+'.pkl'), verbose=True)
+                feature = utils_.load_feature(os.path.join(self.root, f'{layer}.pkl'), normalize=normalize, sort=sort, **kwargs)
 
-                pl = np.zeros(feature.shape[1])       # p_value_list for all neuron
-                    
-                if feature.shape[0] != self.num_classes*self.num_samples or feature.shape[1] != self.neurons[idx_l]:     #  feature check
-                    raise AssertionError('[Coderror] feature.shape[0] ({}) != self.num_classes*self.num_samples ({},{}) or feature.shape[1] ({}) != self.neurons[idx_l] ({})'.format(feature.shape[0], self.num_classes, self.num_samples, feature.shape[1], self.neurons[idx_l]))
+                if feature.shape[0] != self.num_classes*self.num_samples or feature.shape[1] != self.neurons[idx]:     # check
+                    raise AssertionError('[Coderror] feature.shape[0] ({}) != self.num_classes*self.num_samples ({},{}) or feature.shape[1] ({}) != self.neurons[idx] ({})'.format(feature.shape[0], self.num_classes, self.num_samples, feature.shape[1], self.neurons[idx]))
                 
-                # ----- parallel computing by joblib
-                pl = Parallel(n_jobs=num_workers)(delayed(one_way_ANOVA)(feature[:, i]) for i in tqdm(range(feature.shape[1]), desc=f'[{layer}] ANOVA'))
+                # ----- joblib
+                pl = Parallel(n_jobs=num_workers)(delayed(one_way_ANOVA)(feature[:, i]) for i in tqdm(range(feature.shape[1]), desc=f'ANOVA [{layer}]'))
     
-                neuron_idx = np.array([idx for idx, p in enumerate(pl) if p < self.alpha])     # p_value_idx_list for neurons that satisfy the threshold
-                
-                ANOVA_stats.update({layer: pl})
-                ANOVA_idces.update({layer: neuron_idx})
+                neuron_idx = np.array([idx for idx, p in enumerate(pl) if p < self.alpha])
             
-            utils_.dump(ANOVA_idces, idces_path)
-            utils_.dump(ANOVA_stats, stats_path)
+                self.ANOVA_stats[layer] = pl
+                self.ANOVA_idces[layer] = neuron_idx
+            
+            utils_.dump(self.ANOVA_idces, idces_path)
+            utils_.dump(self.ANOVA_stats, stats_path)
             
             utils_._print('[Codinfo] ANOVA results have been saved in {}'.format(self.dest_ANOVA))
             
-            self.ANOVA_idces = ANOVA_idces
-            self.ANOVA_stats = ANOVA_stats
-
-
-    def plot_ANOVA_pct(self):      
-        
-        print('[Codinfo] Executing plot_ANOVA_pct...')
-        
-        plt.rcParams.update({'font.size': 22})     
-        plt.rcParams.update({"font.family": "Times New Roman"})
-
-        fig_folder = os.path.join(self.dest_ANOVA, 'Figures/')
-        utils_.make_dir(fig_folder)
+            
+    def calculate_sensitive_pct(self, ):
         
         ratio_path = os.path.join(self.dest_ANOVA, 'ratio.pkl')
         
-        #if not hasattr(self, 'ANOVA_stats'):
-        #    self.ANOVA_stats = utils_.load(os.path.join(self.dest_ANOVA, 'ANOVA_stats.pkl'))
-        
-        if not hasattr(self, 'ANOVA_idces'):
-            self.ANOVA_idces = utils_.load(os.path.join(self.dest_ANOVA, 'ANOVA_idces.pkl'))
-        
-        
-        def _plot_single_figure(layers, ratio, layers_color_list, title):
-
-            logging.getLogger('matplotlib').setLevel(logging.ERROR)
-            
-            with warnings.catch_warnings():
-                warnings.simplefilter(action='ignore')
-                
-                fig, ax = plt.subplots(figsize=(math.floor(len(layers)/1.6), 10))  
-                ax.plot(layers, ratio, color='red', linestyle='-', linewidth=2.5, alpha=1, label=self.model_structure)
-                ax.bar(layers, ratio, color=layers_color_list, width=0.5)
-                ax.set_xticklabels(labels=layers, rotation='vertical')
-                ax.set_ylabel('percentage (%)')
-                ax.set_title(f'{title} - {self.model_structure}')
-                ax.legend()
-                fig.savefig(os.path.join(fig_folder, title+'.png'), bbox_inches='tight')
-                fig.savefig(os.path.join(fig_folder, title+'.eps'), bbox_inches='tight')
-                plt.close()
-        
-        # -----
         if os.path.exists(ratio_path):
             
-            ratio = utils_.load(ratio_path)
+            ratio_dict = utils_.load(ratio_path, verbose=False)
             
         else:
             
-            count_dict = {layer:0 for layer in self.layers}
-
-            for layer in self.layers:
-                sig_neuron_idx = self.ANOVA_idces[layer]
-                value = len(sig_neuron_idx)
-                count_dict[layer]=value
+            ratio_dict = {layer: self.ANOVA_idces[layer].size/self.neurons[idx]*100 for idx, layer in enumerate(self.layers)}
                   
-            ratio = [round(a/b * 100) for a, b in zip(list(count_dict.values()), self.neurons)]  # ratio = unit_passed_ANOVA/all_unit
-            utils_.dump(ratio, ratio_path)     # save the percentages for other plot
+            utils_.dump(ratio_dict, ratio_path)     
+            
+        return ratio_dict
+            
+            
+    def plot_ANOVA_pct(self, title='sensitive ratio', **kwargs):      
+        """
+            ...
+        """
         
+        utils_._print('Executing plot_ANOVA_pct...')
+        
+        plt.rcParams.update({'font.size': 22})     
+        plt.rcParams.update({"font.family": "Times New Roman"})
+ 
+        if not hasattr(self, 'ANOVA_idces'):
+            self.ANOVA_idces = utils_.load(os.path.join(self.dest_ANOVA, 'ANOVA_idces.pkl'))
+
+        # -----
+        ratio_dict = self.calculate_sensitive_pct()
         layers_color_list = color_column(self.layers)
         
-        # --- all
-        _plot_single_figure(self.layers, ratio, layers_color_list, 'sensitive unit ratio')
-                            
+        x = list(ratio_dict.keys())
+        y = list(ratio_dict.values())
         
-    # FIXME ----- test version, need to remove the use of **kwargs
+        # -----
+        fig, ax = plt.subplots(figsize=(math.floor(len(self.layers)/1.6), 6))
+        
+        ax.plot(x, y, color='red', linestyle='-', linewidth=2.5, alpha=1, label='sensitive units')
+        ax.bar(x, y, color=layers_color_list, width=0.5)
+        ax.set_xticks(np.arange(len(x)))
+        ax.set_xticklabels(x, rotation='vertical')
+        ax.set_ylabel('percentage (%)')
+        ax.set_title(f'{title} - {self.model_structure}')
+        ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
+        ax.legend()
+        
+        fig.savefig(os.path.join(self.dest_ANOVA, f'{title}.svg'), bbox_inches='tight')
+        plt.close()
+            
+    
+    # FIXME --- 
+    # ------------------------------------------------------------------------------------------------------------------
+    def plot_ANOVA_pct_multi_models(self, ):
+        
+        plt.rcParams.update({'font.size': 18})    
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
+        ANOVA_save_root = os.path.join(self.model_root, 'ANOVA')
+        utils_.make_dir(ANOVA_save_root)
+        
+        def _ANOVA_pct_collect():
+            
+            ANOVA_pct_folds_path = os.path.join(ANOVA_save_root, 'ANOVA_folds_array.pkl')
+            
+            if os.path.exists(ANOVA_pct_folds_path):
+                
+                ANOVA_folds_array = utils_.load(ANOVA_pct_folds_path)
+            
+            else:
+            
+                ANOVA_folds = {}
+        
+                for fold_idx in np.arange(1, self.num_fold):
+                    
+                    root = os.path.join(self.model_root+str(fold_idx))
+                    
+                    ANOVA_folds[fold_idx] = utils_.load(os.path.join(root, 'Analysis', 'ANOVA', 'ratio.pkl'), verbose=False)
+                    
+                ANOVA_folds_array = np.array([np.array(_) for _ in list(ANOVA_folds.values())])     # (num_folds, num_layers)
+                
+                utils_.dump(ANOVA_folds_array, ANOVA_pct_folds_path)
+            
+            return ANOVA_folds_array
+        
+        def _ANOVA_pct_plot(ax, layers, ANOVA_folds_array, title):
+            
+            folds_mean = np.mean(ANOVA_folds_array, axis=0)
+            folds_std = np.std(ANOVA_folds_array, axis=0)  
+            
+            ax.fill_between(np.arange(len(layers)), folds_mean-folds_std, folds_mean+folds_std, edgecolor=None, facecolor='skyblue', alpha=0.75)
+            ax.plot(np.arange(len(layers)), folds_mean, color='blue', linewidth=0.5)
+            ax.set_xticks(np.arange(len(layers)), layers, rotation='vertical')
+            ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
+            ax.set_title(f'{self.model_structure} {title}')
+            
+            plt.tight_layout()
+            fig.savefig(os.path.join(ANOVA_save_root, f'{title}_folds.svg'))
+            plt.close()
+        
+        # ---
+        ANOVA_folds_array = _ANOVA_pct_collect()
+        
+        # ---
+        fig, ax = plt.subplots(figsize=(18,10))
+        _ANOVA_pct_plot(ax, self.layers, ANOVA_folds_array, 'ANOVA_pct')
+
+        # ---
+        act_idx, act_layers, act_neurons, _ = utils_.activation_function(self.model_structure, self.layers, self.neurons)
+        ANOVA_folds_array = ANOVA_folds_array[:, act_idx]
+        
+        fig, ax = plt.subplots(figsize=(10,10))
+        _ANOVA_pct_plot(ax, act_layers, ANOVA_folds_array, 'ANOVA_pct_act')
+        
+        
+    # FIXME ----- test version ----- need to fix, move the function in Main_analyzer to here
     def plot_ANOVA_model_comparison(self, comparing_models_list):
         """
             in this function, the default model is which underlies this class, and the input is a list of comparing models
@@ -179,7 +217,7 @@ class ANOVA_analyzer():
         plt.rcParams.update({"font.family": "Times New Roman"})
         
         # ----- operation to acquire the ratio of current model
-        fig_folder = os.path.join(self.dest, 'Figures/')
+        fig_folder = os.path.join(self.dest, 'Figures')
         utils_.make_dir(fig_folder)
         
         ratio_path = os.path.join(fig_folder, 'ratio.pkl')
@@ -230,9 +268,8 @@ class ANOVA_analyzer():
         ax.set_title(f'{title}')
         ax.legend()
         
-        fig.savefig(os.path.join(fig_folder, title+'.png'), bbox_inches='tight')
-        fig.savefig(os.path.join(fig_folder, title+'.eps'), bbox_inches='tight')    
-        #fig.savefig(os.path.join(fig_folder, title+'.svg'), bbox_inches='tight', transparent=True)
+        fig.savefig(os.path.join(fig_folder, f'{title}.svg'), bbox_inches='tight')
+
         plt.close()
         
         # 2. for imaginary neurons only ([question] why contains pool layers?) - this version is for ANN because 'act', SNN should be 'neuron'
@@ -275,9 +312,8 @@ class ANOVA_analyzer():
         ax.set_title(f'{title}')
         ax.legend()
         
-        fig.savefig(os.path.join(fig_folder, title+'.png'), bbox_inches='tight')
-        fig.savefig(os.path.join(fig_folder, title+'.eps'), bbox_inches='tight')     # no transparency
-        #fig.savefig(os.path.join(fig_folder, title+'.svg'), bbox_inches='tight', transparent=True)
+        fig.savefig(os.path.join(fig_folder, f'{title}.png'), bbox_inches='tight')
+        
         plt.close()
         
 
@@ -311,26 +347,27 @@ class ANOVA_analyzer():
             
             
 # ----------------------------------------------------------------------------------------------------------------------
-def one_way_ANOVA(feature_strip, num_classes=50, num_samples=10):
+def one_way_ANOVA(input, num_classes=50, num_samples=10, **kwargs):
     """
-        if all units have responses 0, so will have 50 groups each has 10 0 values, this will cause 'nan' F_value and 'nan' p_value
-        nan values will be filtered in folowing selection with threshold 0.01
+        if all values are 0, this will cause 'nan' F_value and 'nan' p_value, nan values will be filtered in folowing 
+        selection with threshold 0.01
     """
     
     with warnings.catch_warnings():
         warnings.simplefilter(action='ignore')
         
-        d = [feature_strip[i*num_samples: (i+1)*num_samples] for i in range(num_classes)]
+        d = list(input.reshape(num_classes, num_samples))
         p = stats.f_oneway(*d)[1]     # [0] for F-value, [1] for p-value
 
     return p
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-def color_column(layers, constant_colors=False):
+def color_column(layers, constant_colors=False, **kwargs):
     """
-        randomly generated colors
+        randomly generate colors
     """
+    
     layers_t = []
     color = []
     
@@ -357,3 +394,14 @@ def color_column(layers, constant_colors=False):
     return layers_color_list
 
 
+# ======================================================================================================================
+if __name__ == "__main__":
+    
+    root_dir = '/home/acxyle-workstation/Downloads'
+    
+    layers, neurons, shapes = utils_.get_layers_and_units('vgg16', target_layers='act')
+    
+    FSA_ANOVA = FSA_ANOVA(os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
+         
+    FSA_ANOVA.calculation_ANOVA()
+    FSA_ANOVA.plot_ANOVA_pct()

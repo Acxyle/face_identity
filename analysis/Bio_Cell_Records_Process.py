@@ -52,14 +52,14 @@ class Human_Neuron_Records_Process():
         
     """
     
-    def __init__(self,
-                 root='/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Human/',  
-                 ):
-
-        self.root_process = os.path.join(root, 'osfstorage-archive-supp/')     # <- contains the processed Bio data (eg. PSTH) calculated from Matlab
-        self.root_data = os.path.join(root, 'osfstorage-archive/')      # <- contains the raw Bio data from resources, only used for [human_cell_FiringRate], expand it to PSTH
+    def __init__(self, bio_root='/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Human/', seed=6, **kwargs):
         
-        self.human_neuron_stats = os.path.join(root, 'human_neuron_stats/')
+        np.random.seed(seed)
+
+        self.root_process = os.path.join(bio_root, 'osfstorage-archive-supp/')     # <- contains the processed Bio data (eg. PSTH) calculated from Matlab
+        self.root_data = os.path.join(bio_root, 'osfstorage-archive/')      # <- contains the raw Bio data from resources, only used for [human_cell_FiringRate], expand it to PSTH
+        
+        self.human_neuron_stats = os.path.join(bio_root, 'human_neuron_stats/')
         utils_.make_dir(self.human_neuron_stats)
         
         # -----
@@ -497,7 +497,7 @@ class Human_Neuron_Records_Process():
     # ------------------------------------------------------------------------------------------------------------------
     # FIXME --- needed to be simplified
     @staticmethod
-    def plot_FR_PDF(model_structure:str='human MTL', target:str='cell', feature:np.array=None, init_threshold=None, scaling_factor:float=1.):
+    def plot_FR_PDF(model_structure:str='human MTL', target:str='cell', feature:np.array=None, init_threshold=None, scaling_factor:float=1., layer='', unit_type='', **kwargs):
         """
             this function plots the log gaussian hist and PDF of human neuron data
         """
@@ -563,6 +563,8 @@ class Human_Neuron_Records_Process():
             return kde, x, y_kde, feature_mean, feature_std, feature_radius
         
         # -----
+        suptitle = f"{model_structure} {layer} {unit_type} {target} PDF"
+        
         if np.any(feature<0):     # -> details for original data, simple for log data
             
             # --- original
@@ -575,7 +577,7 @@ class Human_Neuron_Records_Process():
             
             _plot_hist(ax[1], feature_log, f'log10 hist and gaussian kde exclude <=0 ({(feature.size-feature_log.size)/feature.size*100:.2f}%)', True, init_threshold=init_threshold)
             
-            fig.suptitle(f'{model_structure} {target} PDF', y=0.975, fontsize=28)
+            fig.suptitle(suptitle, y=0.975, fontsize=28)
             
         else:   # -> simple for original data, details for log data
     
@@ -587,8 +589,8 @@ class Human_Neuron_Records_Process():
             feature_log = np.log10(feature[feature>0])
             
             _plot_hist(ax[1], feature_log, f'log10 hist and gaussian kde excluse <=0 ({(feature.size-feature_log.size)/feature.size*100:.2f}%)', True, True, init_threshold=init_threshold)
-    
-            fig.suptitle(f'{model_structure} {target} PDF', y=0.975, fontsize=28)
+  
+            fig.suptitle(suptitle, y=0.975, fontsize=28)
             
         return fig
     
@@ -1926,10 +1928,7 @@ class Monkey_Neuron_Records_Process():
  
     """
     
-    def __init__(self, 
-                 bio_root='/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Monkey/',  
-                 seed=6
-                 ):      
+    def __init__(self, bio_root='/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Monkey/', seed=6, **kwargs):
         """
             this function determines the time range of interest [-50, 200] from the original time range [-100, 380], which 
             directly inherit from source Matlab code

@@ -5,6 +5,7 @@ Created on Thu Feb  9 12:53:33 2023
 
 @author: acxyle
 
+    ...
    
 """
 
@@ -26,7 +27,7 @@ class FSA_ANOVA():
     """
         FSA: Face-Selectivity-Analysis
         
-        the 'Features' contains all processed img fr, not spike
+        the 'Features' contains all processed img fr, not spike train
     """
     
     def __init__(self, root='./Face_Identity VGG16', layers=None, neurons=None, num_classes=50, num_samples=10, alpha=0.01, **kwargs):
@@ -46,7 +47,25 @@ class FSA_ANOVA():
         self.num_samples = num_samples
         
         self.model_structure = root.split('/')[-1].split(' ')[-1]     # in current code, the 'root' file should list those information in structural name, arbitrary
-
+    
+    
+    def __call__(self, **kwargs):
+        
+        # --- 1. 
+        self.calculation_ANOVA(**kwargs)
+        
+        ratio_dict = self.calculation_ANOVA_pct(**kwargs)
+        
+        # --- 2.
+        fig, ax = plt.subplots(figsize=(math.floor(len(self.layers)/1.6), 6))
+        
+        title = f"Sensitive pct {self.model_structure}"
+        
+        self.plot_ANOVA_pct(ratio_dict, title=title, plot_bar=True, **kwargs)
+        
+        fig.savefig(os.path.join(self.dest_ANOVA, f'{title}.svg'), bbox_inches='tight')
+        plt.close()
+    
 
     def calculation_ANOVA(self, normalize=True, sort=True, num_workers=-1, **kwargs):
         """
@@ -61,8 +80,8 @@ class FSA_ANOVA():
         stats_path = os.path.join(self.dest_ANOVA, 'ANOVA_stats.pkl')
         
         if os.path.exists(idces_path) and os.path.exists(stats_path):
-            self.ANOVA_idces = utils_.load(idces_path)
-            self.ANOVA_stats = utils_.load(stats_path)
+            self.ANOVA_idces = self.load_ANOVA_idces()
+            self.ANOVA_stats = self.load_ANOVA_stats()
         
         else:
             self.ANOVA_idces = {}
@@ -89,15 +108,17 @@ class FSA_ANOVA():
             utils_._print('[Codinfo] ANOVA results have been saved in {}'.format(self.dest_ANOVA))
             
             
-    def calculate_sensitive_pct(self, ):
+    def calculation_ANOVA_pct(self, ANOVA_path=None, **kwargs):
         
-        ratio_path = os.path.join(self.dest_ANOVA, 'ratio.pkl')
+        ratio_path = os.path.join(self.dest_ANOVA, 'ratio.pkl') if ANOVA_path == None else ANOVA_path
         
         if os.path.exists(ratio_path):
             
             ratio_dict = utils_.load(ratio_path, verbose=False)
             
         else:
+            
+            self.ANOVA_idces = self.load_ANOVA_idces()
             
             ratio_dict = {layer: self.ANOVA_idces[layer].size/self.neurons[idx]*100 for idx, layer in enumerate(self.layers)}
                   
@@ -106,7 +127,7 @@ class FSA_ANOVA():
         return ratio_dict
             
             
-    def plot_ANOVA_pct(self, title='sensitive ratio', **kwargs):      
+    def plot_ANOVA_pct(self, fig, ax, ratio_dict, title='sensitive ratio', line_color=None, plot_bar=False, **kwargs):      
         """
             ...
         """
@@ -116,235 +137,32 @@ class FSA_ANOVA():
         plt.rcParams.update({'font.size': 22})     
         plt.rcParams.update({"font.family": "Times New Roman"})
  
-        if not hasattr(self, 'ANOVA_idces'):
-            self.ANOVA_idces = utils_.load(os.path.join(self.dest_ANOVA, 'ANOVA_idces.pkl'))
-
         # -----
-        ratio_dict = self.calculate_sensitive_pct()
-        layers_color_list = color_column(self.layers)
-        
-        x = list(ratio_dict.keys())
-        y = list(ratio_dict.values())
+        _, pcts = zip(*ratio_dict.items())
         
         # -----
-        fig, ax = plt.subplots(figsize=(math.floor(len(self.layers)/1.6), 6))
+        if line_color is None:
+            line_color = 'red'
         
-        ax.plot(x, y, color='red', linestyle='-', linewidth=2.5, alpha=1, label='sensitive units')
-        ax.bar(x, y, color=layers_color_list, width=0.5)
-        ax.set_xticks(np.arange(len(x)))
-        ax.set_xticklabels(x, rotation='vertical')
-        ax.set_ylabel('percentage (%)')
-        ax.set_title(f'{title} - {self.model_structure}')
-        ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
-        ax.legend()
+        if plot_bar:
+            colors = color_column(self.layers)
+            plot_ANOVA_pct(ax, self.layers, pcts, title=title, bar_colors=colors, line_color=line_color, linewidth=1.5, **kwargs)
         
-        fig.savefig(os.path.join(self.dest_ANOVA, f'{title}.svg'), bbox_inches='tight')
-        plt.close()
-            
-    
-    # FIXME --- 
-    # ------------------------------------------------------------------------------------------------------------------
-    def plot_ANOVA_pct_multi_models(self, ):
-        
-        plt.rcParams.update({'font.size': 18})    
-        plt.rcParams.update({"font.family": "Times New Roman"})
-        
-        ANOVA_save_root = os.path.join(self.model_root, 'ANOVA')
-        utils_.make_dir(ANOVA_save_root)
-        
-        def _ANOVA_pct_collect():
-            
-            ANOVA_pct_folds_path = os.path.join(ANOVA_save_root, 'ANOVA_folds_array.pkl')
-            
-            if os.path.exists(ANOVA_pct_folds_path):
-                
-                ANOVA_folds_array = utils_.load(ANOVA_pct_folds_path)
-            
-            else:
-            
-                ANOVA_folds = {}
-        
-                for fold_idx in np.arange(1, self.num_fold):
-                    
-                    root = os.path.join(self.model_root+str(fold_idx))
-                    
-                    ANOVA_folds[fold_idx] = utils_.load(os.path.join(root, 'Analysis', 'ANOVA', 'ratio.pkl'), verbose=False)
-                    
-                ANOVA_folds_array = np.array([np.array(_) for _ in list(ANOVA_folds.values())])     # (num_folds, num_layers)
-                
-                utils_.dump(ANOVA_folds_array, ANOVA_pct_folds_path)
-            
-            return ANOVA_folds_array
-        
-        def _ANOVA_pct_plot(ax, layers, ANOVA_folds_array, title):
-            
-            folds_mean = np.mean(ANOVA_folds_array, axis=0)
-            folds_std = np.std(ANOVA_folds_array, axis=0)  
-            
-            ax.fill_between(np.arange(len(layers)), folds_mean-folds_std, folds_mean+folds_std, edgecolor=None, facecolor='skyblue', alpha=0.75)
-            ax.plot(np.arange(len(layers)), folds_mean, color='blue', linewidth=0.5)
-            ax.set_xticks(np.arange(len(layers)), layers, rotation='vertical')
-            ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
-            ax.set_title(f'{self.model_structure} {title}')
-            
-            plt.tight_layout()
-            fig.savefig(os.path.join(ANOVA_save_root, f'{title}_folds.svg'))
-            plt.close()
-        
-        # ---
-        ANOVA_folds_array = _ANOVA_pct_collect()
-        
-        # ---
-        fig, ax = plt.subplots(figsize=(18,10))
-        _ANOVA_pct_plot(ax, self.layers, ANOVA_folds_array, 'ANOVA_pct')
-
-        # ---
-        act_idx, act_layers, act_neurons, _ = utils_.activation_function(self.model_structure, self.layers, self.neurons)
-        ANOVA_folds_array = ANOVA_folds_array[:, act_idx]
-        
-        fig, ax = plt.subplots(figsize=(10,10))
-        _ANOVA_pct_plot(ax, act_layers, ANOVA_folds_array, 'ANOVA_pct_act')
-        
-        
-    # FIXME ----- test version ----- need to fix, move the function in Main_analyzer to here
-    def plot_ANOVA_model_comparison(self, comparing_models_list):
-        """
-            in this function, the default model is which underlies this class, and the input is a list of comparing models
-        """
-        print('[Codinfo] Executing selectivity_neuron_ANOVA_comparison_plot...')
-        
-        plt.rcParams.update({'font.size': 22})
-        plt.rcParams.update({"font.family": "Times New Roman"})
-        
-        # ----- operation to acquire the ratio of current model
-        fig_folder = os.path.join(self.dest, 'Figures')
-        utils_.make_dir(fig_folder)
-        
-        ratio_path = os.path.join(fig_folder, 'ratio.pkl')
-        
-        layers_color_list = color_column(self.layers)
-        
-        if os.path.exists(ratio_path):
-            ratio = utils_.load(ratio_path)
         else:
-            raise RuntimeError('[Coderror] no ratio file detected for current model, plase run plot_ANOVA_pct() first.')
+            plot_ANOVA_pct(ax, self.layers, pcts, title=title, line_color=line_color, linewidth=1.5, **kwargs)
         
-        # -----
-        def _load_comparing_data(comparing_model):
-
-            ratio_comparing = utils_.load(f'/media/acxyle/Data/ChromeDownload/{comparing_model}/Analysis/ANOVA/Figures/ratio.pkl')
-            
-            if 'baseline' not in comparing_model.lower():
-                comparing_model_config_list = comparing_model.split('_')[1:-2]     # for SNN: 1_2_3_4 - structure_neuron_surrogate_T, for ANN: 1_2 - structure_activation
-            else:
-                comparing_model_config_list = [comparing_model.split('_')[1]+'(baseline)', 'ReLU']
-                
-            return ratio_comparing, comparing_model_config_list
+    
+    def load_ANOVA_idces(self, ANOVA_idces_path=None):
+        if not ANOVA_idces_path:
+            ANOVA_idces_path = os.path.join(self.dest_ANOVA, 'ANOVA_idces.pkl')
+        return utils_.load(ANOVA_idces_path)
         
-        # -----
-        # 1. for all calculation
-        title = 'Sensitive Unit Percentage(s) Comparision'
-        fig, ax = plt.subplots(figsize=(math.floor(len(self.layers)/1.6), 10), dpi=100)
-        
-        # plot fundamental model on the canvas
-        self.plot_single_figure_VS(ax=ax, layers=self.layers, ratio=ratio, layers_color_list=layers_color_list, model_structure=self.model_structure,
-                                   linewidth=2.5, alpha=1, linestyle='-')
-        
-        # plot comparing models on the canvas
-        for comparing_model in comparing_models_list:     # for each comparing model
-            ratio_comparing, comparing_model_config_list = _load_comparing_data(comparing_model)
-            comparing_model_structure = comparing_model_config_list[0]
-            
-            layers, _, _ = utils_.get_layers_and_neurons(comparing_model_structure, self.num_classes)
-            layer_idx = [idx for idx, _ in enumerate(self.layers) if _ in layers]
-            layers_color_list_comparing = [layers_color_list[_] for _ in layer_idx]
-            
-            print(f'[Codinfo] adding Comparing models: {comparing_model_structure}')
-            
-            self.plot_single_figure_VS(ax=ax, layers=layers, ratio=ratio_comparing, layers_color_list=layers_color_list_comparing, model_structure=comparing_model_structure)
-        
-        ax.set_xticklabels(self.layers, rotation='vertical')
-        ax.set_ylabel('percentage (%)')
-        ax.set_title(f'{title}')
-        ax.legend()
-        
-        fig.savefig(os.path.join(fig_folder, f'{title}.svg'), bbox_inches='tight')
-
-        plt.close()
-        
-        # 2. for imaginary neurons only ([question] why contains pool layers?) - this version is for ANN because 'act', SNN should be 'neuron'
-        title = 'Sensitive Unit Percentage(s) Comparision - Activation'
-        
-        # ----- for fundamental model
-        neuron_layer = [[idx, layer] for idx, layer in enumerate(self.layers) if 'neuron' in layer or 'pool' in layer or 'fc_3' in layer]
-        neuron_layer_idx = [_[0] for _ in neuron_layer]
-        neuron_layer = [_[1] for _ in neuron_layer]
-        
-        ratio_neuron = [ratio[_] for _ in neuron_layer_idx]
-        layers_color_list_neuron = [layers_color_list[_] for _ in neuron_layer_idx]
-        
-        fig, ax = plt.subplots(figsize=(math.floor(len(neuron_layer)/1.6), 10), dpi=100)
-        
-        # plot fundamental model on the canvas
-        self.plot_single_figure_VS(ax=ax, layers=neuron_layer, ratio=ratio_neuron, layers_color_list=layers_color_list_neuron, 
-                                   model_structure=self.model_structure, linewidth=2.5, alpha=1, linestyle='-')
-                
-        # plot comparing models on the canvas
-        for comparing_model in comparing_models_list:     # for each comparing model
-            ratio_comparing, comparing_model_config_list = _load_comparing_data(comparing_model)
-            comparing_model_structure = comparing_model_config_list[0]
-            
-            layers, _, _ = utils_.get_layers_and_neurons(comparing_model_structure, self.num_classes)
-            layers = [[idx,_] for idx, _ in enumerate(layers) if 'neuron' in _ or 'pool' in _ or 'fc_3' in _]     # <- select target layers
-            layers_idx = [_[0] for _ in layers]
-            layers = [_[1] for _ in layers]
-            ratio_comparing = [ratio_comparing[_] for _ in layers_idx]
-            
-            layer_idx = [idx for idx, _ in enumerate(self.layers) if _ in layers]
-            layers_color_list_comparing = [layers_color_list[_] for _ in layer_idx]     # <- determine the colors
-            
-            print(f'[Codinfo] adding Comparing models: {comparing_model_structure}')
-            
-            self.plot_single_figure_VS(ax=ax, layers=layers, ratio=ratio_comparing, layers_color_list=layers_color_list_comparing, model_structure=comparing_model_structure)
-        
-        ax.set_xticklabels(layers, rotation='vertical')
-        ax.set_ylabel('percentage (%)')
-        ax.set_title(f'{title}')
-        ax.legend()
-        
-        fig.savefig(os.path.join(fig_folder, f'{title}.png'), bbox_inches='tight')
-        
-        plt.close()
-        
-
-    # FIXME
-    def plot_single_figure_VS(self, **kwargs):
-        """
-            every time plot one model      
-        """
-        ax = kwargs['ax']
-        
-        # --- default setting for comparing lines
-        if 'linewidth' not in kwargs.keys():
-            kwargs['linewidth'] = 1.5
-        if 'alpha' not in kwargs.keys():
-            kwargs['alpha'] = 0.5
-        if 'linestyle' not in kwargs.keys():
-            kwargs['linestyle'] = '--'
-            
-        # --- default setting for baseline
-        if 'baseline' in kwargs['model_structure']:
-            kwargs['linewidth'] = 2.0
-            kwargs['alpha'] = 0.75
-            kwargs['linestyle'] = '--'
-        
-        logging.getLogger('matplotlib').setLevel(logging.ERROR)
-        with warnings.catch_warnings():
-            warnings.simplefilter(action='ignore')
-            
-            ax.plot(kwargs['layers'], kwargs['ratio'], linestyle=kwargs['linestyle'], linewidth=kwargs['linewidth'], alpha=kwargs['alpha'], label=kwargs['model_structure'])
-            ax.bar(kwargs['layers'], kwargs['ratio'], color=kwargs['layers_color_list'], width=0.5, alpha=kwargs['alpha'])
-            
+    
+    def load_ANOVA_stats(self, ANOVA_stats_path=None):
+        if not ANOVA_stats_path:
+            ANOVA_stats_path = os.path.join(self.dest_ANOVA, 'ANOVA_stats.pkl')
+        return utils_.load(ANOVA_stats_path)
+    
             
 # ----------------------------------------------------------------------------------------------------------------------
 def one_way_ANOVA(input, num_classes=50, num_samples=10, **kwargs):
@@ -362,6 +180,26 @@ def one_way_ANOVA(input, num_classes=50, num_samples=10, **kwargs):
     return p
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+def plot_ANOVA_pct(ax, layers, pcts, title=None, bar_colors=None, line_color=None, linewidth=2.5, label=None, **kwargs):
+    
+    if bar_colors is not None:
+        ax.bar(layers, pcts, color=bar_colors, width=0.5)
+    
+    if title is not None:
+        ax.set_title(title)
+        
+    if label == None:
+        label='sensitive units'
+        
+    ax.plot(layers, pcts, color=line_color, linestyle='-', linewidth=linewidth, alpha=1, label=label)
+    ax.set_xticks(np.arange(len(layers)))
+    ax.set_xticklabels(layers, rotation='vertical')
+    ax.set_ylabel('percentage (%)')
+    ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
+    ax.legend()
+     
+    
 # ----------------------------------------------------------------------------------------------------------------------
 def color_column(layers, constant_colors=False, **kwargs):
     """
@@ -394,14 +232,170 @@ def color_column(layers, constant_colors=False, **kwargs):
     return layers_color_list
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+class FSA_ANOVA_folds(FSA_ANOVA):
+    
+    def __init__(self, num_folds=5, root=None, **kwargs):
+        
+        super().__init__(root=root, **kwargs)
+        
+        self.root = root
+        
+        self.num_folds = num_folds
+        
+        ...
+    
+    def __call__(self, **kwargs):
+        
+        plt.rcParams.update({'font.size': 18})    
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
+        # --- 1. calculation
+        raio_dict = self.calculation_ANOVA_pct_folds(**kwargs)
+        
+        # --- 2. plot
+        fig, ax = plt.subplots(figsize=(math.floor(len(self.layers)/1.6), 6))
+        
+        title=f'Sensitive pct {self.model_structure}'
+        self.plot_ANOVA_pct_folds(fig, ax, raio_dict, title=title, **kwargs)
+        
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.dest_ANOVA, f'{title}.svg'))
+        
+        plt.close()
+
+        
+    def calculation_ANOVA_pct_folds(self, ANOVA_path=None, **kwargs):
+        
+        ratio_dict_path = os.path.join(self.dest_ANOVA, 'ratio.pkl') if ANOVA_path == None else ANOVA_path
+        
+        if os.path.exists(ratio_dict_path):
+            
+            ratio_dict = utils_.load(ratio_dict_path)
+        
+        else:
+        
+            ratio_dict = [utils_.load(os.path.join(self.root, f"-_Single Models/{self.root.split('/')[-1]}{fold_idx}/Analysis/ANOVA/ratio.pkl"), verbose=False) for fold_idx in np.arange(self.num_folds)]
+            ratio_dict = {_: [ratio_dict[__][_] for __ in np.arange(self.num_folds)] for _ in self.layers}
+            ratio_dict = {stat: {k: getattr(np, stat)(v) for k, v in ratio_dict.items()} for stat in ['mean', 'std']}
+
+            utils_.dump(ratio_dict, ratio_dict_path)
+        
+        return ratio_dict
+    
+    
+    def plot_ANOVA_pct_folds(self, fig, ax, ratio_dict, line_color=None, title=None, **kwargs):
+        
+        # --- init
+        layers, pcts = zip(*ratio_dict['mean'].items())
+        _, stds = zip(*ratio_dict['std'].items())
+        
+        pcts, stds = map(np.array, [pcts, stds])
+
+        if line_color is None:
+            line_color = 'red'
+        
+        plot_ANOVA_pct(ax, self.layers, pcts, title=title, line_color=line_color, linewidth=1.5, **kwargs)
+        
+        ax.fill_between(np.arange(len(self.layers)), pcts-stds, pcts+stds, edgecolor=None, facecolor=utils_.lighten_color(utils_.color_to_hex(line_color)), alpha=0.5)
+        
+        
+   
+# ----------------------------------------------------------------------------------------------------------------------
+class FSA_ANOVA_Comparison(FSA_ANOVA_folds):
+    """
+        this is far from an automatic script, need to manually change plot settings to compare a lof of different models
+    """
+
+    def __init__(self, roots_and_models, **kwargs):
+        
+        super().__init__(root=roots_and_models[0][0], **kwargs)     # save the comparison results in the fisrt folder
+        
+        plt.rcParams.update({'font.size': 18})    
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
+        # ---
+        color_pool = ['blue', 'green', 'red', 'purple', 'orange', 'chocolate']     # manually change the pool
+        
+        # --- dummy layers
+        self.layers, _, _ = utils_.get_layers_and_units(roots_and_models[0][1], target_layers='act')
+        
+        # ---
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        ratio_dict = {}
+        title = []
+        
+        for idx, (root, model) in enumerate(roots_and_models):
+            
+            if 'fold' in root:
+                
+                ratio_dict = self.calculation_ANOVA_pct_folds(os.path.join(root, 'Analysis/ANOVA/ratio.pkl'))
+
+                _label = root.split('/')[-1].split(' ')[-1].replace('_fold_', '').replace('_CelebA2622', '')
+                title.append(_label)
+                
+                self.plot_ANOVA_pct_folds(fig, ax, ratio_dict, line_color=color_pool[idx], label=_label)
+                
+                ...
+                
+            else:
+                
+                ratio_dict = self.calculation_ANOVA_pct(os.path.join(root, 'Analysis/ANOVA/ratio.pkl'))
+                
+                _label=root.split('/')[-1].split(' ')[-1]
+                title.append(_label)
+                
+                self.plot_ANOVA_pct(fig, ax, ratio_dict, line_color=color_pool[idx], label=_label)
+                ...
+
+
+        #ax.set_title(title:=' v.s '.join(title))
+        ax.set_title(title:='ANN v.s SNN')
+        
+        # --- setting
+        ...
+        # ---
+        
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.dest_ANOVA, f'Comparison {title}.svg'))
+        
+        plt.close()
+        
+        ...
+        
+        
+    def __call__(self, **kwargs):
+        
+        ...
+
+    
+   
 # ======================================================================================================================
 if __name__ == "__main__":
     
     root_dir = '/home/acxyle-workstation/Downloads'
     
-    layers, neurons, shapes = utils_.get_layers_and_units('vgg16', target_layers='act')
+    # -----
+    layers, neurons, shapes = utils_.get_layers_and_units('vgg16_bn', target_layers='act')
     
-    FSA_ANOVA = FSA_ANOVA(os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
-         
-    FSA_ANOVA.calculation_ANOVA()
-    FSA_ANOVA.plot_ANOVA_pct()
+    # ---
+    #FSA_ANOVA = FSA_ANOVA(os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
+    #FSA_ANOVA()
+    
+    # ---
+    #FSA_ANOVA_folds = FSA_ANOVA_folds(num_folds=5, root=os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), layers=layers, neurons=neurons)
+    #FSA_ANOVA_folds()
+    
+    # -----
+    roots_models = [
+        (os.path.join(root_dir, 'Face Identity VGG16_fold_'), 'vgg16'),
+        (os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), 'vgg16_bn'),
+        (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+        (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+        (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+        (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn')
+        ]
+    FSA_ANOVA_Comparison = FSA_ANOVA_Comparison(roots_models)
+    
+    

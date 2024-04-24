@@ -62,8 +62,6 @@ class FSA_Encode():
         self.num_classes = num_classes
         self.num_samples = num_samples
 
-        self.ANOVA_idces = utils_.load(os.path.join(self.dest, 'ANOVA/ANOVA_idces.pkl'))   # <- consider to remove this?
-        
         self.model_structure = root.split('/')[-1].split(' ')[-1]
      
         self.basic_types = ['s_si', 's_wsi', 's_mi', 's_wmi', 's_non_encode', 'ns_si', 'ns_wsi', 'ns_mi', 'ns_wmi', 'ns_non_encode']   
@@ -75,7 +73,7 @@ class FSA_Encode():
             ...
         """
         
-        utils_._print('Executing calculation_Encode...')
+        utils_.formatted_print('Executing calculation_Encode...')
         
         sort_dict_path = os.path.join(self.dest_Encode, 'Sort_dict.pkl')
         encode_dict_path = os.path.join(self.dest_Encode, 'Encode_dict.pkl')
@@ -89,6 +87,8 @@ class FSA_Encode():
             # ----- init
             self.Encode_dict = {}
             self.Sort_dict = {}
+            
+            self.ANOVA_idces = utils_.load(os.path.join(self.dest, 'ANOVA/ANOVA_idces.pkl')) 
             
             # --- running
             for layer in self.layers:     # for each layer
@@ -157,7 +157,7 @@ class FSA_Encode():
         Sort_dict = {k: {_:v[_] for _ in basic_types} for k,v in self.Sort_dict.items()}
         Sort_dict = {layer: {**Sort_dict[layer], **advanced_Sort_dict[layer]} for layer in self.layers}
         
-        return Sort_dict
+        return {layer: {type_: v.astype(int) for type_, v in dict_.items()} for layer, dict_ in Sort_dict.items()}
         
     
     def calculation_Sort_dict_advanced(self, used_unit_types:list[str], **kwargs):
@@ -172,23 +172,23 @@ class FSA_Encode():
     
     
     # FIXME --- 
-    def calculation_units_pct(self, unit_types=['s_si', 's_wsi', 's_mi', 's_wmi', 'non_selective']):
+    def calculation_units_pct(self, used_unit_types=['s_si', 's_wsi', 's_mi', 's_wmi', 'non_selective'], **kwargs):
         """
             
-            input: unit_types
+            input: used_unit_types
         
             return: pct of units of each type along layers
             
         """
         # ---
-        Sort_dict = self.calculation_Sort_dict(unit_types)
+        Sort_dict = self.calculation_Sort_dict(used_unit_types)
         
-        unit_pct = {_: np.array([len(Sort_dict[layer][_])/self.neurons[idx]*100 for idx, layer in enumerate(self.layers)]) for _ in unit_types}
+        unit_pct = {_: np.array([len(Sort_dict[layer][_])/self.neurons[idx]*100 for idx, layer in enumerate(self.layers)]) for _ in used_unit_types}
         
         return unit_pct
     
     
-    def calculation_curve_dict(self, units_pct):
+    def calculation_curve_dict(self, units_pct, Encode_path=None, **kwargs):
         """
             this function return the cruve config for each key of Encode_types_dict. 
             Filter the keys of the input if need to select special types
@@ -290,7 +290,7 @@ class FSA_Encode():
         return style_config_df
     
     
-    def plot_Encode_pct_single(self, unit_types:list[str]=['s_si', 's_wsi', 's_mi', 's_wmi', 'non_selective'], **kwargs):
+    def plot_Encode_pct_single(self, used_unit_types:list[str]=['s_si', 's_wsi', 's_mi', 's_wmi', 'non_selective'], **kwargs):
         """
             ...
         """
@@ -301,7 +301,7 @@ class FSA_Encode():
         
         self.Sort_dict = self.load_Sort_dict()
 
-        units_pct = self.calculation_units_pct(unit_types, **kwargs)
+        units_pct = self.calculation_units_pct(used_unit_types, **kwargs)
         curve_dict = self.calculation_curve_dict(units_pct, **kwargs)
         
         # --- plot
@@ -311,7 +311,7 @@ class FSA_Encode():
         
         ax.set_title(title:=self.model_structure)
         
-        fig.savefig(os.path.join(fig_folder, f'{title}-{unit_types}.svg'), bbox_inches='tight')    
+        fig.savefig(os.path.join(fig_folder, f'{title}-{used_unit_types}.svg'), bbox_inches='tight')    
         plt.close()
     
     
@@ -349,19 +349,23 @@ class FSA_Encode():
     
     
     @staticmethod
-    def plot_units_pct(fig, ax, layers=None, curve_dict=None, **kwargs):
+    def plot_units_pct(fig, ax, layers=None, curve_dict=None, color=None, label=None, **kwargs):
         """
-            this function is the basic function to plot pct of different types of units over layers
+            this function is the basic function to plot pct of different types of units over layers, manually change
         """
         #logging.getLogger('matplotlib').setLevel(logging.ERROR)
         
         if curve_dict is not None:
             for curve in curve_dict.keys():    
                 curve = curve_dict[curve]
-                ax.plot(curve['values'], color=curve['color'], linestyle=curve['linestyle'], linewidth=curve['linewidth'], label=curve['label'])
                 
-                if 'std' in curve.keys():
-                    ax.fill_between(np.arange(len(layers)), curve['values']-curve['std'], curve['values']+curve['std'], edgecolor=None, facecolor=utils_.lighten_color(curve['color']), alpha=0.75)
+                if color is not None and label is not None:
+                    curve['color'], curve['label'] = color, label
+
+                ax.plot(curve['values'], color=curve['color'], linestyle=curve['linestyle'], linewidth=curve['linewidth'], label=curve['label'])
+                    
+                if 'stds' in curve.keys():
+                    ax.fill_between(np.arange(len(layers)), curve['values']-curve['stds'], curve['values']+curve['stds'], edgecolor=None, facecolor=utils_.lighten_color(utils_.color_to_hex(curve['color'])), alpha=0.75)
             
         ax.legend(framealpha=0.5)
         ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
@@ -433,7 +437,7 @@ class FSA_Encode():
             ...
         """
 
-        utils_._print('plotting Encode_freq...')
+        utils_.formatted_print('plotting Encode_freq...')
         utils_.make_dir(fig_folder:=os.path.join(self.dest_Encode, 'Figures'))
         
         # -----
@@ -685,10 +689,7 @@ class FSA_Encode():
         fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
         fig.suptitle(f'layer - ID (3D) [{self.model_structure}]', x=0.55, y=0.95, fontsize=28)
         
-    
-    
-            
-        
+     
     def load_Sort_dict(self, sort_dict_path=None):
         if not sort_dict_path:
             sort_dict_path = os.path.join(self.dest_Encode, 'Sort_dict.pkl')
@@ -722,6 +723,153 @@ class FSA_Encode():
         
         return intersection_x, intersection_y
         
+
+# ----------------------------------------------------------------------------------------------------------------------
+class FSA_Encode_folds(FSA_Encode):
+    
+    def __init__(self, num_folds=5, root=None, **kwargs):
+        
+        super().__init__(root=root, **kwargs)
+        
+        self.root = root
+        
+        self.num_folds = num_folds
+        
+        ...
+        
+        
+    def __call__(self, used_unit_types=['s_si', 's_wsi', 's_mi', 's_wmi', 'non_selective'], **kwargs):
+        
+        curve_dict_folds = self.calculation_curve_dict_folds(used_unit_types=used_unit_types, **kwargs)
+        
+        # ---
+        fig, ax = plt.subplots(figsize=(10,6))
+        
+        self.plot_units_pct_folds(fig, ax, curve_dict_folds, used_unit_types=used_unit_types, **kwargs)
+        
+        ax.set_title(title:=f'{self.model_structure} {used_unit_types}')
+        
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.dest_Encode, f'Encode pct {title}.svg'), bbox_inches='tight')
+        plt.close()
+        ...
+    
+    
+    def calculation_curve_dict_folds(self, used_unit_types, Encode_path=None, **kwargs):
+
+        curve_dict_folds_path = os.path.join(self.dest_Encode, f'ratio_curve_dict {used_unit_types}.pkl') if Encode_path == None else Encode_path              
+        
+        if os.path.exists(curve_dict_folds_path):
+            
+            curve_dict_folds = utils_.load(curve_dict_folds_path, verbose=False)
+        
+        else:
+            
+            # --- merge
+            curve_dict_folds = {}
+    
+            for fold_idx in np.arange(self.num_folds):
+                
+                self.Sort_dict = utils_.load(os.path.join(self.root, f"-_Single Models/{self.root.split('/')[-1]}{fold_idx}/Analysis/Encode/Sort_dict.pkl"))
+                
+                Encode_types_pct = self.calculation_units_pct(used_unit_types=used_unit_types)
+                
+                curve_dict_folds[fold_idx] = self.calculation_curve_dict(Encode_types_pct)
+            
+            # --- reconstruct
+            curve_dict_folds = {_: [curve_dict_folds[fold_idx][_] for fold_idx in np.arange(self.num_folds)] for _ in used_unit_types}
+            
+            for tk, curve_dict in curve_dict_folds.items():
+            
+                curve_dict = {_: [curve_dict[fold_idx][_] for fold_idx in np.arange(self.num_folds)] for _ in ['values', 'point', 'color', 'linestyle', 'linewidth', 'label']}
+                curve_dict_folds[tk] = {k: list(set(v))[0] if not isinstance(v[0], np.ndarray) else np.array(v) for k, v in curve_dict.items()}
+                curve_dict_folds[tk]['stds'], curve_dict_folds[tk]['values'] = [getattr(np, stat)(curve_dict_folds[tk]['values'], axis=0) for stat in ['std', 'mean']]
+
+            # ---
+            utils_.dump(curve_dict_folds, curve_dict_folds_path)
+        
+        return curve_dict_folds
+    
+    
+    def plot_units_pct_folds(self, fig, ax, curve_dict_folds, used_unit_types=None, color=None, label=None, **kwargs):
+        
+        plt.rcParams.update({'font.size': 18})    
+        plt.rcParams.update({"font.family": "Times New Roman"})
+
+        self.plot_units_pct(fig, ax, self.layers, curve_dict_folds, color=color, label=label, **kwargs)
+        
+        
+        
+
+# ----------------------------------------------------------------------------------------------------------------------
+class FSA_Encode_Comparison(FSA_Encode_folds):
+    """
+        not a script, manually change the code
+    """
+    
+    def __init__(self, ):
+        
+        plt.rcParams.update({'font.size': 18})    
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
+        # ---
+        self.color_pool = ['blue', 'green', 'red', 'purple', 'orange', 'chocolate']     # manually change the pool
+        
+        
+    def __call__(self, roots_and_models, used_unit_types, **kwargs):
+        """
+            single unit type now
+        """
+        assert len(used_unit_types) == 1
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        ratio_dict = {}
+        title = []
+        
+        for idx, (root, model) in enumerate(roots_and_models):
+            
+            super().__init__(root=roots_and_models[idx][0], **kwargs)
+            self.layers, self.neurons, _ = utils_.get_layers_and_units(roots_and_models[idx][1], target_layers='act')
+            
+            if 'fold' in root:
+                
+                ratio_dict = self.calculation_curve_dict_folds(used_unit_types=used_unit_types, Encode_path=os.path.join(root, f'Analysis/Encode/ratio_curve_dict {used_unit_types}.pkl'))
+
+                _label = root.split('/')[-1].split(' ')[-1].replace('_fold_', '').replace('_CelebA2622', '')
+                title.append(_label)
+                
+                self.plot_units_pct_folds(fig, ax, ratio_dict, used_unit_types=used_unit_types, color=self.color_pool[idx], label=_label)
+                
+                ...
+                
+            else:
+                
+                self.Sort_dict = self.load_Sort_dict()
+                units_pct = self.calculation_units_pct(used_unit_types, **kwargs)
+                ratio_dict = self.calculation_curve_dict(units_pct, Encode_path=os.path.join(root, f'Analysis/Encode/ratio_curve_dict {used_unit_types}.pkl'), **kwargs)
+                
+                _label=root.split('/')[-1].split(' ')[-1]
+                title.append(_label)
+                
+                self.plot_units_pct(fig, ax, self.layers, ratio_dict, color=self.color_pool[idx], label=_label)
+                ...
+
+
+        ax.set_title(title:=f'{used_unit_types} pct '+' v.s '.join(title))
+        #ax.set_title(title:=f'{used_unit_types} pct ANN v.s SNN ')
+        
+        # --- setting
+        ...
+        # ---
+        
+        fig.tight_layout()
+        fig.savefig(os.path.join(roots_and_models[0][0], f'Analysis/Encode/Comparison {title}.svg'))
+        
+        plt.close()
+        
+        ...
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 def _unit_types(used_unit_types):
@@ -890,7 +1038,7 @@ class FSA_Responses(FSA_Encode):
                 
         assert start_layer_idx < 0, f'[Coderror] start_layer_idx {start_layer_idx} must be negative in current design'
 
-        utils_._print(f'Executing plot_stacked_responses... | num_types: {num_types} | num_layers: {np.abs(start_layer_idx)}')
+        utils_.formatted_print(f'Executing plot_stacked_responses... | num_types: {num_types} | num_layers: {np.abs(start_layer_idx)}')
         
         # ---
         utils_.make_dir(fig_folder:=os.path.join(self.dest_Responses, 'Stacked Responses'))
@@ -1127,9 +1275,7 @@ class FSA_SVM(FSA_Encode):
     def __init__(self, **kwargs):
         
         super().__init__(**kwargs)
-        
-        self.Sort_dict = self.load_Sort_dict()
-        
+
         self.dest_SVM = os.path.join(self.dest_Encode, 'SVM')
         utils_.make_dir(self.dest_SVM)
         
@@ -1139,6 +1285,8 @@ class FSA_SVM(FSA_Encode):
     def process_SVM(self, used_unit_types=['qualified', 'strong_selective', 'weak_selective', 'non_selective'], **kwargs):
         
         plt.rcParams.update({"font.family": "Times New Roman"})
+        
+        self.Sort_dict = self.load_Sort_dict()
         
         # ----- calculation
         layer_SVM = self.calculation_SVM(used_unit_types)
@@ -1158,7 +1306,7 @@ class FSA_SVM(FSA_Encode):
             ...
         """
         
-        utils_._print('computing SVM...')
+        utils_.formatted_print('computing SVM...')
 
         if os.path.exists(SVM_path:=os.path.join(self.dest_SVM, f'SVM {used_unit_types}.pkl')):
             
@@ -1188,7 +1336,7 @@ class FSA_SVM(FSA_Encode):
         return layer_SVM
             
     
-    def plot_SVM(self, ax, layer_SVM, **kwargs):
+    def plot_SVM(self, ax, layer_SVM, color=None, label=None, **kwargs):
         """
             ...
         """
@@ -1197,19 +1345,23 @@ class FSA_SVM(FSA_Encode):
         SVM_type_conifg = self.plot_Encode_config
 
         # --- all
-        for k,v in layer_SVM['acc'].items():
+        for k, v in layer_SVM['acc'].items():
             
             plot_config = SVM_type_conifg.loc[k]
+            
+            if color is None and label is None:
+                color = plot_config['color']
+                label = k
 
-            ax.plot(layer_SVM['acc'][k], color=plot_config['color'], linestyle=plot_config['linestyle'], label=k)
+            ax.plot(layer_SVM['acc'][k], color=color, linestyle=plot_config['linestyle'], label=label)
             
             if 'std' in layer_SVM:
-                ax.fill_between(np.arange(len(layers)), layer_SVM['acc'][k]-layer_SVM['std'][k], layer_SVM['acc'][k]+layer_SVM['std'][k], 
-                                edgecolor=None, facecolor=utils_.lighten_color(plot_config['color']), alpha=0.75, **kwargs)
+                ax.fill_between(np.arange(len(self.layers)), layer_SVM['acc'][k]-layer_SVM['std'][k], layer_SVM['acc'][k]+layer_SVM['std'][k], 
+                                edgecolor=None, facecolor=utils_.lighten_color(utils_.color_to_hex(color)), alpha=0.75, **kwargs)
 
         # -----
-        ax.set_xticks(np.arange(len(layers)))
-        ax.set_xticklabels(layers, rotation='vertical')
+        ax.set_xticks(np.arange(len(self.layers)))
+        ax.set_xticklabels(self.layers, rotation='vertical')
         
         ax.set_ylim([0, 100])
         ax.set_yticks(np.arange(1, 101))
@@ -1226,27 +1378,182 @@ def calculation_SVM(input, label, tqdm_bar, **kwargs):
     return utils_.SVM_classification(input, label, test_size=0.2, random_state=42, **kwargs) if input.size != 0 else 0.
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+class FSA_SVM_folds(FSA_SVM):
+    """
+        ...
+    """
+    
+    def __init__(self, num_folds=5, root=None, **kwargs):
+        super().__init__(root=root, **kwargs)
+        
+        self.root = root
+        
+        self.num_folds = num_folds
+        
+        ...
+    
+    
+    def __call__(self, used_unit_types=['qualified', 'strong_selective', 'weak_selective', 'non_selective'], **kwargs):
+        
+        # ---
+        SVM_folds = self.calculation_SVM_folds(used_unit_types=used_unit_types, **kwargs)
+        
+        # ---
+        fig, ax = plt.subplots(figsize=(10,6))
+        
+        self.plot_SVM_folds(fig, ax, SVM_folds, used_unit_types, **kwargs)
+        
+        ax.set_title(title:=f'SVM {self.model_structure}')
+        fig.savefig(os.path.join(self.dest_SVM, f'{title} {used_unit_types}.svg'), bbox_inches='tight')
+        
+        plt.close()
+    
+    
+    def calculation_SVM_folds(self, used_unit_types, SVM_path=None, **kwargs):
+
+        SVM_folds_path = os.path.join(self.dest_SVM, f'SVM_folds {used_unit_types}.pkl') if SVM_path == None else SVM_path              
+        
+        if os.path.exists(SVM_folds_path):
+            
+            SVM_folds = utils_.load(SVM_folds_path, verbose=False)
+        
+        else:
+            
+            SVM_folds = {}
+    
+            for fold_idx in np.arange(self.num_folds):
+                
+                SVM_folds[fold_idx] = utils_.load(os.path.join(self.root, f"-_Single Models/{self.root.split('/')[-1]}{fold_idx}/Analysis/Encode/SVM/SVM {used_unit_types}.pkl"))
+                
+            SVM_folds = {k: np.array([SVM_folds[fold_idx]['acc'][k] for fold_idx in range(self.num_folds)]) for k in used_unit_types}
+                
+            SVM_folds = {stat[0]: {k: getattr(np, stat[1])(v, axis=0) for k, v in SVM_folds.items()} for stat in zip(['acc', 'std'], ['mean', 'std'])}
+ 
+            utils_.dump(SVM_folds, SVM_folds_path)
+        
+        return SVM_folds
+        
+        
+    def plot_SVM_folds(self, fig, ax, SVM_folds, used_unit_types, **kwargs):
+        
+        self.plot_SVM(ax, SVM_folds, **kwargs)
+        
+
+# ----------------------------------------------------------------------------------------------------------------------
+class FSA_SVM_Comparison(FSA_SVM_folds):
+    """
+        unlike ANOVA and Encode, SVM results depend on specific computation thus load a complete dict then extract values
+    """
+    
+    def __init__(self, **kwargs):
+        
+        plt.rcParams.update({'font.size': 18})    
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
+        # ---
+        self.color_pool = ['blue', 'green', 'red', 'purple', 'orange', 'chocolate']     # manually change the pool
+        
+    def __call__(self, roots_and_models, used_unit_types, **kwargs):
+        """
+            single unit type now
+        """
+        
+        assert len(used_unit_types) == 1
+
+        dummy_types = ['qualified', 'strong_selective', 'weak_selective', 'non_selective']
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        title = []
+        
+        for idx, (root, model) in enumerate(roots_and_models):
+            
+            super().__init__(root=roots_and_models[idx][0], **kwargs)
+            self.layers, self.neurons, _ = utils_.get_layers_and_units(roots_and_models[idx][1], target_layers='act')
+            
+            if 'fold' in root:
+                
+                ratio_dict = self.calculation_SVM_folds(used_unit_types=dummy_types, SVM_path=os.path.join(root, f'Analysis/Encode/SVM/SVM_folds {dummy_types}.pkl'))
+                
+                ratio_dict = {_: {used_unit_types[0]: ratio_dict[_][used_unit_types[0]]} for _ in ['acc', 'std']}
+                
+                _label = root.split('/')[-1].split(' ')[-1].replace('_fold_', '').replace('_CelebA2622', '')
+                title.append(_label)
+                
+                self.plot_SVM_folds(fig, ax, ratio_dict, used_unit_types=used_unit_types, color=self.color_pool[idx], label=_label)
+                
+                ...
+                
+            else:
+                
+                self.Sort_dict = self.load_Sort_dict()
+                units_pct = self.calculation_units_pct(dummy_types, **kwargs)
+                ratio_dict = self.calculation_curve_dict(units_pct, Encode_path=os.path.join(root, f'Analysis/Encode/ratio_curve_dict {dummy_types}.pkl'), **kwargs)
+                
+                _label=root.split('/')[-1].split(' ')[-1]
+                title.append(_label)
+                
+                self.plot_units_pct(fig, ax, self.layers, ratio_dict, color=self.color_pool[idx], label=_label)
+                ...
+
+
+        ax.set_title(title:=f'{used_unit_types} SVM acc '+' v.s '.join(title))
+        #ax.set_title(title:=f'{used_unit_types} SVM acc ANN v.s SNN ')
+        
+        # --- setting
+        ...
+        # ---
+        
+        fig.tight_layout()
+        fig.savefig(os.path.join(roots_and_models[0][0], f'Analysis/Encode/SVM/Comparison {title}.svg'))
+        
+        plt.close()
+        
+        ...
+        
+
 # ======================================================================================================================
 if __name__ == "__main__":
-
-    layers, neurons, shapes = utils_.get_layers_and_units('vgg16', target_layers='act')
-
+    
     root_dir = '/home/acxyle-workstation/Downloads'
 
+    layers, neurons, shapes = utils_.get_layers_and_units('vgg16', target_layers='act')
+    
+    # -----
     #selectivity_analyzer = FSA_Encode(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
     #selectivity_analyzer.calculation_Encode()
     #selectivity_analyzer.plot_Encode_pct_single()
     #selectivity_analyzer.plot_Encode_pct_comprehensive()
     #selectivity_analyzer.plot_Encode_freq()
-
-
+    
+    # ---
+    #FSA_Encode_folds = FSA_Encode_folds(num_folds=5, root=os.path.join(root_dir, 'Face Identity VGG16_fold_'), layers=layers, neurons=neurons)
+    #FSA_Encode_folds()
+    #FSA_Encode_folds(used_unit_types=['selective', 'strong_selective', 'weak_selective'])
+    
+    # ---
+    roots_and_models = [
+        (os.path.join(root_dir, 'Face Identity VGG16_fold_'), 'vgg16'),
+        (os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), 'vgg16_bn'),
+        #(os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+        #(os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+        #(os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+        #(os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn')
+        ]
+    #FSA_Encode_Comparison()(roots_and_models, used_unit_types=['strong_selective'])
+    
+    # -----
     #selectivity_analyzer = FSA_Responses(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
     #selectivity_analyzer.plot_unit_responses()
     #selectivity_analyzer.plot_stacked_responses()
     #selectivity_analyzer.plot_responses_PDF()
     #selectivity_analyzer.plot_pct_pie_chart()
     
+    #selectivity_analyzer = FSA_SVM(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
+    #selectivity_analyzer.process_SVM()
     
-    selectivity_analyzer = FSA_SVM(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
-    selectivity_analyzer.process_SVM()
+    #FSA_SVM_folds = FSA_SVM_folds(num_folds=5, root=os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), layers=layers, neurons=neurons)
+    #FSA_SVM_folds()
     
+    FSA_SVM_Comparison()(roots_and_models, used_unit_types=['strong_selective'])

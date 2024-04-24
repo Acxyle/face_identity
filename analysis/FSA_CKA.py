@@ -32,7 +32,7 @@ from statsmodels.stats.multitest import multipletests
 import itertools
 
 import utils_
-import utils_similarity
+from utils_ import utils_similarity
 
 from Bio_Cell_Records_Process import Human_Neuron_Records_Process, Monkey_Neuron_Records_Process
 from FSA_DRG import FSA_Gram
@@ -180,7 +180,7 @@ class CKA_Similarity_base():
         return results
             
 
-    def plot_CKA(self, cka_dict, kernel='linear', error_control_measure='sig_FDR', error_area=True, legend=False, vlim:list[float]=None, **kwargs):
+    def plot_CKA(self, cka_dict, kernel='linear', error_control_measure='sig_FDR', error_area=True, legend=False, vlim:list[float]=None, used_unit_type=None, **kwargs):
         """
             this function plots CKA score
             
@@ -191,22 +191,22 @@ class CKA_Similarity_base():
                 
         """
         
-        utils_._print('Executing static plotting...')
+        utils_.formatted_print('Executing static plotting...')
         
         logging.getLogger('matplotlib').setLevel(logging.ERROR)
         with warnings.catch_warnings():
             warnings.simplefilter(action='ignore')
             
             if 'threshold' in kwargs:
-                title = f"CKA score {self.model_structure} {kernel} {kwargs['threshold']}"
+                title = f"CKA score {self.model_structure} {used_unit_type} {kernel} {kwargs['threshold']}"
             elif kernel == 'linear':
-                title = f'CKA score {self.model_structure} {kernel}'
+                title = f'CKA score {self.model_structure} {used_unit_type} {kernel}'
             else:
                 raise ValueError
 
             fig, ax = plt.subplots(figsize=(10,6))
             
-            plot_CKA(self.layers, ax, cka_dict, title=title, vlim=vlim, legend=legend)
+            plot_CKA(self.layers, ax, cka_dict, title=title, vlim=vlim, legend=legend, **kwargs)
             utils_similarity.fake_legend_describe_numpy(cka_dict['cka_score'], ax, cka_dict[error_control_measure].astype(bool))
 
             fig.tight_layout(pad=1)
@@ -215,7 +215,7 @@ class CKA_Similarity_base():
             plt.close()
             
 
-    def plot_CKA_temporal(self, cka_dict, extent:list[float]=None, error_control_measure='sig_temporal_Bonf', vlim:list[float]=None, kernel='linear', **kwargs):
+    def plot_CKA_temporal(self, cka_dict, extent:list[float]=None, error_control_measure='sig_temporal_Bonf', vlim:list[float]=None, kernel='linear', used_unit_type=None, **kwargs):
         """
             function
             
@@ -225,7 +225,7 @@ class CKA_Similarity_base():
                 ...
         """
         
-        utils_._print('Executing temporal plotting')
+        utils_.formatted_print('Executing temporal plotting')
         
         extent = [self.ts.min()-5, self.ts.max()+5, -0.5, cka_dict['cka_score_temporal'].shape[0]-0.5]
  
@@ -238,15 +238,15 @@ class CKA_Similarity_base():
             warnings.simplefilter(action='ignore')
             
             if 'threshold' in kwargs:
-                title = f"CKA temporal score {self.model_structure} {kernel} {kwargs['threshold']}"
+                title = f"CKA temporal score {self.model_structure} {used_unit_type} {kernel} {kwargs['threshold']}"
             elif kernel == 'linear':
-                title = f'CKA temporal score {self.model_structure} {kernel}'
+                title = f'CKA temporal score {self.model_structure} {used_unit_type} {kernel}'
             else:
                 raise ValueError
             
             fig, ax = plt.subplots(figsize=(np.array(cka_dict['cka_score_temporal'].T.shape)/3.7))
             
-            plot_CKA_temporal(self.layers, fig, ax, cka_dict, title=title, vlim=vlim, extent=extent)
+            plot_CKA_temporal(self.layers, fig, ax, cka_dict, title=title, vlim=vlim, extent=extent, **kwargs)
             utils_similarity.fake_legend_describe_numpy(cka_dict['cka_score_temporal'], ax, cka_dict[error_control_measure].astype(bool))
 
             fig.savefig(os.path.join(self.save_root, f'{title}.svg'))     
@@ -322,7 +322,7 @@ class CKA_Similarity_Human(Human_Neuron_Records_Process, FSA_Gram, CKA_Similarit
             ...
         """
         # --- additional parameters
-        utils_._print(f'Used kernel: {kernel} | Used types: {used_unit_type} | Used ID: {used_id_num}')
+        utils_.formatted_print(f'Used kernel: {kernel} | Used types: {used_unit_type} | Used ID: {used_id_num}')
         ...
         
         utils_.make_dir(save_root_kernel:=os.path.join(self.save_root_primate, f'{kernel}'))
@@ -339,9 +339,9 @@ class CKA_Similarity_Human(Human_Neuron_Records_Process, FSA_Gram, CKA_Similarit
         if used_unit_type == 'legacy':
             human_Gram_dict = self.human_neuron_Gram_process(kernel, 'selective', **kwargs)
             self.Gram_dict = {_: NN_Gram_dict[_]['strong_selective'][np.ix_(self.used_id, self.used_id)] for _ in NN_Gram_dict.keys()}
-        else:
+        else:     # --- nan_to_num for non_selective
             human_Gram_dict = self.human_neuron_Gram_process(kernel, used_unit_type, **kwargs)
-            self.Gram_dict = {_: NN_Gram_dict[_][used_unit_type][np.ix_(self.used_id, self.used_id)] for _ in NN_Gram_dict.keys()}
+            self.Gram_dict = {_: np.nan_to_num(NN_Gram_dict[_][used_unit_type][np.ix_(self.used_id, self.used_id)]) for _ in NN_Gram_dict.keys()}
             
         self.primate_Gram = human_Gram_dict['human_Gram'][np.ix_(self.used_id, self.used_id)]
         self.primate_Gram_temporal = np.array([_[np.ix_(self.used_id, self.used_id)] for _ in human_Gram_dict['human_Gram_temporal']])
@@ -457,7 +457,7 @@ class CKA_Similarity_Comparison(CKA_Similarity_base):
                 
         """
         
-        utils_._print('Executing static plotting...')
+        utils_.formatted_print('Executing static plotting...')
         
         plt.rcParams.update({"font.family": "Times New Roman"})
         plt.rcParams.update({'font.size': 16})
@@ -500,7 +500,7 @@ class CKA_Similarity_Comparison(CKA_Similarity_base):
         
         ...
         
-        utils_._print('Executing temporal plotting')
+        utils_.formatted_print('Executing temporal plotting')
         
         self.ts = np.arange(-50, 201, 10)
         
@@ -618,7 +618,7 @@ def plot_CKA(layers, ax, cka_dict, error_control_measure='sig_FDR', title=None, 
         ax.set_ylim(vlim)
 
 
-def plot_CKA_temporal(layers, fig, ax, cka_dict, error_control_measure='sig_temporal_Bonf', title=None, vlim:list[float]=None, extent:list[float]=None):
+def plot_CKA_temporal(layers, fig, ax, cka_dict, error_control_measure='sig_temporal_Bonf', title=None, vlim:list[float]=None, extent:list[float]=None, **kwargs):
       
     def _is_binary(input:np.ndarray):
         
@@ -714,6 +714,8 @@ class CKA_base():
         # --- 1.
         cka_dict = self.calculation_CKA(**kwargs)
         
+        utils_.dump(cka_dict, os.path.join(self.N1_root, f'CKA {self.N1_structure} v.s. {self.N2_structure}.pkl'))
+        
         # --- 2.
         for k, v in cka_dict.items():
             
@@ -749,15 +751,16 @@ class CKA_base():
             
 
 # ----------------------------------------------------------------------------------------------------------------------
+#FIXME --- the process is complicated
 class CKA_Comparison(FSA_Gram, CKA_base):
     
     def __init__(self, N1_root, N1_model, N2_root, N2_model, used_unit_types=['qualified', 'strong_selective', 'weak_selective', 'non_selective'], num_folds=5, **kwargs):
         
         CKA_base.__init__(self, used_unit_types=used_unit_types, **kwargs)
         
-        def _load_folds(nn_root, _model, _type='act', **kwargs):
+        def _load_folds(nn_root, _model, _type='act',  norm=True, **kwargs):
             
-            nn_grams = utils_.load(os.path.join(nn_root, 'Analysis/Gram/Gram_linear.pkl'))
+            nn_grams = utils_.load(os.path.join(nn_root, f'Analysis/Gram/Gram_linear_norm_{norm}.pkl'))
             
             nn_layers, nn_neurons, _ = utils_.get_layers_and_units(_model, _type)
             
@@ -920,29 +923,31 @@ if __name__ == '__main__':
     #for threshold in [0.5, 1.0, 2.0, 10.0]:
     #    CKA_monkey.process_CKA_monkey(kernel='rbf', threshold=threshold)
     
-    # --- 2.
-    for _ in range(5):
-        CKA_human = CKA_Similarity_Human(root=os.path.join(root_dir, f'Face Identity VGG16bn_fold_/-_Single Models/Face Identity VGG16bn_fold_{_}'), layers=layers, neurons=neurons)
-        for used_unit_type in used_unit_types:
-            CKA_human.process_CKA_human(kernel='linear', used_unit_type=used_unit_type)
-            #for threshold in [0.5, 1.0, 10.0]:
-            #    CKA_human.process_CKA_human(kernel='rbf', threshold=threshold, used_unit_types=used_unit_types)
+# =============================================================================
+#     # --- 2.
+#     for _ in range(5):
+#         CKA_human = CKA_Similarity_Human(root=os.path.join(root_dir, f'Face Identity VGG16bn_fold_/-_Single Models/Face Identity VGG16bn_fold_{_}'), layers=layers, neurons=neurons)
+#         for used_unit_type in used_unit_types:
+#             CKA_human.process_CKA_human(kernel='linear', used_unit_type=used_unit_type)
+#             #for threshold in [0.5, 1.0, 10.0]:
+#             #    CKA_human.process_CKA_human(kernel='rbf', threshold=threshold, used_unit_types=used_unit_types)
+# =============================================================================
     
     # --- 3.
-# =============================================================================
-#     dual_models = CKA_Comparison(
-#         N1_root=os.path.join(root_dir, 'Face Identity Baseline'), N1_model='vgg16',
-#         N2_root=os.path.join(root_dir, 'Face Identity A2S_Baseline(T64)'), N2_model='spiking_vgg16',
-#         used_unit_types=used_unit_types
-#         )
-#     dual_models()
-# =============================================================================
     
-    # --- 4.
+    for fold_idx in [0,1,2,3,4]:
+        CKA_Comparison(
+            N1_root=os.path.join(root_dir, f'Face Identity SpikingVGG16bn_IF_T16_CelebA2622_fold_/-_Single Models/Face Identity SpikingVGG16bn_IF_T16_CelebA2622_fold_{fold_idx}'), N1_model='spiking_vgg16_bn',
+            N2_root=os.path.join(root_dir, f'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_/-_Single Models/Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_{fold_idx}'), N2_model='spiking_vgg16_bn',
+            used_unit_types=used_unit_types
+            )()
+    
+    #FIXME
 # =============================================================================
+#     # --- 4.
 #     ANN_vs_SNN = CKA_Comparison_folds(
 #         N1_root=os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), N1_model='vgg16_bn',
-#         N2_root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_'), N2_model='spiking_vgg16_bn',
+#         N2_root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_'), N2_model='spiking_vgg16_bn',
 #         used_unit_types=used_unit_types)
 #     ANN_vs_SNN()
 # =============================================================================

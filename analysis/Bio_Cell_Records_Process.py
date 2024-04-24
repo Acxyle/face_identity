@@ -33,8 +33,7 @@ from scipy.integrate import quad, IntegrationWarning
 from sklearn.manifold import TSNE
 
 import utils_
-import utils_bio_cells
-import utils_similarity
+from utils_ import _bio_cells, utils_similarity
 
 import Selectivity_Analysis_Feature
 
@@ -52,7 +51,7 @@ class Human_Neuron_Records_Process():
         
     """
     
-    def __init__(self, bio_root='/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Human/', seed=6, **kwargs):
+    def __init__(self, bio_root='/home/acxyle-workstation/Downloads/Bio Neuron Data/Human/', seed=6, **kwargs):
         
         np.random.seed(seed)
 
@@ -1928,7 +1927,7 @@ class Monkey_Neuron_Records_Process():
  
     """
     
-    def __init__(self, bio_root='/home/acxyle-workstation/Downloads/Bio_Neuron_Data/Monkey/', seed=6, **kwargs):
+    def __init__(self, bio_root='/home/acxyle-workstation/Downloads/Bio Neuron Data/Monkey/', seed=6, **kwargs):
         """
             this function determines the time range of interest [-50, 200] from the original time range [-100, 380], which 
             directly inherit from source Matlab code

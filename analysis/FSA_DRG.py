@@ -23,7 +23,7 @@ from sklearn.manifold import TSNE
 #from sklearn.decomposition import PCA
 
 import utils_
-import utils_similarity
+from utils_ import utils_similarity
 from FSA_Encode import FSA_Encode
 
 import sys
@@ -57,7 +57,7 @@ class FSA_DR(FSA_Encode):
             key=tsne_coordinate has been removed, please manually normalize if want to visualize
         """
         
-        utils_._print('Executing selectivity_analysis_Tsne...')
+        utils_.formatted_print('Executing selectivity_analysis_Tsne...')
 
         self.save_path_DR = os.path.join(self.dest_DR, 'TSNE')
         utils_.make_dir(self.save_path_DR)
@@ -209,6 +209,7 @@ class FSA_DSM(FSA_Encode):
     """
     
     def __init__(self, **kwargs):
+        
         super().__init__(**kwargs)
         
         self.dest_DSM = os.path.join(self.dest, 'DSM')
@@ -220,11 +221,8 @@ class FSA_DSM(FSA_Encode):
             ...
         """
         
-        utils_._print(f'Executing DSM {metric} of {self.model_structure}')
-        
-        self.Sort_dict = self.load_Sort_dict()
-        self.Sort_dict = self.calculation_Sort_dict(used_unit_types) if used_unit_types is not None else self.Sort_dict
-        
+        utils_.formatted_print(f'Executing DSM {metric} of {self.model_structure}')
+
         # ----- 
         DSM_dict = self.calculation_DSM(metric, used_unit_types, **kwargs)
         
@@ -232,12 +230,15 @@ class FSA_DSM(FSA_Encode):
         self.plot_DSM(metric, DSM_dict, used_unit_types, **kwargs)
            
   
-    def calculation_DSM(self, metric, used_unit_types:list[str]=None, **kwargs):
+    def calculation_DSM(self, metric, used_unit_types=['qualified', 'selective', 'strong_selective', 'weak_selective', 'non_selective'], **kwargs):
         """
             ...
         """
 
         utils_.make_dir(metric_folder:=os.path.join(self.dest_DSM, f'{metric}'))
+        
+        self.Sort_dict = self.load_Sort_dict()
+        self.Sort_dict = self.calculation_Sort_dict(used_unit_types) if used_unit_types is not None else self.Sort_dict
         
         dict_path = os.path.join(metric_folder, f'{metric} {used_unit_types}.pkl')
         
@@ -250,12 +251,12 @@ class FSA_DSM(FSA_Encode):
             # ----- 
             DSM_dict = {}     # use a dict to store the info of each layer
 
-            for layer in tqdm(self.layers, desc='NN DSM'):     # for each layer
+            for layer in tqdm(self.layers, desc=f'NN {metric} DSM'):     # for each layer
 
                 feature = utils_.load_feature(os.path.join(self.root, f'{layer}.pkl'), verbose=False, **kwargs)     # (500, num_samples)
                 feature = np.mean(feature.reshape(self.num_classes, self.num_samples, -1), axis=1)     # (50, num_samples)
                 
-                pl = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(utils_similarity.DSM_calculation)(metric, feature[:, self.Sort_dict[layer][k]], **kwargs) for k in used_unit_types)
+                pl = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(utils_similarity.DSM_calculation)(metric, feature[:, self.Sort_dict[layer][k].astype(int)], **kwargs) for k in used_unit_types)
                 
                 DSM_dict[layer] = {k: pl[idx] for idx, k in enumerate(used_unit_types)}
                 
@@ -356,13 +357,13 @@ class FSA_Gram(FSA_Encode):
                     gram = utils_similarity.gram_rbf
                     
                 # ---
-                pl = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(gram)(feature[:, self.Sort_dict[layer][k]], **kwargs) for k in used_unit_types)
+                pl = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(gram)(feature[:, self.Sort_dict[layer][k].astype(int)], **kwargs) for k in used_unit_types)
 
                 metric_type_dict = {k: pl[idx] for idx, k in enumerate(used_unit_types)}
 
                 return metric_type_dict
             
-            utils_._print(f'Calculating NN_unit_Gram of {self.model_structure}...')
+            utils_.formatted_print(f'Calculating NN_unit_Gram of {self.model_structure}...')
             
             Gram_dict = {_:_calculation_Gram(_, normalize, **kwargs) for _ in tqdm(self.layers, desc='NN Gram')}
         

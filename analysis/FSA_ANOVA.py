@@ -51,6 +51,9 @@ class FSA_ANOVA():
     
     def __call__(self, **kwargs):
         
+        plt.rcParams.update({'font.size': 18})    
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        
         # --- 1. 
         self.calculation_ANOVA(**kwargs)
         
@@ -61,7 +64,7 @@ class FSA_ANOVA():
         
         title = f"Sensitive pct {self.model_structure}"
         
-        self.plot_ANOVA_pct(ratio_dict, title=title, plot_bar=True, **kwargs)
+        self.plot_ANOVA_pct(fig, ax, ratio_dict, title=title, plot_bar=True, **kwargs)
         
         fig.savefig(os.path.join(self.dest_ANOVA, f'{title}.svg'), bbox_inches='tight')
         plt.close()
@@ -74,7 +77,7 @@ class FSA_ANOVA():
             num_workers:
         """
         
-        utils_._print('Executing calculation_ANOVA')
+        utils_.formatted_print('Executing calculation_ANOVA')
         
         idces_path = os.path.join(self.dest_ANOVA, 'ANOVA_idces.pkl')
         stats_path = os.path.join(self.dest_ANOVA, 'ANOVA_stats.pkl')
@@ -105,7 +108,7 @@ class FSA_ANOVA():
             utils_.dump(self.ANOVA_idces, idces_path)
             utils_.dump(self.ANOVA_stats, stats_path)
             
-            utils_._print('[Codinfo] ANOVA results have been saved in {}'.format(self.dest_ANOVA))
+            utils_.formatted_print('[Codinfo] ANOVA results have been saved in {}'.format(self.dest_ANOVA))
             
             
     def calculation_ANOVA_pct(self, ANOVA_path=None, **kwargs):
@@ -132,11 +135,8 @@ class FSA_ANOVA():
             ...
         """
         
-        utils_._print('Executing plot_ANOVA_pct...')
+        utils_.formatted_print('Executing plot_ANOVA_pct...')
         
-        plt.rcParams.update({'font.size': 22})     
-        plt.rcParams.update({"font.family": "Times New Roman"})
- 
         # -----
         _, pcts = zip(*ratio_dict.items())
         
@@ -182,6 +182,9 @@ def one_way_ANOVA(input, num_classes=50, num_samples=10, **kwargs):
 
 # ----------------------------------------------------------------------------------------------------------------------
 def plot_ANOVA_pct(ax, layers, pcts, title=None, bar_colors=None, line_color=None, linewidth=2.5, label=None, **kwargs):
+    
+    plt.rcParams.update({'font.size': 22})     
+    plt.rcParams.update({"font.family": "Times New Roman"})
     
     if bar_colors is not None:
         ax.bar(layers, pcts, color=bar_colors, width=0.5)
@@ -237,18 +240,15 @@ class FSA_ANOVA_folds(FSA_ANOVA):
     
     def __init__(self, num_folds=5, root=None, **kwargs):
         
+        assert 'fold' in root
+        
         super().__init__(root=root, **kwargs)
-        
-        self.root = root
-        
+        self.root = root     # 'fold_' rather 'Fratures'
         self.num_folds = num_folds
         
         ...
     
     def __call__(self, **kwargs):
-        
-        plt.rcParams.update({'font.size': 18})    
-        plt.rcParams.update({"font.family": "Times New Roman"})
         
         # --- 1. calculation
         raio_dict = self.calculation_ANOVA_pct_folds(**kwargs)
@@ -302,23 +302,25 @@ class FSA_ANOVA_folds(FSA_ANOVA):
         
    
 # ----------------------------------------------------------------------------------------------------------------------
+#FIXME --- consider to change the API so it can be properly called by Main_script.py
 class FSA_ANOVA_Comparison(FSA_ANOVA_folds):
     """
-        this is far from an automatic script, need to manually change plot settings to compare a lof of different models
+        obtain each results before call this comparison
+        this is far from an automatic script, need to manually change to show a lof of different models
     """
 
-    def __init__(self, roots_and_models, **kwargs):
-        
-        super().__init__(root=roots_and_models[0][0], **kwargs)     # save the comparison results in the fisrt folder
+    def __init__(self, **kwargs):
         
         plt.rcParams.update({'font.size': 18})    
         plt.rcParams.update({"font.family": "Times New Roman"})
         
         # ---
-        color_pool = ['blue', 'green', 'red', 'purple', 'orange', 'chocolate']     # manually change the pool
+        self.color_pool = ['blue', 'green', 'red', 'purple', 'orange', 'chocolate']     # manually change the pool
         
-        # --- dummy layers
-        self.layers, _, _ = utils_.get_layers_and_units(roots_and_models[0][1], target_layers='act')
+        ...
+        
+        
+    def __call__(self, roots_and_models, **kwargs):
         
         # ---
         fig, ax = plt.subplots(figsize=(10, 6))
@@ -328,6 +330,9 @@ class FSA_ANOVA_Comparison(FSA_ANOVA_folds):
         
         for idx, (root, model) in enumerate(roots_and_models):
             
+            super().__init__(root=roots_and_models[idx][0], **kwargs)     # save the comparison results in the fisrt folder
+            self.layers, self.neurons, _ = utils_.get_layers_and_units(roots_and_models[idx][1], target_layers='act')
+            
             if 'fold' in root:
                 
                 ratio_dict = self.calculation_ANOVA_pct_folds(os.path.join(root, 'Analysis/ANOVA/ratio.pkl'))
@@ -335,7 +340,7 @@ class FSA_ANOVA_Comparison(FSA_ANOVA_folds):
                 _label = root.split('/')[-1].split(' ')[-1].replace('_fold_', '').replace('_CelebA2622', '')
                 title.append(_label)
                 
-                self.plot_ANOVA_pct_folds(fig, ax, ratio_dict, line_color=color_pool[idx], label=_label)
+                self.plot_ANOVA_pct_folds(fig, ax, ratio_dict, line_color=self.color_pool[idx], label=_label)
                 
                 ...
                 
@@ -346,29 +351,21 @@ class FSA_ANOVA_Comparison(FSA_ANOVA_folds):
                 _label=root.split('/')[-1].split(' ')[-1]
                 title.append(_label)
                 
-                self.plot_ANOVA_pct(fig, ax, ratio_dict, line_color=color_pool[idx], label=_label)
+                self.plot_ANOVA_pct(fig, ax, ratio_dict, line_color=self.color_pool[idx], label=_label)
                 ...
 
 
         #ax.set_title(title:=' v.s '.join(title))
-        ax.set_title(title:='ANN v.s SNN')
+        ax.set_title(title:='Sensitive pct ANN v.s SNN')
         
         # --- setting
         ...
         # ---
         
         fig.tight_layout()
-        fig.savefig(os.path.join(self.dest_ANOVA, f'Comparison {title}.svg'))
+        fig.savefig(os.path.join(roots_and_models[0][0], f'Analysis/ANOVA/Comparison {title}.svg'))
         
         plt.close()
-        
-        ...
-        
-        
-    def __call__(self, **kwargs):
-        
-        ...
-
     
    
 # ======================================================================================================================
@@ -380,22 +377,23 @@ if __name__ == "__main__":
     layers, neurons, shapes = utils_.get_layers_and_units('vgg16_bn', target_layers='act')
     
     # ---
-    #FSA_ANOVA = FSA_ANOVA(os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
-    #FSA_ANOVA()
+    FSA_ANOVA(os.path.join(root_dir, 'Face Identity VGG16bn_VGGFace'), layers=layers, neurons=neurons)()
     
     # ---
     #FSA_ANOVA_folds = FSA_ANOVA_folds(num_folds=5, root=os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), layers=layers, neurons=neurons)
     #FSA_ANOVA_folds()
     
     # -----
-    roots_models = [
-        (os.path.join(root_dir, 'Face Identity VGG16_fold_'), 'vgg16'),
-        (os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), 'vgg16_bn'),
-        (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
-        (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn'),
-        (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
-        (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn')
-        ]
-    FSA_ANOVA_Comparison = FSA_ANOVA_Comparison(roots_models)
+# =============================================================================
+#     roots_models = [
+#         (os.path.join(root_dir, 'Face Identity VGG16_fold_'), 'vgg16'),
+#         (os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), 'vgg16_bn'),
+#         (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+#         (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+#         (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+#         (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn')
+#         ]
+#     FSA_ANOVA_Comparison = FSA_ANOVA_Comparison(roots_models)
+# =============================================================================
     
     

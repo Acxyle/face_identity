@@ -5,7 +5,10 @@ Created on Fri Mar  1 20:47:40 2024
 
 @author: acxyle-workstation
 
-    [task] (1) monkey; (2) human; (3) ANN-SNN
+    [task] 
+    
+        (1) CKA similarity folds
+        (2) CKA folds
 
 """
 
@@ -71,7 +74,7 @@ class CKA_Similarity_base():
         elif kernel == 'linear':
             save_path = os.path.join(self.save_root, f"CKA_results_{kernel}.pkl")
         else:
-            raise ValueError(f'[Coderror] Invalid kernel [{kernel}]')
+            raise ValueError(f'[Coderror] Invalid parameters [{kernel}, {kwargs}]')
         
         if os.path.exists(save_path):
             
@@ -180,80 +183,27 @@ class CKA_Similarity_base():
         return results
             
 
-    def plot_CKA(self, cka_dict, kernel='linear', error_control_measure='sig_FDR', error_area=True, legend=False, vlim:list[float]=None, used_unit_type=None, **kwargs):
+    def plot_CKA(self, fig, ax, cka_dict, error_control_measure='sig_FDR', legend=False, vlim:list[float]=None, **kwargs):
         """
-            this function plots CKA score
-            
-            input:
-                layers: define the x axis
-                cka_fr: CKA data
-                title: 
-                
+            ...
         """
         
-        utils_.formatted_print('Executing static plotting...')
-        
-        logging.getLogger('matplotlib').setLevel(logging.ERROR)
-        with warnings.catch_warnings():
-            warnings.simplefilter(action='ignore')
-            
-            if 'threshold' in kwargs:
-                title = f"CKA score {self.model_structure} {used_unit_type} {kernel} {kwargs['threshold']}"
-            elif kernel == 'linear':
-                title = f'CKA score {self.model_structure} {used_unit_type} {kernel}'
-            else:
-                raise ValueError
+        plot_CKA(self.layers, ax, cka_dict, vlim=vlim, legend=legend, **kwargs)
+        utils_similarity.fake_legend_describe_numpy(cka_dict['cka_score'], ax, cka_dict[error_control_measure].astype(bool))
 
-            fig, ax = plt.subplots(figsize=(10,6))
-            
-            plot_CKA(self.layers, ax, cka_dict, title=title, vlim=vlim, legend=legend, **kwargs)
-            utils_similarity.fake_legend_describe_numpy(cka_dict['cka_score'], ax, cka_dict[error_control_measure].astype(bool))
 
-            fig.tight_layout(pad=1)
- 
-            fig.savefig(os.path.join(self.save_root, f'{title}.svg'), bbox_inches='tight')   
-            plt.close()
-            
+    def plot_CKA_temporal(self, fig, ax, cka_dict, extent:list[float]=None, error_control_measure='sig_temporal_Bonf', vlim:list[float]=None, **kwargs):
+        """
+            ...
+        """
 
-    def plot_CKA_temporal(self, cka_dict, extent:list[float]=None, error_control_measure='sig_temporal_Bonf', vlim:list[float]=None, kernel='linear', used_unit_type=None, **kwargs):
-        """
-            function
-            
-            self.ts should be determined by derived class
-            
-            input:
-                ...
-        """
-        
-        utils_.formatted_print('Executing temporal plotting')
-        
         extent = [self.ts.min()-5, self.ts.max()+5, -0.5, cka_dict['cka_score_temporal'].shape[0]-0.5]
  
-        plt.rcParams.update({"font.family": "Times New Roman"})
-        plt.rcParams.update({'font.size': 16})
-    
-        logging.getLogger('matplotlib').setLevel(logging.ERROR)    
-    
-        with warnings.catch_warnings():
-            warnings.simplefilter(action='ignore')
-            
-            if 'threshold' in kwargs:
-                title = f"CKA temporal score {self.model_structure} {used_unit_type} {kernel} {kwargs['threshold']}"
-            elif kernel == 'linear':
-                title = f'CKA temporal score {self.model_structure} {used_unit_type} {kernel}'
-            else:
-                raise ValueError
-            
-            fig, ax = plt.subplots(figsize=(np.array(cka_dict['cka_score_temporal'].T.shape)/3.7))
-            
-            plot_CKA_temporal(self.layers, fig, ax, cka_dict, title=title, vlim=vlim, extent=extent, **kwargs)
-            utils_similarity.fake_legend_describe_numpy(cka_dict['cka_score_temporal'], ax, cka_dict[error_control_measure].astype(bool))
-
-            fig.savefig(os.path.join(self.save_root, f'{title}.svg'))     
-
-            plt.close()
+        plot_CKA_temporal(self.layers, fig, ax, cka_dict, vlim=vlim, extent=extent, **kwargs)
+        utils_similarity.fake_legend_describe_numpy(cka_dict['cka_score_temporal'], ax, cka_dict[error_control_measure].astype(bool))
 
 
+# ----------------------------------------------------------------------------------------------------------------------
 class CKA_Similarity_Monkey(Monkey_Neuron_Records_Process, FSA_Gram, CKA_Similarity_base):
     """
         ...
@@ -269,13 +219,17 @@ class CKA_Similarity_Monkey(Monkey_Neuron_Records_Process, FSA_Gram, CKA_Similar
         utils_.make_dir(CKA_root:=os.path.join(self.dest, 'CKA'))
         self.save_root = os.path.join(CKA_root, 'Monkey')
         utils_.make_dir(self.save_root)
-
-
-    def process_CKA_monkey(self, kernel, normalize=False, FDR_test=True, **kwargs):
-        """
-            ...
-        """
         
+    
+    def __call__(self, kernel='linear', **kwargs):
+        
+        cka_dict = self.calculation_CKA_Monkey(kernel)
+        
+        self.plot_CKA_Monkey(cka_dict, kernel, **kwargs)
+        
+        
+    def calculation_CKA_Monkey(self, kernel='linear', normalize=False, FDR_test=True, **kwargs):
+    
         # --- monkey init
         monkey_Gram_dict = self.monkey_neuron_Gram_process(kernel=kernel, **kwargs)
         
@@ -295,15 +249,102 @@ class CKA_Similarity_Monkey(Monkey_Neuron_Records_Process, FSA_Gram, CKA_Similar
         # ----- calculation
         cka_dict = self.calculation_CKA_Similarity(kernel=kernel, FDR_test=FDR_test, primate='Monkey', **kwargs)
         
-        # ----- plot
-        self.plot_CKA(cka_dict, kernel=kernel, **kwargs)
-        self.plot_CKA_temporal(cka_dict, kernel=kernel, **kwargs)
+        return cka_dict
+
+
+    def plot_CKA_Monkey(self, cka_dict, kernel, **kwargs):
+        """
+            ...
+        """
         
+        # --- init
+        if kernel == 'rbf' and 'threshold' in kwargs:
+            title_static = f"CKA score {self.model_structure} {kernel} {kwargs['threshold']}"
+            title_temporal = f"CKA temporal score {self.model_structure} {kernel} {kwargs['threshold']}"
+        elif kernel == 'linear':
+            title_static = f'CKA score {self.model_structure} {kernel}'
+            title_temporal = f'CKA temporal score {self.model_structure} {kernel}'
+        else:
+            raise ValueError
+        
+        # 1. static
+        fig, ax = plt.subplots(figsize=(10,6))
+        
+        self.plot_CKA(fig, ax, cka_dict, **kwargs)
+        ax.set_title(title_static)
+        
+        fig.tight_layout(pad=1)
+        fig.savefig(os.path.join(self.save_root, f'{title_static}.svg'), bbox_inches='tight')   
+        plt.close()
+        
+        # 2. temporal
+        fig, ax = plt.subplots(figsize=(np.array(cka_dict['cka_score_temporal'].T.shape)/3.7))
+        
+        self.plot_CKA_temporal(fig, ax, cka_dict, **kwargs)
+        ax.set_title(title_temporal)
+        
+        fig.savefig(os.path.join(self.save_root, f'{title_temporal}.svg'), bbox_inches='tight')
+        plt.close()
+        
+
+# ----------------------------------------------------------------------------------------------------------------------
+class CKA_Similarity_Monkey_folds(CKA_Similarity_Monkey):
+    
+    def __init__(self, num_folds=5, root=None, **kwargs):
+        
+        super().__init__(root=root, **kwargs)
+        
+        self.root = root
+        self.num_folds = num_folds
+        
+        
+    def __call__(self, kernel, **kwargs):
+        
+        CKA_dict_folds = self.calculation_CKA_Similarity_folds(kernel, **kwargs)
+        
+        self.plot_CKA_Similarity_folds(CKA_dict_folds, kernel, **kwargs)
+        
+        
+    def calculation_CKA_Similarity_folds(self, kernel, **kwargs):
+        
+        if kernel == 'rbf' and 'threshold' in kwargs:
+            cka_config = f"CKA_results_{kernel}_{kwargs['threshold']}"
+            save_path = os.path.join(self.save_root, f"{cka_config}.pkl")
+        elif kernel == 'linear':
+            cka_config = f"CKA_results_{kernel}"
+            save_path = os.path.join(self.save_root, f"{cka_config}.pkl")
+        else:
+            raise ValueError(f'[Coderror] Invalid parameters [{kernel}, {kwargs}]')
+           
+        if os.path.exists(save_path):
+            
+            CKA_dict_folds = utils_.load(save_path, verbose=True)
+        
+        else:
+            
+            FSA_config = self.root.split('/')[-1]
+            
+            CKA_dict_folds = {_ :utils_.load(os.path.join(self.root, f"-_Single Models/{FSA_config}{_}/Analysis/CKA/Monkey/{cka_config}.pkl"), verbose=False) for _ in range(self.num_folds)}
+            
+            # ---
+            CKA_dict_folds = merge_CKA_dict_folds(CKA_dict_folds, self.layers, self.num_folds, route='p', **kwargs)
+            
+            # ---
+            utils_.dump(CKA_dict_folds, save_path, verbose=False)
+            
+        return CKA_dict_folds
+        
+        
+    def plot_CKA_Similarity_folds(self, CKA_dict_folds, kernel, **kwargs):
+        
+        # ----- plot
+        self.plot_CKA_Monkey(CKA_dict_folds, kernel, **kwargs)
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 class CKA_Similarity_Human(Human_Neuron_Records_Process, FSA_Gram, CKA_Similarity_base):
     """
-        unlike RSA, the config of 10-ids has worse performance
+        ...
     """
     
     def __init__(self, **kwargs):
@@ -316,11 +357,9 @@ class CKA_Similarity_Human(Human_Neuron_Records_Process, FSA_Gram, CKA_Similarit
         self.save_root_primate = os.path.join(CKA_root, 'Human')
         utils_.make_dir(self.save_root_primate)
         
+    
+    def __call__(self, kernel='linear', used_unit_type='qualified', used_id_num=50, FDR_test=True, **kwargs):
         
-    def process_CKA_human(self, kernel='linear', used_unit_type='qualified', used_id_num=50, FDR_test=True, **kwargs):
-        """
-            ...
-        """
         # --- additional parameters
         utils_.formatted_print(f'Used kernel: {kernel} | Used types: {used_unit_type} | Used ID: {used_id_num}')
         ...
@@ -330,6 +369,13 @@ class CKA_Similarity_Human(Human_Neuron_Records_Process, FSA_Gram, CKA_Similarit
 
         self.save_root = os.path.join(save_root_cell_type, str(used_id_num))
         utils_.make_dir(self.save_root)
+        
+        cka_dict = self.calculation_CKA_Human(kernel, used_id_num, used_unit_type, used_id_num, **kwargs)
+        
+        self.plot_CKA_Human(cka_dict, kernel, **kwargs)
+        
+        
+    def calculation_CKA_Human(self, kernel, used_unit_type, used_id_num, FDR_test=True, **kwargs):
         
         # --- init
         self.used_id = self.human_corr_select_sub_identities(used_id_num)
@@ -356,12 +402,165 @@ class CKA_Similarity_Human(Human_Neuron_Records_Process, FSA_Gram, CKA_Similarit
         # ----- calculation
         cka_dict = self.calculation_CKA_Similarity(kernel=kernel, used_unit_type=used_unit_type, used_id_num=used_id_num, primate='Human', **kwargs)
         
-        # ----- plot
-        self.plot_CKA(cka_dict, kernel=kernel, used_unit_type=used_unit_type, used_id_num=used_id_num, **kwargs)
+        return cka_dict
+        
+    
+    def plot_CKA_Human(self, cka_dict, kernel, used_unit_type, **kwargs):
+        
+        # --- init
+        if kernel == 'rbf' and 'threshold' in kwargs:
+            title_static = f"CKA score {self.model_structure} {used_unit_type} {kernel} {kwargs['threshold']}"
+            title_temporal = f"CKA temporal score {self.model_structure} {used_unit_type} {kernel} {kwargs['threshold']}"
+        elif kernel == 'linear':
+            title_static = f'CKA score {self.model_structure} {used_unit_type} {kernel}'
+            title_temporal = f'CKA temporal score {self.model_structure} {used_unit_type} {kernel}'
+        else:
+            raise ValueError
+        
+        # 1. static
+        fig, ax = plt.subplots(figsize=(10,6))
+        
+        self.plot_CKA(fig, ax, cka_dict, **kwargs)
+        ax.set_title(title_static)
+        
+        fig.tight_layout(pad=1)
+        fig.savefig(os.path.join(self.save_root, f'{title_static}.svg'), bbox_inches='tight')   
+        plt.close()
+        
+        # 2. temporal
+        fig, ax = plt.subplots(figsize=(np.array(cka_dict['cka_score_temporal'].T.shape)/3.7))
+        
+        self.plot_CKA_temporal(fig, ax, cka_dict, **kwargs)
+        ax.set_title(title_temporal)
+        
+        fig.savefig(os.path.join(self.save_root, f'{title_temporal}.svg'), bbox_inches='tight')
+        plt.close()
 
-        self.plot_CKA_temporal(cka_dict, kernel=kernel, used_unit_type=used_unit_type, used_id_num=used_id_num, **kwargs)
+    
+class CKA_Similarity_Human_folds(CKA_Similarity_Human):
+    
+    def __init__(self, num_folds=5, root=None, **kwargs):
+        
+        super().__init__(root=root, **kwargs)
+        
+        self.root = root
+        self.num_folds = num_folds
+        
+        
+    def __call__(self, kernel, used_unit_type, used_id_num, **kwargs):
+        
+        utils_.formatted_print(f'Used kernel: {kernel} | Used types: {used_unit_type} | Used ID: {used_id_num}')
+        ...
+        
+        utils_.make_dir(save_root_kernel:=os.path.join(self.save_root_primate, f'{kernel}'))
+        utils_.make_dir(save_root_cell_type:=os.path.join(save_root_kernel, used_unit_type))
 
+        self.save_root = os.path.join(save_root_cell_type, str(used_id_num))
+        utils_.make_dir(self.save_root)
+        
+        CKA_dict_folds = self.calculation_CKA_Similarity_folds(kernel, used_unit_type, used_id_num, **kwargs)
+        
+        self.plot_CKA_Similarity_folds(CKA_dict_folds, kernel, used_unit_type, used_id_num, **kwargs)
+        
+    
+    def calculation_CKA_Similarity_folds(self, kernel, used_unit_type, used_id_num, **kwargs):
+        
+        if kernel == 'rbf' and 'threshold' in kwargs:
+            cka_config = f"CKA_results_{kernel}_{kwargs['threshold']}"
+            save_path = os.path.join(self.save_root, f"{cka_config}.pkl")
+        elif kernel == 'linear':
+            cka_config = f"CKA_results_{kernel}"
+            save_path = os.path.join(self.save_root, f"{cka_config}.pkl")
+        else:
+            raise ValueError(f'[Coderror] Invalid parameters [{kernel}, {kwargs}]')
+           
+        if os.path.exists(save_path):
             
+            CKA_dict_folds = utils_.load(save_path, verbose=True)
+        
+        else:
+            
+            FSA_config = self.root.split('/')[-1]
+            
+            CKA_dict_folds = {_ :utils_.load(os.path.join(self.root, f"-_Single Models/{FSA_config}{_}/Analysis/CKA/Human/{kernel}/{used_unit_type}/{used_id_num}/{cka_config}.pkl"), verbose=False) for _ in range(self.num_folds)}
+            
+            # ---
+            CKA_dict_folds = merge_CKA_dict_folds(CKA_dict_folds, self.layers, self.num_folds, route='p', **kwargs)
+            
+            # ---
+            utils_.dump(CKA_dict_folds, save_path, verbose=False)
+            
+        return CKA_dict_folds
+        
+    
+    def plot_CKA_Similarity_folds(self, CKA_dict_folds, kernel, used_unit_type, used_id_num, **kwargs):
+        
+        # ----- plot
+        self.plot_CKA_Human(CKA_dict_folds, kernel, used_unit_type, **kwargs)
+            
+        
+# ----------------------------------------------------------------------------------------------------------------------
+def merge_CKA_dict_folds(CKA_dict_folds, layers, num_folds, route='p', alpha=0.05, FDR_method='fdr_bh', **kwargs):
+    
+    # --- static
+    cka_score_folds = [CKA_dict_folds[fold_idx]['cka_score'] for fold_idx in range(num_folds)]
+    cka_score_mean = np.mean(cka_score_folds, axis=0)
+    cka_score_std = np.std(cka_score_folds, axis=0)
+    
+    cka_score_p_folds = np.mean([CKA_dict_folds[fold_idx]['p'] for fold_idx in range(num_folds)], axis=0)
+    (sig_FDR, p_FDR, alpha_Sadik, alpha_Bonf) = multipletests(cka_score_p_folds, alpha=alpha, method=FDR_method)    
+    
+    # --- temporal
+    cka_score_temporal_folds = np.array([CKA_dict_folds[fold_idx]['cka_score_temporal'] for fold_idx in range(num_folds)])
+    cka_score_temporal_mean = np.mean(cka_score_temporal_folds, axis=0)
+    cka_score_temporal_std = np.std(cka_score_temporal_folds, axis=0)
+    
+    p_temporal = np.mean([CKA_dict_folds[fold_idx]['p_temporal'] for fold_idx in range(num_folds)], axis=0)  
+    
+    if route == 'p':
+        
+        # --- init
+        p_temporal_FDR = np.zeros((len(layers), cka_score_temporal_folds.shape[-1]))     # (num_layers, num_time_steps)
+        sig_temporal_FDR =  p_temporal_FDR.copy()
+        sig_temporal_Bonf = p_temporal_FDR.copy()
+        
+        for _ in range(len(layers)):
+            (sig_temporal_FDR[_, :], p_temporal_FDR[_, :], alpha_Sadik_temporal, alpha_Bonf_temporal) = multipletests(p_temporal[_, :], alpha=alpha, method=FDR_method)      # FDR
+            sig_temporal_Bonf[_, :] = p_temporal_FDR[_, :]<alpha_Bonf_temporal     # Bonf correction
+    
+    elif route == 'sig':
+        
+        sig_temporal_FDR = np.mean([scipy.ndimage.gaussian_filter(CKA_dict_folds[fold_idx]['sig_temporal_FDR'], sigma=1) for fold_idx in range(num_folds)], axis=0)
+        sig_temporal_Bonf = np.mean([scipy.ndimage.gaussian_filter(CKA_dict_folds[fold_idx]['sig_temporal_Bonf'], sigma=1) for fold_idx in range(num_folds)], axis=0)
+        p_temporal_FDR =  np.mean([CKA_dict_folds[fold_idx]['p_temporal_FDR'] for fold_idx in range(num_folds)], axis=0)
+    
+    # ---
+    CKA_dict_folds = {
+        'cka_score': cka_score_mean,
+        'cka_score_std': cka_score_std,
+        
+        'cka_score_perm': np.max([CKA_dict_folds[fold_idx]['cka_score_perm'] for fold_idx in range(num_folds)], axis=0),
+        'p': cka_score_p_folds,
+        
+        'cka_score_temporal': cka_score_temporal_mean,
+        'cka_score_temporal_std': cka_score_temporal_std,
+        
+        'cka_score_temporal_perm': np.max([CKA_dict_folds[fold_idx]['cka_score_temporal_perm'] for fold_idx in range(num_folds)], axis=0),
+        'p_temporal': p_temporal,
+        
+        'p_FDR': p_FDR,
+        'sig_FDR': sig_FDR,
+        'sig_Bonf': p_FDR<alpha_Bonf,
+
+        'p_temporal_FDR': p_temporal_FDR,
+        'sig_temporal_FDR': sig_temporal_FDR,
+        'sig_temporal_Bonf': sig_temporal_Bonf,
+
+        }
+    
+    return CKA_dict_folds
+
+        
 # ----------------------------------------------------------------------------------------------------------------------
 class CKA_Similarity_Comparison(CKA_Similarity_base):
     """
@@ -552,8 +751,7 @@ class CKA_Similarity_Comparison(CKA_Similarity_base):
 # ----------------------------------------------------------------------------------------------------------------------
 def plot_CKA(layers, ax, cka_dict, error_control_measure='sig_FDR', title=None, error_area=True, vlim:list[float]=None, legend=False, color_set=None, **kwargs):
     """
-        #TODO 
-        add the std error area
+        ...
     """
     if color_set is None:
         color_set = ['skyblue', 'blue', 'deepskyblue']
@@ -762,7 +960,7 @@ class CKA_Comparison(FSA_Gram, CKA_base):
             
             nn_grams = utils_.load(os.path.join(nn_root, f'Analysis/Gram/Gram_linear_norm_{norm}.pkl'))
             
-            nn_layers, nn_neurons, _ = utils_.get_layers_and_units(_model, _type)
+            _, nn_layers, nn_neurons, _ = utils_.get_layers_and_units(_model, _type)
             
             nn_grams_dict = {layer: {_: nn_grams[layer][_] for _ in used_unit_types} for layer in nn_layers}
             
@@ -909,38 +1107,53 @@ def cka(gram_x, gram_y, debiased=False):
 
 
 # ======================================================================================================================
+# local debug
 if __name__ == '__main__':
     
-    layers, neurons, shapes = utils_.get_layers_and_units('vgg16_bn', target_layers='act')
+    FSA_root = '/home/acxyle-workstation/Downloads/FSA'
+    FSA_dir = 'VGG/VGG'
+    FSA_config = 'VGG16bn_C2k_fold_'
+    FSA_model =  'vgg16_bn'
+    
+    _, layers, neurons, shapes = utils_.get_layers_and_units(FSA_model, target_type='act')
 
-    root_dir = '/home/acxyle-workstation/Downloads/'
+    used_unit_types = ['qualified', 'selective', 'non_selective', 'legacy']
     
-    used_unit_types = ['qualified', 'selective', 'non_selective', 'strong_selective', 'weak_selective']
-    
+    # ----- CKA_similarity
     # --- 1.
-    #CKA_monkey = CKA_Similarity_Monkey(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
+    #CKA_monkey = CKA_Similarity_Monkey(root=root, layers=layers, neurons=neurons)
     #CKA_monkey.process_CKA_monkey(kernel='linear', normalize=True)
-    #for threshold in [0.5, 1.0, 2.0, 10.0]:
+    #for threshold in [0.5, 1.0, 10.0]:
     #    CKA_monkey.process_CKA_monkey(kernel='rbf', threshold=threshold)
     
-# =============================================================================
-#     # --- 2.
-#     for _ in range(5):
-#         CKA_human = CKA_Similarity_Human(root=os.path.join(root_dir, f'Face Identity VGG16bn_fold_/-_Single Models/Face Identity VGG16bn_fold_{_}'), layers=layers, neurons=neurons)
-#         for used_unit_type in used_unit_types:
-#             CKA_human.process_CKA_human(kernel='linear', used_unit_type=used_unit_type)
-#             #for threshold in [0.5, 1.0, 10.0]:
-#             #    CKA_human.process_CKA_human(kernel='rbf', threshold=threshold, used_unit_types=used_unit_types)
-# =============================================================================
+    root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
     
+    #CKA_Similarity_Monkey_folds(num_folds=5, root=root, layers=layers, neurons=neurons)(kernel='rbf', threshold=10.0)
+    
+    
+    # --- 2.
+    #for _ in range(5):
+    #    root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{_}')
+    #    CKA_human = CKA_Similarity_Human(root=root, layers=layers, neurons=neurons)
+    #    for used_unit_type in used_unit_types:
+    #        CKA_human.process_CKA_human(kernel='linear', used_unit_type=used_unit_type)
+    #        for threshold in [1.0, 10.0]:
+    #            CKA_human.process_CKA_human(kernel='rbf', threshold=threshold, used_unit_types=used_unit_types)
+    
+    for used_unit_type in used_unit_types:
+        CKA_Similarity_Human_folds(num_folds=5, root=root, layers=layers, neurons=neurons)(kernel='linear', used_unit_type=used_unit_type, used_id_num=50)
+        for threshold in [1.0, 10.0]:
+            CKA_Similarity_Human_folds(num_folds=5, root=root, layers=layers, neurons=neurons)(kernel='rbf', threshold=threshold, used_unit_type=used_unit_type, used_id_num=50)
+    
+    # ----- CKA
     # --- 3.
-    
-    for fold_idx in [0,1,2,3,4]:
-        CKA_Comparison(
-            N1_root=os.path.join(root_dir, f'Face Identity SpikingVGG16bn_IF_T16_CelebA2622_fold_/-_Single Models/Face Identity SpikingVGG16bn_IF_T16_CelebA2622_fold_{fold_idx}'), N1_model='spiking_vgg16_bn',
-            N2_root=os.path.join(root_dir, f'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_/-_Single Models/Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_{fold_idx}'), N2_model='spiking_vgg16_bn',
-            used_unit_types=used_unit_types
-            )()
+# =============================================================================
+#     CKA_Comparison(
+#         N1_root=os.path.join(root_dir, 'FSA/VGG/VGG/FSA VGG16_C2k_fold_/-_Single Models/Face Identity VGG16_fold_0'), N1_model='vgg16',
+#         N2_root=os.path.join(root_dir, 'FSA/VGG/A2S_VGG/FSA A2S_VGG16(T64)'), N2_model='spiking_vgg16',
+#         used_unit_types=used_unit_types
+#         )()
+# =============================================================================
     
     #FIXME
 # =============================================================================

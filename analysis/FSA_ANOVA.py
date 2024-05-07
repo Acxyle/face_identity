@@ -3,7 +3,12 @@
 """
 Created on Thu Feb  9 12:53:33 2023
 
-@author: acxyle
+@author: Jinge Wang, Runnan Cao
+
+    refer to: https://github.com/JingeW/ID_selective
+              https://osf.io/824s7/
+    
+@modified: acxyle
 
     ...
    
@@ -30,7 +35,7 @@ class FSA_ANOVA():
         the 'Features' contains all processed img fr, not spike train
     """
     
-    def __init__(self, root='./Face_Identity VGG16', layers=None, neurons=None, num_classes=50, num_samples=10, alpha=0.01, **kwargs):
+    def __init__(self, root='./FSA Baseline', layers=None, neurons=None, num_classes=50, num_samples=10, alpha=0.01, **kwargs):
         
         self.root = os.path.join(root, 'Features')     # <- folder for feature maps, which should be generated before analysis
         self.dest = os.path.join(root, 'Analysis')    # <- folder for analysis results
@@ -146,10 +151,16 @@ class FSA_ANOVA():
         
         if plot_bar:
             colors = color_column(self.layers)
-            plot_ANOVA_pct(ax, self.layers, pcts, title=title, bar_colors=colors, line_color=line_color, linewidth=1.5, **kwargs)
+            plot_ANOVA_pct(ax, self.layers, pcts, bar_colors=colors, line_color=line_color, linewidth=1.5, **kwargs)
         
         else:
-            plot_ANOVA_pct(ax, self.layers, pcts, title=title, line_color=line_color, linewidth=1.5, **kwargs)
+            plot_ANOVA_pct(ax, self.layers, pcts, line_color=line_color, linewidth=1.5, **kwargs)
+            
+        ax.set_title(title)
+        ax.set_xticks(np.arange(len(self.layers)))
+        ax.set_xticklabels(self.layers, rotation='vertical')
+        ax.set_ylabel('percentage (%)')
+        ax.legend()
         
     
     def load_ANOVA_idces(self, ANOVA_idces_path=None):
@@ -181,26 +192,21 @@ def one_way_ANOVA(input, num_classes=50, num_samples=10, **kwargs):
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-def plot_ANOVA_pct(ax, layers, pcts, title=None, bar_colors=None, line_color=None, linewidth=2.5, label=None, **kwargs):
+def plot_ANOVA_pct(ax, layers, pcts, bar_colors=None, line_color=None, linewidth=2.5, label=None, **kwargs):
     
     plt.rcParams.update({'font.size': 22})     
     plt.rcParams.update({"font.family": "Times New Roman"})
     
     if bar_colors is not None:
         ax.bar(layers, pcts, color=bar_colors, width=0.5)
-    
-    if title is not None:
-        ax.set_title(title)
-        
+     
     if label == None:
         label='sensitive units'
         
-    ax.plot(layers, pcts, color=line_color, linestyle='-', linewidth=linewidth, alpha=1, label=label)
-    ax.set_xticks(np.arange(len(layers)))
-    ax.set_xticklabels(layers, rotation='vertical')
-    ax.set_ylabel('percentage (%)')
+    ax.plot(np.arange(len(layers)), pcts, color=line_color, linestyle='-', linewidth=linewidth, alpha=1, label=label)
+
     ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
-    ax.legend()
+    
      
     
 # ----------------------------------------------------------------------------------------------------------------------
@@ -239,6 +245,9 @@ def color_column(layers, constant_colors=False, **kwargs):
 class FSA_ANOVA_folds(FSA_ANOVA):
     
     def __init__(self, num_folds=5, root=None, **kwargs):
+        
+        plt.rcParams.update({'font.size': 18})    
+        plt.rcParams.update({"font.family": "Times New Roman"})
         
         assert 'fold' in root
         
@@ -295,10 +304,15 @@ class FSA_ANOVA_folds(FSA_ANOVA):
         if line_color is None:
             line_color = 'red'
         
-        plot_ANOVA_pct(ax, self.layers, pcts, title=title, line_color=line_color, linewidth=1.5, **kwargs)
+        plot_ANOVA_pct(ax, layers, pcts, line_color=line_color, linewidth=1.5, **kwargs)
         
-        ax.fill_between(np.arange(len(self.layers)), pcts-stds, pcts+stds, edgecolor=None, facecolor=utils_.lighten_color(utils_.color_to_hex(line_color)), alpha=0.5)
+        ax.fill_between(np.arange(len(layers)), pcts-stds, pcts+stds, edgecolor=None, facecolor=utils_.lighten_color(utils_.color_to_hex(line_color)), alpha=0.5)
         
+        ax.set_title(title)
+        ax.set_xticks(np.arange(len(layers)))
+        ax.set_xticklabels(layers, rotation='vertical')
+        ax.set_ylabel('percentage (%)')
+        ax.legend()
         
    
 # ----------------------------------------------------------------------------------------------------------------------
@@ -331,13 +345,13 @@ class FSA_ANOVA_Comparison(FSA_ANOVA_folds):
         for idx, (root, model) in enumerate(roots_and_models):
             
             super().__init__(root=roots_and_models[idx][0], **kwargs)     # save the comparison results in the fisrt folder
-            self.layers, self.neurons, _ = utils_.get_layers_and_units(roots_and_models[idx][1], target_layers='act')
+            _, self.layers, self.neurons, _ = utils_.get_layers_and_units(roots_and_models[idx][1], 'act')
             
             if 'fold' in root:
                 
                 ratio_dict = self.calculation_ANOVA_pct_folds(os.path.join(root, 'Analysis/ANOVA/ratio.pkl'))
 
-                _label = root.split('/')[-1].split(' ')[-1].replace('_fold_', '').replace('_CelebA2622', '')
+                _label = root.split('/')[-1].split(' ')[-1].replace('_fold_', '').replace('_C2k', '')
                 title.append(_label)
                 
                 self.plot_ANOVA_pct_folds(fig, ax, ratio_dict, line_color=self.color_pool[idx], label=_label)
@@ -356,7 +370,7 @@ class FSA_ANOVA_Comparison(FSA_ANOVA_folds):
 
 
         #ax.set_title(title:=' v.s '.join(title))
-        ax.set_title(title:='Sensitive pct ANN v.s SNN')
+        ax.set_title(title:='Sensitive pct SpikingVGG16bn_LIF_C2k')
         
         # --- setting
         ...
@@ -371,29 +385,28 @@ class FSA_ANOVA_Comparison(FSA_ANOVA_folds):
 # ======================================================================================================================
 if __name__ == "__main__":
     
-    root_dir = '/home/acxyle-workstation/Downloads'
+    FSA_root = '/home/acxyle-workstation/Downloads/FSA'
     
     # -----
-    layers, neurons, shapes = utils_.get_layers_and_units('vgg16_bn', target_layers='act')
+    _, layers, neurons, shapes = utils_.get_layers_and_units('resnet152', 'act')
     
-    # ---
-    FSA_ANOVA(os.path.join(root_dir, 'Face Identity VGG16bn_VGGFace'), layers=layers, neurons=neurons)()
+    #root = os.path.join(FSA_root, 'VGG/SpikingVGG/FSA SpikingVGG16bn_IF_ATan_T4_C2k_fold_')
     
-    # ---
-    #FSA_ANOVA_folds = FSA_ANOVA_folds(num_folds=5, root=os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), layers=layers, neurons=neurons)
-    #FSA_ANOVA_folds()
+    # --- 1. Single Model
+    #FSA_ANOVA(os.path.join(root_dir, 'Face Identity VGG16bn_VGGFace'), layers=layers, neurons=neurons)()
     
-    # -----
+    # --- 2. Folds
+    FSA_ANOVA_folds(num_folds=5, root=os.path.join(FSA_root, 'Resnet/Resnet/FSA Resnet152_C2k_fold_'), layers=layers, neurons=neurons)()
+    
+    # --- 2. Multi Models Comparison
 # =============================================================================
 #     roots_models = [
-#         (os.path.join(root_dir, 'Face Identity VGG16_fold_'), 'vgg16'),
-#         (os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), 'vgg16_bn'),
-#         (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
-#         (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn'),
-#         (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
-#         (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn')
+#         (os.path.join(FSA_root, 'VGG/SpikingVGG/FSA SpikingVGG16bn_LIF_ATan_T4_C2k_fold_'), 'spiking_vgg16_bn'),
+#         (os.path.join(FSA_root, 'VGG/SpikingVGG/FSA SpikingVGG16bn_LIF_ATan_T8_C2k_fold_'), 'spiking_vgg16_bn'),
+#         (os.path.join(FSA_root, 'VGG/SpikingVGG/FSA SpikingVGG16bn_LIF_ATan_T16_C2k_fold_'), 'spiking_vgg16_bn'),
+#         (os.path.join(FSA_root, 'VGG/VGG/FSA VGG16bn_C2k_fold_'), 'vgg16_bn'),
 #         ]
-#     FSA_ANOVA_Comparison = FSA_ANOVA_Comparison(roots_models)
+#     FSA_ANOVA_Comparison()(roots_models)
 # =============================================================================
     
     

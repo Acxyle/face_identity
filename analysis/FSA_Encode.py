@@ -3,9 +3,12 @@
 """
 Created on Wed Feb 15 13:54:55 2023
 
-@author: acxyle
+@author: Jinge Wang, Runnan Cao
 
-    ...
+    refer to: https://github.com/JingeW/ID_selective
+              https://osf.io/824s7/
+    
+@modified: acxyle
     
 """
 
@@ -149,6 +152,8 @@ class FSA_Encode():
     
     def calculation_Sort_dict(self, used_unit_types, **kwargs):
         
+        self.basic_types = ['s_si', 's_wsi', 's_mi', 's_wmi', 's_non_encode', 'ns_si', 'ns_wsi', 'ns_mi', 'ns_wmi', 'ns_non_encode']   
+            
         basic_types = [_ for _ in used_unit_types if _ in self.basic_types]
         advanced_types = list(set(used_unit_types) - set(basic_types))
         
@@ -253,7 +258,7 @@ class FSA_Encode():
                             '#0000CD', '#ADD8E6', '#FF6347', '#FFDAB9', '#808080',
                             '#FF0000', '#008000', '#800080', '#FFC0CB', '#8A2BE2', 
                             
-                            '#FFD700', '#FFA500', '#FF8C00', '#D3D3D3',
+                            '#FFD700', '#FFA500', '#FF8C00', '#999999',
                             '#9400D3', '#FF69B4', '#8A2BE2', 
                             '#4B0082', '#C71585', '#7B68EE',
                                 ],
@@ -349,7 +354,7 @@ class FSA_Encode():
     
     
     @staticmethod
-    def plot_units_pct(fig, ax, layers=None, curve_dict=None, color=None, label=None, **kwargs):
+    def plot_units_pct(fig, ax, layers=None, curve_dict=None, color=None, label=None, text=True, **kwargs):
         """
             this function is the basic function to plot pct of different types of units over layers, manually change
         """
@@ -365,12 +370,13 @@ class FSA_Encode():
                 ax.plot(curve['values'], color=curve['color'], linestyle=curve['linestyle'], linewidth=curve['linewidth'], label=curve['label'])
                     
                 if 'stds' in curve.keys():
-                    ax.fill_between(np.arange(len(layers)), curve['values']-curve['stds'], curve['values']+curve['stds'], edgecolor=None, facecolor=utils_.lighten_color(utils_.color_to_hex(curve['color'])), alpha=0.75)
+                    ax.fill_between(np.arange(len(layers)), curve['values']-curve['stds'], curve['values']+curve['stds'], edgecolor=None, facecolor=utils_.lighten_color(utils_.color_to_hex(curve['color']), 40), alpha=0.75)
             
         ax.legend(framealpha=0.5)
         ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
-
-        ax.set_xticks(np.arange(len(layers)), layers, rotation='vertical')
+            
+        if text:
+            ax.set_xticks(np.arange(len(layers)), layers, rotation='vertical')
         ax.tick_params(axis='both', which='major', labelsize=12)
         ax.set_ylim([0, 100])
         
@@ -688,8 +694,11 @@ class FSA_Encode():
         norm = plt.Normalize(vmin=vmin, vmax=vmax)
         fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
         fig.suptitle(f'layer - ID (3D) [{self.model_structure}]', x=0.55, y=0.95, fontsize=28)
-        
-     
+       
+    
+    
+    
+    
     def load_Sort_dict(self, sort_dict_path=None):
         if not sort_dict_path:
             sort_dict_path = os.path.join(self.dest_Encode, 'Sort_dict.pkl')
@@ -747,7 +756,7 @@ class FSA_Encode_folds(FSA_Encode):
         
         self.plot_units_pct_folds(fig, ax, curve_dict_folds, used_unit_types=used_unit_types, **kwargs)
         
-        ax.set_title(title:=f'{self.model_structure} {used_unit_types}')
+        ax.set_title(title:=f"{self.model_structure.replace('_ATan', '').replace('_fold_', '')} {''.join([_[0] for _ in used_unit_types])}")
         
         fig.tight_layout()
         fig.savefig(os.path.join(self.dest_Encode, f'Encode pct {title}.svg'), bbox_inches='tight')
@@ -943,6 +952,7 @@ class FSA_Responses(FSA_Encode):
         Main functions:
             1) calculate and display responses of a single unit and multiple units
             2) calculate and display **Percentage** of units of a single layer
+            3) calculate and display the avg responses (intensity) of feature maps
         
     """
     
@@ -954,6 +964,143 @@ class FSA_Responses(FSA_Encode):
         utils_.make_dir(self.dest_Responses)
         
         self.Sort_dict = self.load_Sort_dict()
+        
+        ...
+    
+    
+    def calculation_Feature_Intensity(self, used_unit_types, **kwargs):
+        
+        self.dest_Intensity = os.path.join(self.dest_Responses, 'Intensity')
+        utils_.make_dir(self.dest_Intensity)
+        
+        save_path = os.path.join(self.dest_Intensity, 'Intensity.pkl')
+        save_path_units_pct = os.path.join(self.dest_Intensity, 'units_pct.pkl')
+        
+        # ---
+        if os.path.exists(save_path):
+            
+            Intensity_dict = utils_.load(save_path)
+            
+        else:
+        
+            def _single_layer_process(layer, sort_dict):
+                
+                feature = utils_.load_feature(os.path.join(self.root, f'{layer}.pkl'), verbose=False)
+                feature = np.mean(feature.reshape(self.num_classes, self.num_samples, -1), axis=1)     # (50, num_samples)
+                
+                mean = {}
+                std = {}
+                log_mean = {}
+                log_std = {}
+                zero_pct = {}
+                
+                for k, v in sort_dict.items():
+                
+                    subfeature = feature[:, v]    
+                
+                    mean[k] = np.mean(subfeature)
+                    std[k] =np.std(subfeature)
+                    log_mean[k] = np.mean(np.log(subfeature[subfeature!=0])/np.log(10))
+                    log_std[k] = np.std(np.log(subfeature[subfeature!=0])/np.log(10))
+                    zero_pct[k] = np.sum(subfeature==0)/subfeature.size*100
+                
+                I_dict = {
+                    'mean': mean,
+                    'std': std,
+                    'log_mean': log_mean,
+                    'log_std': log_std,
+                    'zero_pct': zero_pct
+                    }
+                
+                return I_dict
+        
+            self.Sort_dict = self.load_Sort_dict()
+            Sort_dict = self.calculation_Sort_dict(used_unit_types, **kwargs)
+            
+            Intensity_dict = {}
+            
+            pl = Parallel(n_jobs=15)(delayed(_single_layer_process)(layer, Sort_dict[layer]) for layer in self.layers)
+            
+            Intensity_dict = {k: pl[idx] for idx, k in enumerate(self.layers)}
+            Intensity_dict = {k: {__: [Intensity_dict[_][__][k] for _ in self.layers] for __ in ['mean', 'std', 'log_mean', 'log_std', 'zero_pct']} for k in used_unit_types}
+            
+            utils_.dump(Intensity_dict, save_path)
+            
+        # ---
+        if os.path.exists(save_path_units_pct):
+            
+            units_pct = utils_.load(save_path_units_pct)
+            
+        else:
+            
+            units_pct = self.calculation_units_pct(used_unit_types, **kwargs)
+            utils_.dump(units_pct, save_path_units_pct)
+            
+        return Intensity_dict, units_pct
+    
+    @staticmethod
+    def plot_Feature_Intensity_single(ax, layers, Intensity_dict, used_unit_type, units_pct, direction='horizontal'):
+        
+        x = np.arange(len(layers))
+        
+        if direction == 'horizontal':
+        
+            ax.plot(x, Intensity_dict[used_unit_type]['mean'], label='Values')
+            ax.fill_between(x, np.array(Intensity_dict[used_unit_type]['mean'])-np.array(Intensity_dict[used_unit_type]['std']), np.array(Intensity_dict[used_unit_type]['mean'])+np.array(Intensity_dict[used_unit_type]['std']), alpha=0.5)
+            
+            ax.set_ylabel("Firing Rates", color='blue')
+            ax.tick_params(axis='y', labelcolor='blue')
+            ax.set_ylim(bottom=0)
+            ax.set_xlim([0, len(layers)-1])
+            
+            ax2 = ax.twinx()
+            ax2.plot(Intensity_dict[used_unit_type]['zero_pct'], color='red', marker='.', label='% 0')
+            ax2.set_ylim([0, 105])
+            ax2.set_ylabel("%", color='red')
+            ax2.tick_params(axis='y', labelcolor='red')
+    
+            ax2.plot(units_pct[used_unit_type], linestyle='--', color='coral', marker='d', label='% Units')
+            ax2.grid(True, axis='y', linestyle='--', linewidth=0.5, color='red', alpha=0.5)
+        
+        elif direction == 'vertical':
+            
+            ax.plot(Intensity_dict[used_unit_type]['mean'], x)
+            ax.fill_betweenx(x, np.array(Intensity_dict[used_unit_type]['mean'])-np.array(Intensity_dict[used_unit_type]['std']), np.array(Intensity_dict[used_unit_type]['mean'])+np.array(Intensity_dict[used_unit_type]['std']), alpha=0.5)
+            
+            ax.set_xlabel("Firing Rates", color='blue')
+            ax.tick_params(axis='x', labelcolor='blue')
+            ax.set_xlim(left=0)
+            ax.set_ylim([0, len(layers)-1])
+            ax.invert_xaxis()
+            
+            ax2 = ax.twiny()
+            ax2.plot(Intensity_dict[used_unit_type]['zero_pct'], x, color='red', marker='.')
+            ax2.set_xlim([0, 105])
+            ax2.set_xlabel("%", color='red')
+            ax2.tick_params(axis='x', labelcolor='red')
+            ax2.plot(units_pct[used_unit_type], x, linestyle='--', color='coral', marker='d')
+            ax2.grid(True, axis='x', linestyle='--', linewidth=0.5, color='red', alpha=0.5)
+            ax2.invert_xaxis()
+    
+    
+    def plot_Feature_Intensity(self, used_unit_types, **kwargs):
+        
+        self.dest_Intensity = os.path.join(self.dest_Responses, 'Intensity')
+        utils_.make_dir(self.dest_Intensity)
+        
+        Intensity_dict, units_pct = self.calculation_Feature_Intensity(used_unit_types)
+
+        for used_unit_type in used_unit_types:
+
+            fig, ax = plt.subplots(figsize=(10, 3))
+
+            self.plot_Feature_Intensity_single(ax, self.layers, Intensity_dict, used_unit_type, units_pct, direction='horizontal')
+            
+            ax.set_title(used_unit_type)
+            fig.legend(loc='upper center', bbox_to_anchor=(0.5, 0.9), framealpha=0.5)
+            
+            fig.savefig(os.path.join(self.dest_Intensity, f'{self.model_structure} {used_unit_type}.svg'), bbox_inches='tight')
+            plt.close()
         
         ...
     
@@ -1136,6 +1283,7 @@ class FSA_Responses(FSA_Encode):
             fig.savefig(os.path.join(save_path, f'{layer}_pct_pie_chart.svg'), transparent=True)
             plt.close()
         
+    
 
 
 def plot_unit_responses(ax, input, local_means, colors=None, num_classes=50, num_samples=10, **kwargs):
@@ -1296,7 +1444,7 @@ class FSA_SVM(FSA_Encode):
         
         self.plot_SVM(ax, layer_SVM, **kwargs)
         
-        ax.set_title(title:=f'SVM | {self.model_structure}')
+        ax.set_title(title:=f'SVM {self.model_structure}')
         fig.savefig(os.path.join(self.dest_SVM, f'{title}.svg'), bbox_inches='tight')
         plt.close()
     
@@ -1336,7 +1484,7 @@ class FSA_SVM(FSA_Encode):
         return layer_SVM
             
     
-    def plot_SVM(self, ax, layer_SVM, color=None, label=None, **kwargs):
+    def plot_SVM(self, ax, layer_SVM, color=None, label=None, ncol=2, **kwargs):
         """
             ...
         """
@@ -1350,14 +1498,14 @@ class FSA_SVM(FSA_Encode):
             plot_config = SVM_type_conifg.loc[k]
             
             if color is None and label is None:
-                color = plot_config['color']
-                label = k
-
-            ax.plot(layer_SVM['acc'][k], color=color, linestyle=plot_config['linestyle'], label=label)
+                _color = plot_config['color']
+                ax.plot(layer_SVM['acc'][k], color=_color, linestyle=plot_config['linestyle'], label=k)
+            else:
+                ax.plot(layer_SVM['acc'][k], color=color, linestyle=plot_config['linestyle'], label=label)
             
             if 'std' in layer_SVM:
                 ax.fill_between(np.arange(len(self.layers)), layer_SVM['acc'][k]-layer_SVM['std'][k], layer_SVM['acc'][k]+layer_SVM['std'][k], 
-                                edgecolor=None, facecolor=utils_.lighten_color(utils_.color_to_hex(color)), alpha=0.75, **kwargs)
+                                edgecolor=None, facecolor=utils_.lighten_color(utils_.color_to_hex(_color)), alpha=0.75, **kwargs)
 
         # -----
         ax.set_xticks(np.arange(len(self.layers)))
@@ -1368,7 +1516,7 @@ class FSA_SVM(FSA_Encode):
         ax.set_yticklabels(['' if (_%10)!=0 else _ for _ in range(1,101)])
         
         ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
-        ax.legend(ncol=2, framealpha=0.5)
+        ax.legend(ncol=ncol, framealpha=0.5)
         
 
 def calculation_SVM(input, label, tqdm_bar, **kwargs):
@@ -1404,8 +1552,8 @@ class FSA_SVM_folds(FSA_SVM):
         
         self.plot_SVM_folds(fig, ax, SVM_folds, used_unit_types, **kwargs)
         
-        ax.set_title(title:=f'SVM {self.model_structure}')
-        fig.savefig(os.path.join(self.dest_SVM, f'{title} {used_unit_types}.svg'), bbox_inches='tight')
+        ax.set_title(title:=f"SVM {self.model_structure.replace('_fold_', '')}")
+        fig.savefig(os.path.join(self.dest_SVM, f'{title} {used_unit_types[0]}.svg'), bbox_inches='tight')
         
         plt.close()
     
@@ -1437,7 +1585,7 @@ class FSA_SVM_folds(FSA_SVM):
         
     def plot_SVM_folds(self, fig, ax, SVM_folds, used_unit_types, **kwargs):
         
-        self.plot_SVM(ax, SVM_folds, **kwargs)
+        self.plot_SVM(ax, SVM_folds, ncol=1, **kwargs)
         
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1516,44 +1664,51 @@ class FSA_SVM_Comparison(FSA_SVM_folds):
 # ======================================================================================================================
 if __name__ == "__main__":
     
-    root_dir = '/home/acxyle-workstation/Downloads'
-
-    layers, neurons, shapes = utils_.get_layers_and_units('vgg16', target_layers='act')
+    FSA_root = '/home/acxyle-workstation/Downloads/FSA'
     
-    # -----
-    #selectivity_analyzer = FSA_Encode(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
+    # ----- (1). Encode
+    _, layers, neurons, shapes = utils_.get_layers_and_units('sew_resnet152', 'act')
+    
+    #root = os.path.join(FSA_root, 'VGG/VGG')
+    
+    # --- 1. Single Model
+    #selectivity_analyzer = FSA_Encode(root=os.path.join(FSA_root, 'VGG/VGG/FSA Baseline'), layers=layers, neurons=neurons)
     #selectivity_analyzer.calculation_Encode()
     #selectivity_analyzer.plot_Encode_pct_single()
     #selectivity_analyzer.plot_Encode_pct_comprehensive()
     #selectivity_analyzer.plot_Encode_freq()
     
-    # ---
-    #FSA_Encode_folds = FSA_Encode_folds(num_folds=5, root=os.path.join(root_dir, 'Face Identity VGG16_fold_'), layers=layers, neurons=neurons)
+    # --- 2. Folds
+    #FSA_Encode_folds = FSA_Encode_folds(num_folds=5, root=root, layers=layers, neurons=neurons)
     #FSA_Encode_folds()
-    #FSA_Encode_folds(used_unit_types=['selective', 'strong_selective', 'weak_selective'])
+    #FSA_Encode_folds(used_unit_types=['selective', 'strong_selective', 'weak_selective', 'non_selective'])
     
-    # ---
-    roots_and_models = [
-        (os.path.join(root_dir, 'Face Identity VGG16_fold_'), 'vgg16'),
-        (os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), 'vgg16_bn'),
-        #(os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
-        #(os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn'),
-        #(os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
-        #(os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn')
-        ]
+    # --- 2. Multi Models Comparison
+    #roots_and_models = [
+    #    (os.path.join(root_dir, 'Face Identity VGG16_fold_'), 'vgg16'),
+    #    (os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), 'vgg16_bn'),
+    #    (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+    #    (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+    #    (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+    #    (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn')
+    #    ]
     #FSA_Encode_Comparison()(roots_and_models, used_unit_types=['strong_selective'])
     
-    # -----
-    #selectivity_analyzer = FSA_Responses(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
+    # ----- (2). PDF
+    selectivity_analyzer = FSA_Responses(root=os.path.join(FSA_root, 'Resnet/SEWResnet/FSA SEWResnet152_IF_ATan_T4_C2k_fold_/-_Single Models/FSA SEWResnet152_IF_ATan_T4_C2k_fold_0'), layers=layers, neurons=neurons)
     #selectivity_analyzer.plot_unit_responses()
     #selectivity_analyzer.plot_stacked_responses()
     #selectivity_analyzer.plot_responses_PDF()
     #selectivity_analyzer.plot_pct_pie_chart()
+    selectivity_analyzer.plot_Feature_Intensity(used_unit_types=['qualified', 'selective', 'strong_selective', 'weak_selective', 'non_selective'])
+    
     
     #selectivity_analyzer = FSA_SVM(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
     #selectivity_analyzer.process_SVM()
     
-    #FSA_SVM_folds = FSA_SVM_folds(num_folds=5, root=os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), layers=layers, neurons=neurons)
-    #FSA_SVM_folds()
+    # ----- (3). SVM
+    # --- 1. Folds
+    #FSA_SVM_folds(num_folds=5, root=root, layers=layers, neurons=neurons)()
     
-    FSA_SVM_Comparison()(roots_and_models, used_unit_types=['strong_selective'])
+    # --- 2. Multi Models Comparison
+    #FSA_SVM_Comparison()(roots_and_models, used_unit_types=['strong_selective'])

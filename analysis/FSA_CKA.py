@@ -3,24 +3,13 @@
 """
 Created on Fri Mar  1 20:47:40 2024
 
-@author: acxyle-workstation
-
-    [task] 
-    
-        (1) CKA similarity folds
-        (2) CKA folds
+@author: acxyle
 
 """
 
-import torch
-
 import os
-import pickle
-import warnings
-import logging
-import numpy as np
 
-import matplotlib
+import numpy as np
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -28,8 +17,6 @@ from tqdm import tqdm
 
 from joblib import Parallel, delayed
 import scipy
-
-from scipy.stats import pearsonr, spearmanr, kendalltau, ttest_ind
 
 from statsmodels.stats.multitest import multipletests
 import itertools
@@ -39,10 +26,7 @@ from utils_ import utils_similarity
 
 from Bio_Cell_Records_Process import Human_Neuron_Records_Process, Monkey_Neuron_Records_Process
 from FSA_DRG import FSA_Gram
-
-import sys
-sys.path.append('../')
-import models_
+from FSA_Encode import FSA_Responses
 
   
 # ----------------------------------------------------------------------------------------------------------------------
@@ -143,10 +127,11 @@ class CKA_Similarity_base():
 
         return cka_dict
     
-    
+    #FIXME --- add two-tailed test
     def calculation_CKA_layer(self, layer, kernel='linear', FDR_test=True, num_perm=1000, **kwargs):    
         """
             ...
+            one-tailed test
         """
         
         # --- static
@@ -183,13 +168,15 @@ class CKA_Similarity_base():
         return results
             
 
-    def plot_CKA(self, fig, ax, cka_dict, error_control_measure='sig_FDR', legend=False, vlim:list[float]=None, **kwargs):
+    def plot_CKA(self, fig, ax, cka_dict, error_control_measure='sig_FDR', legend=False, vlim:list[float]=None, stats=True, **kwargs):
         """
             ...
         """
         
         plot_CKA(self.layers, ax, cka_dict, vlim=vlim, legend=legend, **kwargs)
-        utils_similarity.fake_legend_describe_numpy(cka_dict['cka_score'], ax, cka_dict[error_control_measure].astype(bool))
+        
+        if stats:
+            utils_similarity.fake_legend_describe_numpy(cka_dict['cka_score'], ax, cka_dict[error_control_measure].astype(bool))
 
 
     def plot_CKA_temporal(self, fig, ax, cka_dict, extent:list[float]=None, error_control_measure='sig_temporal_Bonf', vlim:list[float]=None, **kwargs):
@@ -223,12 +210,12 @@ class CKA_Similarity_Monkey(Monkey_Neuron_Records_Process, FSA_Gram, CKA_Similar
     
     def __call__(self, kernel='linear', **kwargs):
         
-        cka_dict = self.calculation_CKA_Monkey(kernel)
+        cka_dict = self.calculation_CKA_Monkey(kernel, **kwargs)
         
         self.plot_CKA_Monkey(cka_dict, kernel, **kwargs)
         
         
-    def calculation_CKA_Monkey(self, kernel='linear', normalize=False, FDR_test=True, **kwargs):
+    def calculation_CKA_Monkey(self, kernel='linear', normalize=True, FDR_test=True, **kwargs):
     
         # --- monkey init
         monkey_Gram_dict = self.monkey_neuron_Gram_process(kernel=kernel, **kwargs)
@@ -289,6 +276,19 @@ class CKA_Similarity_Monkey(Monkey_Neuron_Records_Process, FSA_Gram, CKA_Similar
 
 # ----------------------------------------------------------------------------------------------------------------------
 class CKA_Similarity_Monkey_folds(CKA_Similarity_Monkey):
+    """
+        this function uses 2 routes to merge the FDR results of all folds. 
+        
+        Route 'p' uses the mean values of all p values then conduct the FDR test again, the output is boolean
+        
+        Route 'sig' uses the smoothed mean values of sig results(T/F), the output is float
+        
+        **Example primate_config:**
+            primate_config = 'Monkey'
+            primate_config = 'Human/linear/qualified/50'     # 'Human/{kernel}/{used_unit_type}/{used_id_num}'
+        
+        **Question: what cause inf or nan CKA/RSA values? --- Zeors?
+    """
     
     def __init__(self, num_folds=5, root=None, **kwargs):
         
@@ -364,23 +364,22 @@ class CKA_Similarity_Human(Human_Neuron_Records_Process, FSA_Gram, CKA_Similarit
         utils_.formatted_print(f'Used kernel: {kernel} | Used types: {used_unit_type} | Used ID: {used_id_num}')
         ...
         
-        utils_.make_dir(save_root_kernel:=os.path.join(self.save_root_primate, f'{kernel}'))
-        utils_.make_dir(save_root_cell_type:=os.path.join(save_root_kernel, used_unit_type))
-
-        self.save_root = os.path.join(save_root_cell_type, str(used_id_num))
-        utils_.make_dir(self.save_root)
+        cka_dict = self.calculation_CKA_Human(kernel, used_unit_type, used_id_num, **kwargs)
         
-        cka_dict = self.calculation_CKA_Human(kernel, used_id_num, used_unit_type, used_id_num, **kwargs)
-        
-        self.plot_CKA_Human(cka_dict, kernel, **kwargs)
+        self.plot_CKA_Human(cka_dict, kernel, used_unit_type, **kwargs)
         
         
     def calculation_CKA_Human(self, kernel, used_unit_type, used_id_num, FDR_test=True, **kwargs):
         
         # --- init
+        utils_.make_dir(save_root_cell_type:=os.path.join(self.save_root_primate, used_unit_type))
+        
+        self.save_root = os.path.join(save_root_cell_type, str(used_id_num))
+        utils_.make_dir(self.save_root)
+        
         self.used_id = self.human_corr_select_sub_identities(used_id_num)
 
-        NN_Gram_dict = self.calculation_Gram(kernel=kernel, used_unit_type=used_unit_type, **kwargs)
+        NN_Gram_dict = self.calculation_Gram(kernel=kernel, **kwargs)
         
         if used_unit_type == 'legacy':
             human_Gram_dict = self.human_neuron_Gram_process(kernel, 'selective', **kwargs)
@@ -451,9 +450,8 @@ class CKA_Similarity_Human_folds(CKA_Similarity_Human):
         
         utils_.formatted_print(f'Used kernel: {kernel} | Used types: {used_unit_type} | Used ID: {used_id_num}')
         ...
-        
-        utils_.make_dir(save_root_kernel:=os.path.join(self.save_root_primate, f'{kernel}'))
-        utils_.make_dir(save_root_cell_type:=os.path.join(save_root_kernel, used_unit_type))
+
+        utils_.make_dir(save_root_cell_type:=os.path.join(self.save_root_primate, used_unit_type))
 
         self.save_root = os.path.join(save_root_cell_type, str(used_id_num))
         utils_.make_dir(self.save_root)
@@ -482,7 +480,7 @@ class CKA_Similarity_Human_folds(CKA_Similarity_Human):
             
             FSA_config = self.root.split('/')[-1]
             
-            CKA_dict_folds = {_ :utils_.load(os.path.join(self.root, f"-_Single Models/{FSA_config}{_}/Analysis/CKA/Human/{kernel}/{used_unit_type}/{used_id_num}/{cka_config}.pkl"), verbose=False) for _ in range(self.num_folds)}
+            CKA_dict_folds = {_ :utils_.load(os.path.join(self.root, f"-_Single Models/{FSA_config}{_}/Analysis/CKA/Human/{used_unit_type}/{used_id_num}/{cka_config}.pkl"), verbose=False) for _ in range(self.num_folds)}
             
             # ---
             CKA_dict_folds = merge_CKA_dict_folds(CKA_dict_folds, self.layers, self.num_folds, route='p', **kwargs)
@@ -562,200 +560,249 @@ def merge_CKA_dict_folds(CKA_dict_folds, layers, num_folds, route='p', alpha=0.0
 
         
 # ----------------------------------------------------------------------------------------------------------------------
-class CKA_Similarity_Comparison(CKA_Similarity_base):
+class CKA_Similarity_Monkey_Comparison(CKA_Similarity_Monkey_folds, CKA_Similarity_Monkey):
     """
         ...
     """
     
-    def __init__(self, N1_root, N2_root, primate_config='Monkey', route='p', **kwargs):
+    def __init__(self, roots_and_models, primate_config='Monkey', route='p', **kwargs):
         
+        self.roots_and_models = roots_and_models
         self.layers = layers
         self.primate_config = primate_config.replace('/', '_')
         
-        self.model_structure_1 = N1_root.split('/')[-1].split(' ')[-1]
-        self.model_structure_2 = N2_root.split('/')[-1].split(' ')[-1]
+        if len(self.roots_and_models) == 2:
+            self.save_root_ = os.path.join(roots_and_models[0][0], f"Analysis/CKA/Similarity v.s. {roots_and_models[1][0].split(' ')[-1].replace('_fold_', '')}")
+        else:
+            self.save_root_ = os.path.join(roots_and_models[0][0], 'Analysis/CKA/Similarity v.s. ')
+            
+        utils_.make_dir(self.save_root_)
         
-        self.save_root = os.path.join(root_dir, N1_root, f'CKA/Similarity v.s. {self.model_structure_2}')
-        utils_.make_dir(self.save_root)
-        
-        cka_dict_1 = self.folds_model_merge(N1_root, primate_config=primate_config, route=route, **kwargs)
-        cka_dict_2 = self.folds_model_merge(N2_root, primate_config=primate_config, route=route, **kwargs)
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        plt.rcParams.update({'font.size': 16})
         
         # ---
-        self.plot_CKA(cka_dict_1, cka_dict_2)
+        self.color_pool = ['blue', 'green', 'red', 'purple', 'orange', 'chocolate']
         
-        self.plot_CKA_temporal(cka_dict_1, cka_dict_2, route=route)
+    
+    def __call__(self, kernel, **kwargs):
+    
+        fig, ax = plt.subplots(figsize=(10, 6))
         
+        title = []
+        handles, labels = ax.get_legend_handles_labels()
         
-    # FIXME --- this function should not only extract monkey values but all
-    def folds_model_merge(self, NN, primate_config='Monkey', alpha=0.05, FDR_method='fdr_bh', num_folds=5, route='sig', **kwargs):
-        """
-            this function uses 2 routes to merge the FDR results of all folds. 
+        if len(self.roots_and_models) == 2:
             
-            Route 'p' uses the mean values of all p values then conduct the FDR test again, the output is boolean
-            
-            Route 'sig' uses the smoothed mean values of sig results(T/F), the output is float
-            
-            **Example primate_config:**
-                primate_config = 'Monkey'
-                primate_config = 'Human/linear/qualified/50'     # 'Human/{kernel}/{used_unit_type}/{used_id_num}'
-            
-            **Question: what cause inf or nan CKA/RSA values?
-        """
+            cka_dict = {}
         
-        
-        
-        CKA_dict = {_: utils_.load(f"{NN}/-_Single Models/{NN.split('/')[-1]}{_}/Analysis/CKA/{primate_config}/CKA_results_linear.pkl", verbose=False) for _ in tqdm(range(num_folds), desc='CKA results')}
-        CKA_dict = {_: np.array([CKA_dict[fold_idx][_] for fold_idx in range(num_folds)]) for _ in list(CKA_dict[0].keys())}
-        
-        folds_std = np.std(CKA_dict['cka_score'], axis=0)
+        for idx, (root, model) in enumerate(self.roots_and_models):
 
-        if route == 'p':
+            color = self.color_pool[idx]
             
-            CKA_dict = {k: np.mean(v, axis=0) for k,v in CKA_dict.items()}
-            
-            (CKA_dict['sig_Bonf'], CKA_dict['p_FDR'], alpha_Sadik, alpha_Bonf) = multipletests(CKA_dict['p'], alpha=alpha, method=FDR_method)    
-            CKA_dict['sig_FDR'] = CKA_dict['p_FDR']<alpha_Bonf
-
-            for _ in range(len(self.layers)):
-                (CKA_dict['sig_temporal_FDR'][_, :], CKA_dict['p_temporal_FDR'][_, :], alpha_Sadik_temporal, alpha_Bonf_temporal) = multipletests(CKA_dict['p_temporal'][_, :], alpha=alpha, method=FDR_method)      # FDR
-                CKA_dict['sig_temporal_Bonf'][_, :] = CKA_dict['p_temporal_FDR'][_, :]<alpha_Bonf_temporal     # Bonf correction
-            
-        elif route == 'sig':
-            
-            gaussian_keys = ['sig_FDR', 'sig_Bonf', 'sig_temporal_FDR', 'sig_temporal_Bonf']
-            
-            for k, v in CKA_dict.items():
+            if 'fold' in root:
                 
-                if k in gaussian_keys:
-                    
-                    CKA_dict[k] = np.mean(np.array([scipy.ndimage.gaussian_filter(v[fold_idx], sigma=1) for fold_idx in range(num_folds)]), axis=0)
-                    
-                else:
-                    
-                    CKA_dict[k] = np.mean(v, axis=0)
-                    
+                CKA_Similarity_Monkey_folds.__init__(self, root=self.roots_and_models[idx][0], **kwargs)     # save the comparison results in the fisrt folder
+                _, self.layers, self.neurons, _ = utils_.get_layers_and_units(self.roots_and_models[idx][1], 'act')
+                
+                CKA_dict = self.calculation_CKA_Similarity_folds(kernel, **kwargs)
+                
+                if len(self.roots_and_models) == 2:
+                    cka_dict[idx] = CKA_dict
+
+                _label = root.split(' ')[-1].replace('_ATan', '').replace('_C2k_fold_', '')
+                title.append(_label)
+                
+                self.plot_CKA(fig, ax, CKA_dict, color=color, stats=False)
+                
+                ...
+                
+            else:
+                
+                CKA_Similarity_Monkey.__init__(self, root=self.roots_and_models[idx][0], **kwargs)     # save the comparison results in the fisrt folder
+                _, self.layers, self.neurons, _ = utils_.get_layers_and_units(self.roots_and_models[idx][1], 'act')
+                
+                CKA_dict = self.calculation_CKA_Monkey(kernel, **kwargs)
+                
+                if len(self.roots_and_models) == 2:
+                    cka_dict[idx] = CKA_dict
+                
+                _label=root.split(' ')[-1].replace('_C2k', '')
+                title.append(_label)
+                
+                self.plot_CKA(fig, ax, CKA_dict, color=color, stats=False)
+                ...
+            
+            solid_circle = Line2D([0], [0], marker='o', color=utils_.darken_color(utils_.color_to_hex(color)), markerfacecolor=color, markersize=5, markeredgecolor=color, linestyle='dotted', linewidth=2)
+
+            handles.extend([solid_circle])
+            labels.extend([f"{_label}: {np.mean(CKA_dict['cka_score'][CKA_dict['sig_FDR']]):.2f}"])
+        
+        if kernel == 'rbf' and 'threshold' in kwargs:
+            postfix = f"{kernel} {kwargs['threshold']}"
+        elif kernel == 'linear':
+            postfix = f"{kernel}"
+
+        #ax.set_title(title:=f'{postfix} Monkey CKA Similarity '+' v.s '.join(title))
+        ax.set_title(title:=f"{postfix} Monkey CKA Similarity VGG16bn v.s. SVGG (IF)")
+        
+        # --- setting
+        ax.legend(handles, labels, framealpha=0.5)
+        # ---
+        
+        fig.tight_layout()
+        
+        fig.savefig(os.path.join(self.save_root_, f'Comparison {self.primate_config} {title}.svg'))
+        
+        plt.close()
+        
+        # -----
+        if len(self.roots_and_models) == 2:
+            
+            diff_cka_dict = {
+                'cka_score_temporal': cka_dict[1]['cka_score_temporal'] - cka_dict[0]['cka_score_temporal'],
+                'p_temporal': np.min([cka_dict[1]['p_temporal'], cka_dict[0]['p_temporal']], axis=0),
+                'p_temporal_FDR': np.min([cka_dict[1]['p_temporal_FDR'], cka_dict[0]['p_temporal_FDR']], axis=0),
+                'sig_temporal_Bonf': cka_dict[1]['sig_temporal_Bonf'] & cka_dict[0]['sig_temporal_Bonf'],
+                'sig_temporal_FDR': cka_dict[1]['sig_temporal_FDR'] & cka_dict[0]['sig_temporal_FDR'],
+                }
+            
+            fig, ax = plt.subplots(figsize=(np.array(diff_cka_dict['cka_score_temporal'].T.shape)/3.7))
+            
+            self.plot_CKA_temporal(fig, ax, diff_cka_dict, **kwargs)
+            ax.set_title(title:=f'Temporal {title}')
+            
+            fig.savefig(os.path.join(self.save_root_, f'Temporal {title}.svg'), bbox_inches='tight')
+            
+            plt.close()
+    
+    
+        
+class CKA_Similarity_Human_Comparison(CKA_Similarity_Human_folds, CKA_Similarity_Human):
+    """
+        ...
+    """
+    
+    def __init__(self, roots_and_models, primate_config, route='p', **kwargs):
+        
+        self.roots_and_models = roots_and_models
+        self.layers = layers
+        self.primate_config = primate_config.replace('/', '_')
+        
+        if len(self.roots_and_models) == 2:
+            self.save_root_ = os.path.join(roots_and_models[0][0], f"Analysis/CKA/Similarity v.s. {roots_and_models[1][0].split(' ')[-1].replace('_fold_', '')}")
         else:
-            
-            raise ValueError
+            self.save_root_ = os.path.join(roots_and_models[0][0], 'Analysis/CKA/Similarity v.s. ')
         
-        CKA_dict_across_folds = CKA_dict
-        CKA_dict_across_folds['cka_score_std'] = folds_std
+        utils_.make_dir(self.save_root_)
         
-        return CKA_dict_across_folds
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        plt.rcParams.update({'font.size': 16})
+        
+        # ---
+        self.color_pool = ['blue', 'green', 'red', 'purple', 'orange', 'chocolate']
+        
     
+    def __call__(self, kernel, **kwargs):
+    
+        fig, ax = plt.subplots(figsize=(10, 6))
         
-    def plot_CKA(self, cka_dict_1, cka_dict_2, kernel='linear', error_control_measure='sig_FDR', legend=False, vlim:list[float]=None, save=True, **kwargs):
-        """
-            this function plots static CKA scores and save
+        title = []
+        handles, labels = ax.get_legend_handles_labels()
+        
+        if len(self.roots_and_models) == 2:
             
-            input:
-                layers: define the x axis
-                cka_fr: CKA data
-                title: 
+            cka_dict = {}
+        
+        for idx, (root, model) in enumerate(self.roots_and_models):
+            
+            color = self.color_pool[idx]
+            
+            if 'fold' in root:
                 
-        """
-        
-        utils_.formatted_print('Executing static plotting...')
-        
-        plt.rcParams.update({"font.family": "Times New Roman"})
-        plt.rcParams.update({'font.size': 16})
-        
-        logging.getLogger('matplotlib').setLevel(logging.ERROR)
-        with warnings.catch_warnings():
-            warnings.simplefilter(action='ignore')
-            
-            if 'threshold' in kwargs:
-                title = f"CKA score {kernel} {kwargs['threshold']} {self.model_structure_1} {self.model_structure_2}\n{self.primate_config}"
-            elif kernel == 'linear':
-                title = f'CKA score {kernel} {self.model_structure_1} {self.model_structure_2}\n{self.primate_config}'
+                CKA_Similarity_Human_folds.__init__(self, root=self.roots_and_models[idx][0], **kwargs)     # save the comparison results in the fisrt folder
+                _, self.layers, self.neurons, _ = utils_.get_layers_and_units(self.roots_and_models[idx][1], 'act')
+                
+                self.save_root = os.path.join(root, f'Analysis/CKA/Human/{kernel}', self.primate_config.split('_')[-2], str(50))
+                
+                CKA_dict = self.calculation_CKA_Similarity_folds(kernel, used_unit_type=self.primate_config.split('_')[-2], used_id_num=50, **kwargs)
+                
+                if len(self.roots_and_models) == 2:
+                    cka_dict[idx] = CKA_dict
+                
+                _label = root.split(' ')[-1].replace('_ATan', '').replace('_C2k_fold_', '')
+                title.append(_label)
+                
+                self.plot_CKA(fig, ax, CKA_dict, color=color, stats=False)
+                
+                ...
+                
             else:
-                raise ValueError
+                
+                CKA_Similarity_Human.__init__(self, root=self.roots_and_models[idx][0], **kwargs)     # save the comparison results in the fisrt folder
+                _, self.layers, self.neurons, _ = utils_.get_layers_and_units(self.roots_and_models[idx][1], 'act')
+                
+                CKA_dict = self.calculation_CKA_Human(kernel, used_unit_type=self.primate_config.split('_')[-2], used_id_num=50, **kwargs)
+                
+                if len(self.roots_and_models) == 2:
+                    cka_dict[idx] = CKA_dict
+                
+                _label=root.split(' ')[-1].replace('_C2k', '')
+                title.append(_label)
+                
+                self.plot_CKA(fig, ax, CKA_dict, color=color, stats=False)
+                ...
+            
+            solid_circle = Line2D([0], [0], marker='o', color=utils_.darken_color(utils_.color_to_hex(color)), markerfacecolor=color, markersize=5, markeredgecolor=color, linestyle='dotted', linewidth=2)
 
-            fig, ax = plt.subplots(figsize=(10,6))
+            handles.extend([solid_circle])
+            labels.extend([f"{_label}: {np.mean(CKA_dict['cka_score'][CKA_dict['sig_FDR']]):.2f}"])
+        
+        if kernel == 'rbf' and 'threshold' in kwargs:
+            postfix = f"{kernel} {kwargs['threshold']}"
+        elif kernel == 'linear':
+            postfix = f"{kernel}"
             
-            plot_CKA(self.layers, ax, cka_dict_1, legend=legend, color_set=['yellow', 'orange', 'chocolate'], error_area=False)
-            
-            plot_CKA(self.layers, ax, cka_dict_2, title='CKA score VGG16bn v.s. SpikingVGG16bn', vlim=vlim, legend=legend)
-            
-            fake_legend_stats_handles = [Line2D([0], [0], marker='o', color='none', markerfacecolor='blue', markersize=5, markeredgecolor='orange'),
-                                         Line2D([0], [0], marker='o', color='none', markerfacecolor='orange', markersize=5, markeredgecolor='orange'),]
-            
-            fake_legend_stats_labels = [
-                f"SpikingVGG16bn_LIF_T4: {np.mean(cka_dict_2['cka_score']):.3f}(±{np.mean(cka_dict_2['cka_score_std']):.3f})",
-                f"VGG16bn: {np.mean(cka_dict_1['cka_score']):.3f}(±{np.mean(cka_dict_1['cka_score_std']):.3f})",
-                ]
+        #FIXME
+        ax.set_title(title:=f'{postfix} {self.primate_config} Human CKA Similarity '+' v.s '.join(title))
+        #ax.set_title(title:=f"{postfix} Human CKA Similarity VGG16bn v.s. SVGG (LIF)")
 
-            fake_legend = ax.legend(fake_legend_stats_handles, fake_legend_stats_labels, framealpha=0.25, ncol=1, handlelength=0, borderpad=0, labelspacing=0, loc='lower center')
-            ax.add_artist(fake_legend)
+        # --- setting
+        ax.legend(handles, labels, framealpha=0.5)
+        # ---
+        
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.save_root_, f'Comparison {self.primate_config} {title}.svg'))
+        
+        plt.close()        
+        
+        # -----
+        if len(self.roots_and_models) == 2:
             
-            plt.tight_layout(pad=1)
-            if save:
-                plt.savefig(os.path.join(self.save_root, f'{title}.svg'), bbox_inches='tight')   
+            diff_cka_dict = {
+                'cka_score_temporal': cka_dict[1]['cka_score_temporal'] - cka_dict[0]['cka_score_temporal'],
+                'p_temporal': np.min([cka_dict[1]['p_temporal'], cka_dict[0]['p_temporal']], axis=0),
+                'p_temporal_FDR': np.min([cka_dict[1]['p_temporal_FDR'], cka_dict[0]['p_temporal_FDR']], axis=0),
+                'sig_temporal_Bonf': cka_dict[1]['sig_temporal_Bonf'].astype(bool) & cka_dict[0]['sig_temporal_Bonf'].astype(bool),
+                'sig_temporal_FDR': cka_dict[1]['sig_temporal_FDR'].astype(bool) & cka_dict[0]['sig_temporal_FDR'].astype(bool),
+                }
+            
+            fig, ax = plt.subplots(figsize=(np.array(diff_cka_dict['cka_score_temporal'].T.shape)/3.7))
+            
+            self.plot_CKA_temporal(fig, ax, diff_cka_dict, **kwargs)
+            ax.set_title(title:=f'Temporal {title}')
+            
+            fig.savefig(os.path.join(self.save_root_, f'{title}.svg'), bbox_inches='tight')
+            
             plt.close()
         
-        
-    def plot_CKA_temporal(self, cka_dict_1, cka_dict_2, route='sig', extent:list[float]=None, error_control_measure='sig_temporal_Bonf', vlim:list[float]=None, kernel='linear', **kwargs):
-        
-        ...
-        
-        utils_.formatted_print('Executing temporal plotting')
-        
-        self.ts = np.arange(-50, 201, 10)
-        
-        if route == 'p':
-        
-            cka_dict_diff = {
-                'cka_score': cka_dict_2['cka_score'] - cka_dict_1['cka_score'],
-                'cka_score_temporal': cka_dict_2['cka_score_temporal'] - cka_dict_1['cka_score_temporal'],
-                'sig_temporal_FDR': np.logical_and(cka_dict_2['sig_temporal_FDR'], cka_dict_1['sig_temporal_FDR']).astype(float),
-                'sig_temporal_Bonf': np.logical_and(cka_dict_2['sig_temporal_Bonf'], cka_dict_1['sig_temporal_Bonf']).astype(float),
-                }
-        
-        elif route == 'sig':
-            
-            cka_dict_diff = {
-                'cka_score': cka_dict_2['cka_score'] - cka_dict_1['cka_score'],
-                'cka_score_temporal': cka_dict_2['cka_score_temporal'] - cka_dict_1['cka_score_temporal'],
-                'sig_temporal_FDR': np.mean([cka_dict_2['sig_temporal_FDR'], cka_dict_1['sig_temporal_FDR']], axis=0),
-                'sig_temporal_Bonf': np.mean([cka_dict_2['sig_temporal_Bonf'], cka_dict_1['sig_temporal_Bonf']], axis=0),
-                }
-        
-        extent = [self.ts.min()-5, self.ts.max()+5, -0.5, cka_dict_1['cka_score_temporal'].shape[0]-0.5]
-        
-        plt.rcParams.update({"font.family": "Times New Roman"})
-        plt.rcParams.update({'font.size': 16})
-    
-        logging.getLogger('matplotlib').setLevel(logging.ERROR)    
-    
-        with warnings.catch_warnings():
-            warnings.simplefilter(action='ignore')
-            
-            if 'threshold' in kwargs:
-                title = f"CKA score temporal {kernel} {kwargs['threshold']} {self.model_structure_1} {self.model_structure_2}\n{self.primate_config}"
-            elif kernel == 'linear':
-                title = f'CKA score temporal {kernel} {self.model_structure_1} {self.model_structure_2}\n{self.primate_config}'
-            else:
-                raise ValueError
-            
-            fig, ax = plt.subplots(figsize=(np.array(cka_dict_1['cka_score_temporal'].T.shape)/3.7))
-            
-            plot_CKA_temporal(self.layers, fig, ax, cka_dict_diff, title=title, vlim=vlim, extent=extent)
-            utils_similarity.fake_legend_describe_numpy(cka_dict_diff['cka_score_temporal'], ax, cka_dict_diff[error_control_measure].astype(bool))
 
-            plt.savefig(os.path.join(self.save_root, f'{title}.svg'))     
-
-            plt.close()
-
-  
 # ----------------------------------------------------------------------------------------------------------------------
-def plot_CKA(layers, ax, cka_dict, error_control_measure='sig_FDR', title=None, error_area=True, vlim:list[float]=None, legend=False, color_set=None, **kwargs):
+def plot_CKA(layers, ax, cka_dict, error_control_measure='sig_FDR', title=None, error_area=True, vlim:list[float]=None, legend=False, color=None, label=None, **kwargs):
     """
         ...
     """
-    if color_set is None:
-        color_set = ['skyblue', 'blue', 'deepskyblue']
-        #color_set = ['yellow', 'orange', 'chocolate']
+    color = 'blue' if color is None else color
 
     plot_x = range(len(layers))
     
@@ -772,15 +819,15 @@ def plot_CKA(layers, ax, cka_dict, error_control_measure='sig_FDR', title=None, 
     similarity = cka_dict['cka_score']
     
     if 'cka_score_std' in cka_dict.keys():
-        ax.fill_between(plot_x, similarity-cka_dict['cka_score_std'], similarity+cka_dict['cka_score_std'], edgecolor=None, facecolor=color_set[0], alpha=0.75)
+        ax.fill_between(plot_x, similarity-cka_dict['cka_score_std'], similarity+cka_dict['cka_score_std'], edgecolor=None, facecolor=utils_.lighten_color(utils_.color_to_hex(color), 100), alpha=0.75)
 
     for idx, _ in enumerate(cka_dict[error_control_measure], 0):
          if not _:   
-             ax.scatter(idx, similarity[idx], facecolors='none', edgecolors=color_set[1])
+             ax.scatter(idx, similarity[idx], facecolors='none', edgecolors=color)
          else:
-             ax.scatter(idx, similarity[idx], facecolors=color_set[1], edgecolors=color_set[1])
+             ax.scatter(idx, similarity[idx], facecolors=color, edgecolors=color)
              
-    ax.plot(similarity, linestyle='dotted', color=color_set[2])
+    ax.plot(similarity, linestyle='dotted', color=utils_.darken_color(utils_.color_to_hex(color)))
 
     ax.set_ylabel("CKA score")
     ax.set_xticks(plot_x)
@@ -791,8 +838,8 @@ def plot_CKA(layers, ax, cka_dict, error_control_measure='sig_FDR', title=None, 
     
     handles, labels = ax.get_legend_handles_labels()
 
-    hollow_circle = Line2D([0], [0], marker='o', color=color_set[2], linestyle='dotted', markerfacecolor='none', markersize=5, markeredgecolor=color_set[1], linewidth=1)
-    solid_circle = Line2D([0], [0], marker='o', color=color_set[2], linestyle='dotted', markerfacecolor=color_set[1], markersize=5, markeredgecolor=color_set[1], linewidth=1)
+    hollow_circle = Line2D([0], [0], marker='o', color=utils_.darken_color(utils_.color_to_hex(color)), linestyle='dotted', markerfacecolor='none', markersize=5, markeredgecolor=color, linewidth=1)
+    solid_circle = Line2D([0], [0], marker='o', color=utils_.darken_color(utils_.color_to_hex(color)), linestyle='dotted', markerfacecolor=color, markersize=5, markeredgecolor=color, linewidth=1)
 
     handles.extend([hollow_circle, solid_circle])
     labels.extend([f"fialed {error_control_measure.split('_')[1]}", f"passed {error_control_measure.split('_')[1]}"])
@@ -898,11 +945,15 @@ def plot_CKA_temporal(layers, fig, ax, cka_dict, error_control_measure='sig_temp
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+#FIXME
 class CKA_base():
     
     def __init__(self, used_unit_types, **kwargs):
         
         self.used_unit_types = used_unit_types
+        
+        plt.rcParams.update({"font.family": "Times New Roman"})
+        plt.rcParams.update({'font.size': 16})
         
         ...
         
@@ -910,14 +961,52 @@ class CKA_base():
     def __call__(self, **kwargs):
         
         # --- 1.
-        cka_dict = self.calculation_CKA(**kwargs)
+        save_path = os.path.join(self.CKA_root, f'CKA {self.N1_structure} v.s. {self.N2_structure}.pkl')
         
-        utils_.dump(cka_dict, os.path.join(self.N1_root, f'CKA {self.N1_structure} v.s. {self.N2_structure}.pkl'))
+        if os.path.exists(save_path):
+            
+            cka_dict = utils_.load(save_path)
+            
+        else:
+            
+            cka_dict = self.calculation_CKA(**kwargs)
+        
+            utils_.dump(cka_dict, save_path)
         
         # --- 2.
         for k, v in cka_dict.items():
             
             self.plot_CKA(v, k, **kwargs)
+            
+        # --- 3.
+        fig, ax = plt.subplots()
+        
+        self.plot_diag_CKA(fig, ax, cka_dict, **kwargs)
+        
+        ax.legend()
+        #ax.set_xticks(np.arange(len(self.N1_layers)))
+        #ax.set_xticklabels(self.N1_layers, rotation='vertical')
+        ax.set_ylim(0,1.1)
+        ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
+        ax.set_title(f'CKA diag {self.N1_structure} v.s. {self.N2_structure}')
+        
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.CKA_root, f'CKA diag {self.N1_structure} v.s. {self.N2_structure}.svg'), bbox_inches='tight')
+        
+        plt.close()
+        
+    
+    def plot_diag_CKA(self, fig, ax, cka_dict, used_unit_type=None, color=None, label=None, **kwargs):
+        
+        if used_unit_type is None:
+            
+            for k, v in cka_dict.items():
+                
+                ax.plot(np.diag(v), label=k)
+        
+        else:
+            
+            ax.plot(np.diag(cka_dict[used_unit_type]), color=color, label=label)
         
         
     def calculation_CKA(self, **kwargs):
@@ -927,34 +1016,107 @@ class CKA_base():
         return {_type: np.array([cka(self.N1_G_dict[_[0]][_type], self.N2_G_dict[_[1]][_type]) for _ in product_list]).reshape(len(self.N1_layers), len(self.N2_layers)) for _type in tqdm(self.used_unit_types)}
         
     
-    def plot_CKA(self, cka_results, _type, **kwargs):
-         
-        plt.rcParams.update({"font.family": "Times New Roman"})
-        plt.rcParams.update({'font.size': 16})
+    def plot_CKA(self, cka_results, _type, intensity=False, layer_ticks=True, **kwargs):
         
-        fig,ax = plt.subplots()
-        img = ax.imshow(cka_results, origin='lower', cmap='magma')
-        
-        ax.set_title(_type)
-        ax.set_xlabel(f'{self.N2_structure}')
-        ax.set_ylabel(f'{self.N1_structure}')
-        ax.set_xticks([])
-        ax.set_yticks([])
-        fig.colorbar(img, shrink=0.75, pad=0.04)
-        
-        fig.tight_layout()
-        fig.savefig(os.path.join(self.N1_root, f'{_type}.svg'), bbox_inches='tight')
-        
-        plt.close()
+        if not intensity:
             
+            fig, ax = plt.subplots()
+           
+            # === 1
+            ax = plt.gcf().add_axes([0.5, 0.5, 0.5, 0.5])
+            img = ax.imshow(cka_results, origin='lower', cmap='magma', aspect='auto')     # vmin=0.2, vmax=1
+            
+            ax.set_title(_type)
+            ax.set_xlabel(f'{self.N2_structure}')
+            ax.set_ylabel(f'{self.N1_structure}')
+            ax.set_xticks([])
+            ax.set_yticks([])
+            
+            fig.savefig(os.path.join(self.CKA_root, f'{_type}.svg'), bbox_inches='tight')
+            plt.close()
+            
+        else:
+            
+            log_Gram_dict_N1 = utils_.load(os.path.join(self.N1_root, 'Analysis/Gram/Figures/log_Gram_dict.pkl'), verbose=False)
+            log_Gram_dict_N2 = utils_.load(os.path.join(self.N2_root, 'Analysis/Gram/Figures/log_Gram_dict.pkl'), verbose=False)
+            
+            log_Gram_N1 = log_Gram_dict_N1[_type]
+            log_Gram_N2 = log_Gram_dict_N2[_type]
+            
+            Intensity_dict_N1 = utils_.load(os.path.join(self.N1_root, 'Analysis/Encode/Responses/Intensity/Intensity.pkl'), verbose=False)
+            units_pct_N1 = utils_.load(os.path.join(self.N1_root, 'Analysis/Encode/Responses/Intensity/units_pct.pkl'), verbose=False)
+            
+            Intensity_dict_N2 = utils_.load(os.path.join(self.N2_root, 'Analysis/Encode/Responses/Intensity/Intensity.pkl'), verbose=False)
+            units_pct_N2 = utils_.load(os.path.join(self.N2_root, 'Analysis/Encode/Responses/Intensity/units_pct.pkl'), verbose=False)
+            
+            fig = plt.figure(figsize=(10, 10))
+           
+            ax_1 = plt.gcf().add_axes([0.5, 0.5, 0.5, 0.5])
+            img = ax_1.imshow(cka_results, origin='lower', cmap='magma', aspect='auto', vmin=0., vmax=1)     # vmin=0., vmax=1
+            
+            ax_1.set_xticks([])
+            ax_1.set_yticks([])
+            
+            ax_2 = plt.gcf().add_axes([0., 0.5, 0.24, 0.5])
+            FSA_Responses.plot_Feature_Intensity_single(ax_2, self.N1_layers, Intensity_dict_N1, _type, units_pct_N1, direction='vertical')
+            
+            if layer_ticks:
+                ax_2.set_yticks(np.arange(len(self.N1_layers)))
+                ax_2.set_yticklabels(self.N1_layers)
+            else:
+                ax_2.set_yticks([])
+                
+            ax_2.set_ylabel(f'{self.N1_structure}', fontsize=18)
+            
+            ax_3 = plt.gcf().add_axes([0.25, 0.5, 0.24, 0.5])
+            self.plot_log_Gram_intensity_single(fig, ax_3, self.N1_layers, _type, log_Gram_N1, direction='vertical', text=False)
+            
+            ax_4 = plt.gcf().add_axes([0.5, 0.25, 0.5, 0.24])
+            self.plot_log_Gram_intensity_single(fig, ax_4, self.N2_layers, _type, log_Gram_N2, direction='horizontal', text=False)
+            
+            ax_5 = plt.gcf().add_axes([0.5, 0., 0.5, 0.24])
+            FSA_Responses.plot_Feature_Intensity_single(ax_5, self.N2_layers, Intensity_dict_N2, _type, units_pct_N2, direction='horizontal')
+            
+            if layer_ticks:
+                ax_5.set_xticks(np.arange(len(self.N2_layers)))
+                ax_5.set_xticklabels(self.N2_layers, rotation='vertical')
+            else:
+                ax_5.set_xticks([])
+                
+            ax_5.set_xlabel(f'{self.N2_structure}', fontsize=18)
+            
+            c_ax1 = fig.add_axes([1.05, 0.1, 0.03, 0.8])
+            c_b1 = fig.colorbar(img, cax=c_ax1)
+            c_b1.ax.tick_params(labelsize=16)
+            
+            # ---
+            legend_lines = [
+                Line2D([0], [0], color='blue', linestyle='-', linewidth=3, label='log_Gram_value'),
+                Line2D([0], [0], marker='o', markersize=8, color='red', linewidth=2, label='zero_pct'),
+                Line2D([0], [0], marker='d', markersize=8, markeredgecolor='coral', color='coral', linestyle='--', linewidth=2, label='units_pct'),
+                Line2D([0], [0], linewidth=2, label='units_value')
+            ]
+            
+            fig.legend(handles=legend_lines, loc='lower left', bbox_to_anchor=(0.125, 0.2))
+            
+            fig.suptitle(f'{_type}', y=1.075, fontsize=24)
+            #fig.tight_layout()
+
+            fig.savefig(os.path.join(self.CKA_root, f'{_type} with intensity.svg'), bbox_inches='tight')
+            plt.close()
+            
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 #FIXME --- the process is complicated
 class CKA_Comparison(FSA_Gram, CKA_base):
     
-    def __init__(self, N1_root, N1_model, N2_root, N2_model, used_unit_types=['qualified', 'strong_selective', 'weak_selective', 'non_selective'], num_folds=5, **kwargs):
+    def __init__(self, N1_root, N1_model, N2_root, N2_model, used_unit_types=['qualified', 'selective', 'non_selective'], **kwargs):
         
         CKA_base.__init__(self, used_unit_types=used_unit_types, **kwargs)
+        
+        self.N1_root = N1_root
+        self.N2_root = N2_root
         
         def _load_folds(nn_root, _model, _type='act',  norm=True, **kwargs):
             
@@ -964,17 +1126,18 @@ class CKA_Comparison(FSA_Gram, CKA_base):
             
             nn_grams_dict = {layer: {_: nn_grams[layer][_] for _ in used_unit_types} for layer in nn_layers}
             
-            nn_structure = nn_root.split('/')[-1].split(' ')[-1]
+            nn_structure = nn_root.split('/')[-1].split(' ')[-1].replace('ATan_', '').replace('_C2k_fold_0', '')
             
             return nn_layers, nn_neurons, nn_grams_dict, nn_structure
         
         self.N1_layers, _, self.N1_G_dict, self.N1_structure = _load_folds(N1_root, N1_model)
         self.N2_layers, _, self.N2_G_dict, self.N2_structure = _load_folds(N2_root, N2_model)
         
-        self.N1_root = os.path.join(N1_root, f'Analysis/CKA/v.s. {self.N2_structure}')
-        utils_.make_dir(self.N1_root)
+        self.CKA_root = os.path.join(N1_root, f'Analysis/CKA/v.s. {self.N2_structure}')
+        utils_.make_dir(self.CKA_root)
         #self.N2_root = os.path.join(N2_root, 'Analysis')
-        
+    
+    
 
 # ----------------------------------------------------------------------------------------------------------------------
 class CKA_Comparison_folds(FSA_Gram, CKA_base):
@@ -998,8 +1161,8 @@ class CKA_Comparison_folds(FSA_Gram, CKA_base):
         self.N1_layers, _, self.N1_G_dict, self.N1_structure = _load_folds(N1_root, N1_model)
         self.N2_layers, _, self.N2_G_dict, self.N2_structure = _load_folds(N2_root, N2_model)
         
-        self.N1_root = os.path.join(N1_root, f'CKA/v.s. {self.N2_structure}')
-        utils_.make_dir(self.N1_root)
+        self.CKA_root = os.path.join(N1_root, f'CKA/v.s. {self.N2_structure}')
+        utils_.make_dir(self.CKA_root)
         #self.N2_root = N2_root
         
 
@@ -1111,50 +1274,78 @@ def cka(gram_x, gram_y, debiased=False):
 if __name__ == '__main__':
     
     FSA_root = '/home/acxyle-workstation/Downloads/FSA'
-    FSA_dir = 'VGG/VGG'
-    FSA_config = 'VGG16bn_C2k_fold_'
-    FSA_model =  'vgg16_bn'
+    FSA_dir = 'Resnet/Resnet'
+    FSA_config = 'Resnet152_C2k_fold_'
+    FSA_model =  'resnet152'
     
     _, layers, neurons, shapes = utils_.get_layers_and_units(FSA_model, target_type='act')
 
     used_unit_types = ['qualified', 'selective', 'non_selective', 'legacy']
     
+
     # ----- CKA_similarity
     # --- 1.
-    #CKA_monkey = CKA_Similarity_Monkey(root=root, layers=layers, neurons=neurons)
-    #CKA_monkey.process_CKA_monkey(kernel='linear', normalize=True)
-    #for threshold in [0.5, 1.0, 10.0]:
-    #    CKA_monkey.process_CKA_monkey(kernel='rbf', threshold=threshold)
+    for _ in [0]:
+        
+        root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{_}')
+        #root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
+        
+        #CKA_monkey = CKA_Similarity_Monkey(root=root, layers=layers, neurons=neurons)
+        #CKA_monkey(kernel='linear', normalize=True)
+        #for threshold in [1.0, 10.0]:
+        #    CKA_monkey(kernel='rbf', threshold=threshold, normalize=True)
+        
+        CKA_human = CKA_Similarity_Human(root=root, layers=layers, neurons=neurons)
+        for used_unit_type in used_unit_types:
+            CKA_human(kernel='linear', used_unit_type=used_unit_type)
+            #for threshold in [1.0, 10.0]:
+            #    CKA_human(kernel='rbf', threshold=threshold, used_unit_type=used_unit_type)
     
-    root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
-    
-    #CKA_Similarity_Monkey_folds(num_folds=5, root=root, layers=layers, neurons=neurons)(kernel='rbf', threshold=10.0)
-    
-    
-    # --- 2.
-    #for _ in range(5):
-    #    root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{_}')
-    #    CKA_human = CKA_Similarity_Human(root=root, layers=layers, neurons=neurons)
-    #    for used_unit_type in used_unit_types:
-    #        CKA_human.process_CKA_human(kernel='linear', used_unit_type=used_unit_type)
-    #        for threshold in [1.0, 10.0]:
-    #            CKA_human.process_CKA_human(kernel='rbf', threshold=threshold, used_unit_types=used_unit_types)
-    
-    for used_unit_type in used_unit_types:
-        CKA_Similarity_Human_folds(num_folds=5, root=root, layers=layers, neurons=neurons)(kernel='linear', used_unit_type=used_unit_type, used_id_num=50)
-        for threshold in [1.0, 10.0]:
-            CKA_Similarity_Human_folds(num_folds=5, root=root, layers=layers, neurons=neurons)(kernel='rbf', threshold=threshold, used_unit_type=used_unit_type, used_id_num=50)
+# =============================================================================
+#     root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
+# 
+#     CKA_Similarity_Monkey_folds(num_folds=5, root=root, layers=layers, neurons=neurons)(kernel='linear')
+#     #for threshold in [1.0, 10.0]:
+#     #    CKA_Similarity_Monkey_folds(num_folds=5, root=root, layers=layers, neurons=neurons)(kernel='rbf', threshold=threshold)
+# 
+#     for used_unit_type in used_unit_types:
+#         CKA_Similarity_Human_folds(num_folds=5, root=root, layers=layers, neurons=neurons)(kernel='linear', used_unit_type=used_unit_type, used_id_num=50)
+#         #for threshold in [1.0, 10.0]:
+#         #    CKA_Similarity_Human_folds(num_folds=5, root=root, layers=layers, neurons=neurons)(kernel='rbf', threshold=threshold, used_unit_type=used_unit_type, used_id_num=50)
+#     
+# =============================================================================
+# =============================================================================
+#     roots_models = [
+#         (os.path.join(FSA_root, 'VGG/VGG/FSA VGG16bn_C2k_fold_'), 'vgg16_bn'),
+#         (os.path.join(FSA_root, 'VGG/SpikingVGG/FSA SpikingVGG16bn_IF_ATan_T4_C2k_fold_'), 'spiking_vgg16_bn'),
+#         #(os.path.join(FSA_root, 'VGG/SpikingVGG/FSA SpikingVGG16bn_IF_ATan_T8_C2k_fold_'), 'spiking_vgg16_bn'),
+#         #(os.path.join(FSA_root, 'VGG/SpikingVGG/FSA SpikingVGG16bn_IF_ATan_T16_C2k_fold_'), 'spiking_vgg16_bn'),
+#         ]
+# 
+#     # --- CKA Similarity Comparison
+#     #CKA_Similarity_Monkey_Comparison(roots_models, primate_config='Monkey')(kernel='linear')
+#     #for threshold in [1.0, 10.0]:
+#     #    CKA_Similarity_Monkey_Comparison(roots_models, primate_config='Monkey')(kernel='rbf', threshold=threshold)
+#     
+#     for _ in used_unit_types:
+#         CKA_Similarity_Human_Comparison(roots_models, primate_config=f'Human/linear/{_}/50')(kernel='linear')
+# =============================================================================
     
     # ----- CKA
-    # --- 3.
 # =============================================================================
+#     used_unit_types = ['qualified', 'selective', 'strong_selective', 'weak_selective', 'non_selective']
+#     
+#     # --- 3.
 #     CKA_Comparison(
-#         N1_root=os.path.join(root_dir, 'FSA/VGG/VGG/FSA VGG16_C2k_fold_/-_Single Models/Face Identity VGG16_fold_0'), N1_model='vgg16',
-#         N2_root=os.path.join(root_dir, 'FSA/VGG/A2S_VGG/FSA A2S_VGG16(T64)'), N2_model='spiking_vgg16',
+#         #N1_root=os.path.join(FSA_root, 'VGG/VGG/FSA Baseline'), N1_model='vgg16',
+#         #N2_root=os.path.join(FSA_root, 'VGG/VGG/FSA Baseline'), N2_model='vgg16',
+#         N1_root=os.path.join(FSA_root, 'Resnet/Resnet/FSA Resnet152_C2k_fold_/-_Single Models/FSA Resnet152_C2k_fold_0'), N1_model='resnet152',
+#         N2_root=os.path.join(FSA_root, 'Resnet/SEWResnet/FSA SEWResnet152_IF_ATan_T4_C2k_fold_/-_Single Models/FSA SEWResnet152_IF_ATan_T4_C2k_fold_0'), N2_model='sew_resnet152',
 #         used_unit_types=used_unit_types
-#         )()
+#         )(intensity=True, layer_ticks=False)
+#     
 # =============================================================================
-    
+
     #FIXME
 # =============================================================================
 #     # --- 4.
@@ -1165,12 +1356,4 @@ if __name__ == '__main__':
 #     ANN_vs_SNN()
 # =============================================================================
     
-    # --- 5.
-# =============================================================================
-#     for _ in used_unit_types:
-#         Model_compare = CKA_Similarity_Comparison(
-#             N1_root=os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), 
-#             N2_root=os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_'), 
-#             primate_config=f'Human/linear/{_}/50', route='p'
-#             )
-# =============================================================================
+   

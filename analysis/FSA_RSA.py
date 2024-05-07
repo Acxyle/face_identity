@@ -3,9 +3,12 @@
 """
 Created on Wed Apr 12 18:47:12 2023
 
-@author: acxyle
+@author: Jinge Wang, Runnan Cao
+
+    refer to: https://github.com/JingeW/ID_selective
+              https://osf.io/824s7/
     
-    ...
+@modified: acxyle
     
 """
 
@@ -57,7 +60,7 @@ class RSA_Base():
     
     def __init__(self, **kwargs):
         """
-            those attributes should be defined by exterior class
+            those attributes should be defined by subclass
         """
         self.ts
         
@@ -78,18 +81,17 @@ class RSA_Base():
             calculation and save the RSA results for monkey, the function will not save RSA_dict without FDR no matter 
             what the flag is
             
-            **[notice]** this version removed all abnormal detections for simplification, refer to historical versions if encountered
+            **[notice]** this version removed all abnormal detections for simplification, check historical versions if encountered
             
             input:
-                first_corr: RSA-I, select from 'euclidean', 'pearson', 'spearman', 'mahalanobis', 'concordance', refer to utisl_similarity.py
-                second_corr: RSA-II, select from 'pearson', 'spearman', 'condordance'
-                alpha: significant level for FDR based on permutation test
-                num_perm: number of permutations
-                FDR_method: preferred FDR method, refer to multipletests
+                - first_corr: RSA-I, select from 'euclidean', 'pearson', 'spearman', 'mahalanobis', 'concordance', refer to utisl_similarity.py
+                - second_corr: RSA-II, select from 'pearson', 'spearman', 'condordance'
+                - alpha: significant level for FDR based on permutation test
+                - num_perm: number of permutations
+                - FDR_method: preferred FDR method, refer to multipletests
                 
             return:
-                
-                   
+                ...
         """
         
         utils_.make_dir(dest_primate:=os.path.join(self.dest_RSA,  f'{primate}'))
@@ -180,14 +182,15 @@ class RSA_Base():
         
         return RSA_dict
     
- 
+    #FIXME --- add two-tailed test
     def calculation_RSA_layer(self, layer, neuron_type='qualified', first_corr='pearson', second_corr='spearman', FDR_test=True, num_perm=1000, **kwargs):    
         """
             1. constant permutation results (default)
             2. random permutation each time, need to manually change the seed to None, otherwise it will be similiar with 
             the first one if the seed was kept
             
-            Those two merely have tiny differences
+            this permutation process inherit from original Matlab code, permute Bio data to check whether the NN data 
+            aligns with the pattern of Bio data, and vice versa (not very sure :P)
         """
         
         # --- init, NN_DSM_v
@@ -241,8 +244,7 @@ class RSA_Base():
                 'corr_coef': corr_coef,
                 'corr_coef_temporal': corr_coef_temporal,
                 }
-        
-
+    
         return results
     
     
@@ -269,10 +271,10 @@ class RSA_Base():
             this function plot static RSA score and save
             
             input:
-                RSA_dict: RSA data
-                title: 
-                error_control_measure: default 'sig_FDR'. Options: 'sig_Bonf'
-                norm_plot: default None. For exterior call with given ylim for fiar comparison
+                - RSA_dict: RSA data
+                - title: 
+                - error_control_measure: default 'sig_FDR'. Options: 'sig_Bonf'
+                - norm_plot: default None. For exterior call with given ylim for fiar comparison
         """
         
         utils_.formatted_print('Plotting static...')
@@ -291,7 +293,7 @@ class RSA_Base():
             function
             
             input:
-                error_control_measure: 'sig_temporal_FDR' default. Options: 'sig_temporal_Bonf'
+                - error_control_measure: 'sig_temporal_FDR' default. Options: 'sig_temporal_Bonf'
         """
         
         utils_.formatted_print('Plotting temporal...')
@@ -306,68 +308,6 @@ class RSA_Base():
         if stats:
             utils_similarity.fake_legend_describe_numpy(RSA_dict['similarity_temporal'], ax, RSA_dict[error_control_measure].astype(bool), **kwargs)
             
-
-# ----------------------------------------------------------------------------------------------------------------------
-def merge_RSA_dict_folds(RSA_dict_folds, layers, num_folds, route='p', alpha=0.05, FDR_method='fdr_bh', **kwargs):
-    
-    # --- static
-    similarity_folds = [RSA_dict_folds[fold_idx]['similarity'] for fold_idx in range(num_folds)]
-    similarity_mean = np.mean(similarity_folds, axis=0)
-    similarity_std = np.std(similarity_folds, axis=0)
-    
-    similarity_p_folds = np.mean([RSA_dict_folds[fold_idx]['similarity_p'] for fold_idx in range(num_folds)], axis=0)
-    (sig_FDR, p_FDR, alpha_Sadik, alpha_Bonf) = multipletests(similarity_p_folds, alpha=alpha, method=FDR_method)    
-    
-    # --- temporal
-    similarity_temporal_folds = np.array([RSA_dict_folds[fold_idx]['similarity_temporal'] for fold_idx in range(num_folds)])
-    similarity_temporal_mean = np.mean(similarity_temporal_folds, axis=0)
-    similarity_temporal_std = np.std(similarity_temporal_folds, axis=0)
-    
-    similarity_temporal_p = np.mean([RSA_dict_folds[fold_idx]['similarity_temporal_p'] for fold_idx in range(num_folds)], axis=0)  
-    
-    if route == 'p':
-        
-        # --- init
-        p_temporal_FDR = np.zeros((len(layers), similarity_temporal_folds.shape[-1]))     # (num_layers, num_time_steps)
-        sig_temporal_FDR =  p_temporal_FDR.copy()
-        sig_temporal_Bonf = p_temporal_FDR.copy()
-        
-        for _ in range(len(layers)):
-            (sig_temporal_FDR[_, :], p_temporal_FDR[_, :], alpha_Sadik_temporal, alpha_Bonf_temporal) = multipletests(similarity_temporal_p[_, :], alpha=alpha, method=FDR_method)      # FDR
-            sig_temporal_Bonf[_, :] = p_temporal_FDR[_, :]<alpha_Bonf_temporal     # Bonf correction
-    
-    elif route == 'sig':
-        
-        sig_temporal_FDR = np.mean([scipy.ndimage.gaussian_filter(RSA_dict_folds[fold_idx]['sig_temporal_FDR'], sigma=1) for fold_idx in range(num_folds)], axis=0)
-        sig_temporal_Bonf = np.mean([scipy.ndimage.gaussian_filter(RSA_dict_folds[fold_idx]['sig_temporal_Bonf'], sigma=1) for fold_idx in range(num_folds)], axis=0)
-        p_temporal_FDR =  np.mean([RSA_dict_folds[fold_idx]['p_temporal_FDR'] for fold_idx in range(num_folds)], axis=0)
-    
-    # ---
-    RSA_dict_folds = {
-        'similarity': similarity_mean,
-        'similarity_std': similarity_std,
-        
-        'similarity_perm': np.max([RSA_dict_folds[fold_idx]['similarity_perm'] for fold_idx in range(num_folds)], axis=0),
-        'similarity_p': similarity_p_folds,
-        
-        'similarity_temporal': similarity_temporal_mean,
-        'similarity_temporal_std': similarity_temporal_std,
-        
-        'similarity_temporal_perm': np.max([RSA_dict_folds[fold_idx]['similarity_temporal_perm'] for fold_idx in range(num_folds)], axis=0),
-        'similarity_temporal_p': similarity_temporal_p,
-        
-        'p_FDR': p_FDR,
-        'sig_FDR': sig_FDR,
-        'sig_Bonf': p_FDR<alpha_Bonf,
-
-        'p_temporal_FDR': p_temporal_FDR,
-        'sig_temporal_FDR': sig_temporal_FDR,
-        'sig_temporal_Bonf': sig_temporal_Bonf,
-
-        }
-    
-    return RSA_dict_folds
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 class RSA_Monkey(Monkey_Neuron_Records_Process, FSA_DSM, RSA_Base):
@@ -388,14 +328,12 @@ class RSA_Monkey(Monkey_Neuron_Records_Process, FSA_DSM, RSA_Base):
         
     def __call__(self, first_corr='pearson', second_corr='spearman', FDR_test=True, figsize=(10,6), **kwargs):
         """
-            ...
-            
             input:
-                first_corr: default 'pearson', select from 'euclidean', 'pearson', 'spearman', 'mahalanobis', 'concordance'
-                second_corr: default 'spearman', select from 'pearson', 'spearman', 'concordance'
-                      
-            permutation is only applied to primate data
+                - first_corr: default 'pearson', select from 'euclidean', 'pearson', 'spearman', 'mahalanobis', 'concordance'
+                - second_corr: default 'spearman', select from 'pearson', 'spearman', 'concordance'
             
+            ...
+                      
         """
         
         # --- monkey init
@@ -415,13 +353,11 @@ class RSA_Monkey(Monkey_Neuron_Records_Process, FSA_DSM, RSA_Base):
             
         # --- NN init
         self.NN_DM_dict = {k:v['qualified'] for k,v in self.calculation_DSM(first_corr, vectorize=False, **kwargs).items()}   # layer - cell_type
-        ...
- 
+
         # ----- 1. RSA calculation
         RSA_dict = self.calculation_RSA(first_corr, second_corr, primate='Monkey', **kwargs)
         
         # ----- 2. plot
-        
         # --- 2.1 static
         fig, ax = plt.subplots(figsize=figsize)
         
@@ -452,9 +388,6 @@ class RSA_Monkey(Monkey_Neuron_Records_Process, FSA_DSM, RSA_Base):
         """
             this function plot with fig definition and ax addition
         """
-        
-        plt.rcParams.update({"font.family": "Times New Roman"})
-        plt.rcParams.update({'font.size': 16})
         
         # plot correlation for sample layer 
         layer = self.layers[np.argmax(similarity)]     # find the layer with strongest similarity score
@@ -502,7 +435,6 @@ class RSA_Monkey(Monkey_Neuron_Records_Process, FSA_DSM, RSA_Base):
         
         plt.tight_layout()
         plt.savefig(os.path.join(self.dest_primate, f'{title}.svg'))
-
         plt.close()
                       
     
@@ -620,6 +552,7 @@ class RSA_Monkey_folds(RSA_Monkey):
         
         ...
 
+
 # ----------------------------------------------------------------------------------------------------------------------
 class RSA_Human(Human_Neuron_Records_Process, FSA_DSM, RSA_Base):
     """
@@ -646,9 +579,8 @@ class RSA_Human(Human_Neuron_Records_Process, FSA_DSM, RSA_Base):
                 3) plot according to previous outcomes - [self.human_neuron_RSA_emporal_plot()]
             
             Input:
-                cell_type: default 'qualified', select from 'legacy', 'qualified', 'slective', 'strong_selective', 
-                'weak_selective', 'non_selective', etc. refer to self.human_neuron_obtain_used_cells()
-                used_id_num: default '50', select from '50', '10'
+                - cell_type: default 'qualified'. refer to self.human_neuron_obtain_used_cells()
+                - used_id_num: default '50', select from '50', '10'
     
         """
         # --- additional parameters
@@ -792,13 +724,74 @@ class RSA_Human_folds(RSA_Human):
         
 
 # ----------------------------------------------------------------------------------------------------------------------
+def merge_RSA_dict_folds(RSA_dict_folds, layers, num_folds, route='p', alpha=0.05, FDR_method='fdr_bh', **kwargs):
+    
+    # --- static
+    similarity_folds = [RSA_dict_folds[fold_idx]['similarity'] for fold_idx in range(num_folds)]
+    similarity_mean = np.mean(similarity_folds, axis=0)
+    similarity_std = np.std(similarity_folds, axis=0)
+    
+    similarity_p_folds = np.mean([RSA_dict_folds[fold_idx]['similarity_p'] for fold_idx in range(num_folds)], axis=0)
+    (sig_FDR, p_FDR, alpha_Sadik, alpha_Bonf) = multipletests(similarity_p_folds, alpha=alpha, method=FDR_method)    
+    
+    # --- temporal
+    similarity_temporal_folds = np.array([RSA_dict_folds[fold_idx]['similarity_temporal'] for fold_idx in range(num_folds)])
+    similarity_temporal_mean = np.mean(similarity_temporal_folds, axis=0)
+    similarity_temporal_std = np.std(similarity_temporal_folds, axis=0)
+    
+    similarity_temporal_p = np.mean([RSA_dict_folds[fold_idx]['similarity_temporal_p'] for fold_idx in range(num_folds)], axis=0)  
+    
+    if route == 'p':
+        
+        # --- init
+        p_temporal_FDR = np.zeros((len(layers), similarity_temporal_folds.shape[-1]))     # (num_layers, num_time_steps)
+        sig_temporal_FDR =  p_temporal_FDR.copy()
+        sig_temporal_Bonf = p_temporal_FDR.copy()
+        
+        for _ in range(len(layers)):
+            (sig_temporal_FDR[_, :], p_temporal_FDR[_, :], alpha_Sadik_temporal, alpha_Bonf_temporal) = multipletests(similarity_temporal_p[_, :], alpha=alpha, method=FDR_method)      # FDR
+            sig_temporal_Bonf[_, :] = p_temporal_FDR[_, :]<alpha_Bonf_temporal     # Bonf correction
+    
+    elif route == 'sig':
+        
+        sig_temporal_FDR = np.mean([scipy.ndimage.gaussian_filter(RSA_dict_folds[fold_idx]['sig_temporal_FDR'], sigma=1) for fold_idx in range(num_folds)], axis=0)
+        sig_temporal_Bonf = np.mean([scipy.ndimage.gaussian_filter(RSA_dict_folds[fold_idx]['sig_temporal_Bonf'], sigma=1) for fold_idx in range(num_folds)], axis=0)
+        p_temporal_FDR =  np.mean([RSA_dict_folds[fold_idx]['p_temporal_FDR'] for fold_idx in range(num_folds)], axis=0)
+    
+    # ---
+    RSA_dict_folds = {
+        'similarity': similarity_mean,
+        'similarity_std': similarity_std,
+        
+        'similarity_perm': np.max([RSA_dict_folds[fold_idx]['similarity_perm'] for fold_idx in range(num_folds)], axis=0),
+        'similarity_p': similarity_p_folds,
+        
+        'similarity_temporal': similarity_temporal_mean,
+        'similarity_temporal_std': similarity_temporal_std,
+        
+        'similarity_temporal_perm': np.max([RSA_dict_folds[fold_idx]['similarity_temporal_perm'] for fold_idx in range(num_folds)], axis=0),
+        'similarity_temporal_p': similarity_temporal_p,
+        
+        'p_FDR': p_FDR,
+        'sig_FDR': sig_FDR,
+        'sig_Bonf': p_FDR<alpha_Bonf,
+
+        'p_temporal_FDR': p_temporal_FDR,
+        'sig_temporal_FDR': sig_temporal_FDR,
+        'sig_temporal_Bonf': sig_temporal_Bonf,
+
+        }
+    
+    return RSA_dict_folds
+
+
+# ----------------------------------------------------------------------------------------------------------------------
 def plot_RSA(fig, ax, RSA_dict, layers, error_control_measure='sig_FDR', error_area=True, vlim:list[float]=None, legend=False, color=None, label=None, **kwargs):
     """
         ...
     """
     
-    if color is None:
-        color = 'blue'
+    color = 'blue' if color is None else color
 
     plot_x = range(len(layers))
     
@@ -983,7 +976,7 @@ def _ccc(x, y):
 # ----------------------------------------------------------------------------------------------------------------------
 class RSA_Monkey_Comparison(RSA_Monkey_folds):
     """
-        not a script, manually change the code
+        not a script, manually change the config
     """
     
     def __init__(self, **kwargs):
@@ -992,7 +985,7 @@ class RSA_Monkey_Comparison(RSA_Monkey_folds):
         plt.rcParams.update({"font.family": "Times New Roman"})
         
         # ---
-        self.color_pool = ['blue', 'green', 'red', 'purple', 'orange', 'chocolate']     # manually change the pool
+        self.color_pool = ['blue', 'green', 'red', 'purple', 'orange', 'chocolate']     # manually change the colors
         
         ...
         
@@ -1042,7 +1035,7 @@ class RSA_Monkey_Comparison(RSA_Monkey_folds):
             handles.extend([solid_circle])
             labels.extend([f"{_label}"])
 
-        ax.set_title(title:=f'{first_corr} {second_corr} {route} RSA score '+' v.s '.join(title))
+        ax.set_title(title:=f'{first_corr} {second_corr} {route} RSA score '+' v.s '.join(title))     # manually change the title
         #ax.set_title(title:=f'{first_corr} {second_corr} {route} RSA core ANN v.s SNN')
         
         # --- setting
@@ -1064,7 +1057,7 @@ class RSA_Human_Comparison(RSA_Human_folds):
         plt.rcParams.update({"font.family": "Times New Roman"})
         
         # ---
-        self.color_pool = ['blue', 'green', 'red', 'purple', 'orange', 'chocolate']     # manually change the pool
+        self.color_pool = ['blue', 'green', 'red', 'purple', 'orange', 'chocolate']     # manually change the colors
         
         ...
         
@@ -1114,7 +1107,7 @@ class RSA_Human_Comparison(RSA_Human_folds):
             handles.extend([solid_circle])
             labels.extend([f"{_label}"])
 
-        ax.set_title(title:=f'{first_corr} {second_corr} {used_unit_type} {used_id_num} {route} RSA score '+' v.s '.join(title))
+        ax.set_title(title:=f'{first_corr} {second_corr} {used_unit_type} {used_id_num} {route} RSA score '+' v.s '.join(title))     # manually change the title
         #ax.set_title(title:=f'{first_corr} {second_corr} {route} RSA core ANN v.s SNN')
         
         # --- setting
@@ -1129,9 +1122,7 @@ class RSA_Human_Comparison(RSA_Human_folds):
 
 # ----------------------------------------------------------------------------------------------------------------------
 #FIXME 5-folds model training required
-#FIXME the design needs to upgrade for better use rather local debug
-#FIXME --- building...
-class similarity_scores_comparison_base():
+class RSA_comparison_base():
     """
         similarity mean value comparison with ttest
     """
@@ -1188,7 +1179,8 @@ class similarity_scores_comparison_base():
         
         
 # ----------------------------------------------------------------------------------------------------------------------
-class Monkey_similarity_scores_comparison(similarity_scores_comparison_base):
+# FIXME
+class Monkey_similarity_scores_comparison(RSA_comparison_base):
     
     def __init__(self, roots_and_models, **kwargs):
         
@@ -1258,11 +1250,9 @@ class Monkey_similarity_scores_comparison(similarity_scores_comparison_base):
         
         ax.set_title(f'{title}')
         
-        
-        
-        
+   
 # ----------------------------------------------------------------------------------------------------------------------
-class Human_similarity_scores_comparison(similarity_scores_comparison_base):
+class Human_similarity_scores_comparison(RSA_comparison_base):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1356,41 +1346,22 @@ class Human_similarity_scores_comparison(similarity_scores_comparison_base):
                  
             
 # ======================================================================================================================
-        
+# ----- local debug
 if __name__ == "__main__":
     
-    layers, neurons, shapes = utils_.get_layers_and_units('vgg16', target_layers='act')
+    FSA_root = '/home/acxyle-workstation/Downloads/FSA'
     
-    root_dir = '/home/acxyle-workstation/Downloads/'
-
-    #for monkey experiments
+    # -----
+    _, layers, neurons, shapes = utils_.get_layers_and_units('spiking_vgg16_bn', 'act')
+    
+    root = os.path.join(FSA_root, 'VGG/SpikingVGG/FSA SpikingVGG16bn_IF_ATan_T4_C2k_fold_')
+    
+    # --- 1. Single Model
     #RSA_monkey = RSA_Monkey(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
     #for first_corr in ['pearson']:
     #    for second_corr in ['pearson']:
     #        RSA_monkey(first_corr=first_corr, second_corr=second_corr)
-    
-# =============================================================================
-#     RSA_Monkey_folds = RSA_Monkey_folds(num_folds=5, root=root, layers=layers, neurons=neurons)
-#     for first_corr in ['euclidean', 'pearson', 'spearman', 'mahalanobis', 'concordance']:
-#         for second_corr in ['pearson', 'spearman', 'concordance']:
-#             for route in ['p', 'sig']:
-#                 RSA_Monkey_folds(first_corr=first_corr, second_corr=second_corr, route=route)
-# =============================================================================
-    
-    roots_models = [
-        (os.path.join(root_dir, 'Face Identity Baseline'), 'vgg16'),
-        (os.path.join(root_dir, 'Face Identity VGG16_fold_'), 'vgg16'),
-        (os.path.join(root_dir, 'Face Identity VGG16bn_fold_'), 'vgg16_bn'),
-        (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
-        (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn'),
-        (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
-        (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn')
-        ]
 
-    #RSA_Monkey_Comparison()(roots_models, first_corr='pearson', second_corr='spearman', route='p')
-    #RSA_Human_Comparison()(roots_models, first_corr='pearson', second_corr='spearman', route='p')
-    
-    # for human experiments 
     #RSA_human = RSA_Human(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
     #for firsct_corr in ['euclidean', 'mahalanobis', 'spearman', 'concordance']:
     #    for second_corr in ['pearson', 'spearman', 'concordance']:
@@ -1398,54 +1369,44 @@ if __name__ == "__main__":
     #            for used_id_num in [50, 10]:
     #                RSA_human.(first_corr=firsct_corr, second_corr=second_corr, used_unit_type=used_unit_type, used_id_num=used_id_num)
     
-# =============================================================================
-#     RSA_Human_folds = RSA_Human_folds(num_folds=5, root=root, layers=layers, neurons=neurons)
-#     for first_corr in ['euclidean', 'pearson', 'spearman', 'mahalanobis']:
-#         for second_corr in ['pearson', 'spearman', 'concordance']:
-#             for used_unit_type in ['legacy', 'qualified', 'selective', 'non_selective']:
-#                 for used_id_num in [50, 10]:
-#                     for route in ['p', 'sig']:
-#                         RSA_Human_folds(first_corr=first_corr, second_corr=second_corr, used_unit_type=used_unit_type, used_id_num=used_id_num, route=route)
-# =============================================================================
+    # --- 2. Folds
+    #RSA_Monkey_folds = RSA_Monkey_folds(num_folds=5, root=root, layers=layers, neurons=neurons)
+    #for first_corr in ['euclidean', 'pearson', 'spearman', 'mahalanobis', 'concordance']:
+    #    for second_corr in ['pearson', 'spearman', 'concordance']:
+    #        for route in ['p', 'sig']:
+    #            RSA_Monkey_folds(first_corr=first_corr, second_corr=second_corr, route=route)
     
+    RSA_Human_folds = RSA_Human_folds(num_folds=5, root=root, layers=layers, neurons=neurons)
+    for first_corr in ['euclidean', 'pearson', 'spearman', 'mahalanobis']:
+        for second_corr in ['pearson', 'spearman', 'concordance']:
+            for used_unit_type in ['legacy', 'qualified', 'selective', 'non_selective']:
+                for used_id_num in [50, 10]:
+                    for route in ['p', 'sig']:
+                        RSA_Human_folds(first_corr=first_corr, second_corr=second_corr, used_unit_type=used_unit_type, used_id_num=used_id_num, route=route)
     
+    # --- 3. Multi Models Comparison
+    #roots_models = [
+    #    (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_IF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+    #    (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622_fold_'), 'spiking_vgg16_bn'),
+    #    (os.path.join(root_dir, 'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622_fold_'), 'spiking_vgg16_bn')
+    #    ]
+
+    #RSA_Monkey_Comparison()(roots_models, first_corr='pearson', second_corr='spearman', route='p')
+    #RSA_Human_Comparison()(roots_models, first_corr='pearson', second_corr='spearman', route='p')
+    
+    #FIXME
     # ------------------------------------------------------------------------------------------------------------------
     #for model comparison
+    #primate_nn_comparison = Monkey_similarity_scores_comparison(roots_models,
+    #                                                            primate='Monkey',
+    #                                                            first_corr='pearson', 
+    #                                                            second_corr='spearman',
+    #                                                            )
     
-    primate_nn_comparison = Monkey_similarity_scores_comparison(roots_models,
-                                                                primate='Monkey',
-                                                                first_corr='pearson', 
-                                                                second_corr='spearman',
-                                                                )
-    
-# =============================================================================
-#     primate_nn_comparison = Human_similarity_scores_comparison(root=root_dir,
-#                                                                primate='Human',
-#                                                               folders=['Face Identity Baseline', 'Face Identity VGG16', 'Face Identity VGG16bn', 
-#                                                                       'Face Identity SpikingVGG16bn_IF_T4_CelebA2622',
-#                                                                       'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622',
-#                                                                       'Face Identity SpikingVGG16bn_LIF_T4_vggface',
-#                                                                       'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622'],  
-#                                                               metrics=['euclidean', 'pearson'], 
-#                                                               cell_types=['qualified', 'selective', 'non_selective',
-#                                                                           'sensitive', 'non_sensitive', 'encode', 'non_encode', 
-#                                                                           'all_sensitive_si', 'all_sensitive_mi',
-#                                                                           'sensitive_si', 'sensitive_wsi', 'sensitive_mi', 'sensitive_wmi', 'sensitive_non_encode',
-#                                                                           'non_sensitive_si', 'non_sensitive_wsi', 'non_sensitive_mi', 'non_sensitive_wmi', 'non_sensitive_non_encode'],
-#                                                               used_id_nums=[50, 10],
-#                                                               )
-#     
-#     primate_nn_comparison = Human_similarity_scores_comparison(root=root_dir,
-#                                                                primate='Human',
-#                                                               folders=['Face Identity Baseline', 'Face Identity VGG16', 'Face Identity VGG16bn', 
-#                                                                       'Face Identity SpikingVGG16bn_IF_T4_CelebA2622',
-#                                                                       'Face Identity SpikingVGG16bn_LIF_T4_CelebA2622',
-#                                                                       'Face Identity SpikingVGG16bn_LIF_T4_vggface',
-#                                                                       'Face Identity SpikingVGG16bn_LIF_T16_CelebA2622'],  
-#                                                               metrics=['pearson'], 
-#                                                               cell_types=[
-#                                                                   '-_mismatched_comparison/Human Selective V.S. NN Strong Selective'
-#                                                                   ],
-#                                                               used_id_nums=[50, 10],
-#                                                               )
-# =============================================================================
+    #primate_nn_comparison = Human_similarity_scores_comparison(root=root_dir,
+    #                                                           primate='Human',
+    #                                                          folders=['Face Identity Baseline', 'Face Identity VGG16', ],  
+    #                                                          metrics=['euclidean', 'pearson'], 
+    #                                                          cell_types=['qualified', 'selective', 'non_selective', 'sensitive', 'non_sensitive', 'legacy']
+    #                                                          used_id_nums=[50, 10],
+    #                                                          )

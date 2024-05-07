@@ -3,10 +3,15 @@
 """
 Created on Sat Feb 18 22:02:44 2023
 
-@author: acxyle
+@author: Jinge Wang, Runnan Cao
 
-    FSA: Face Similarity Analysis
+    refer to: https://github.com/JingeW/ID_selective
+              https://osf.io/824s7/
+    
+@modified: acxyle
+
     DRG: Dimensional redution, Representational similarity matrix, Gram matrix
+    
 """
 
 
@@ -316,21 +321,23 @@ class FSA_DSM(FSA_Encode):
 # ----------------------------------------------------------------------------------------------------------------------
 class FSA_Gram(FSA_Encode):
 
-    def __init__(self, **kwargs):
+    def __init__(self, used_unit_types=['qualified', 'selective', 'strong_selective', 'weak_selective', 'non_selective'], **kwargs):
         
         super().__init__(**kwargs)
-
+        
+        self.used_unit_types = used_unit_types
+        
         self.dest_Gram = os.path.join(self.dest, 'Gram')
         utils_.make_dir(self.dest_Gram)
        
         
-    def calculation_Gram(self, kernel='linear', used_unit_types=['qualified', 'selective', 'strong_selective', 'weak_selective', 'non_selective'], normalize=False, **kwargs):
+    def calculation_Gram(self, kernel='linear', normalize=True, **kwargs):
         """
             [notice] unlike RSA, the normalize = True or False will influence the Gram
         """
         
         self.Sort_dict = self.load_Sort_dict()
-        self.Sort_dict = self.calculation_Sort_dict(used_unit_types) if used_unit_types is not None else self.Sort_dict
+        self.Sort_dict = self.calculation_Sort_dict(self.used_unit_types) if self.used_unit_types is not None else self.Sort_dict
         
         if kernel == 'rbf' and 'threshold' in kwargs:
             save_path = os.path.join(self.dest_Gram, f"Gram_{kernel}_{kwargs['threshold']}_norm_{normalize}.pkl")
@@ -357,9 +364,9 @@ class FSA_Gram(FSA_Encode):
                     gram = utils_similarity.gram_rbf
                     
                 # ---
-                pl = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(gram)(feature[:, self.Sort_dict[layer][k].astype(int)], **kwargs) for k in used_unit_types)
+                pl = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(gram)(feature[:, self.Sort_dict[layer][k].astype(int)], **kwargs) for k in self.used_unit_types)
 
-                metric_type_dict = {k: pl[idx] for idx, k in enumerate(used_unit_types)}
+                metric_type_dict = {k: pl[idx] for idx, k in enumerate(self.used_unit_types)}
 
                 return metric_type_dict
             
@@ -370,13 +377,133 @@ class FSA_Gram(FSA_Encode):
             utils_.dump(Gram_dict, save_path)
             
         return Gram_dict
+    
+    
+    def plot_Gram(self, ):
+        """
+            plot the Gram
+        """
         
+        ...
+        
+    
+    def calculation_Gram_intensity(self, kernel, **kwargs):
+        
+        utils_.make_dir(save_root:=os.path.join(self.dest_Gram, 'Figures'))
+        
+        save_path = os.path.join(save_root, 'log_Gram_dict.pkl')
+        
+        if os.path.exists(save_path):
+            
+            log_Gram_dict = utils_.load(save_path)
+        
+        else:
+        
+            Gram_dict = self.calculation_Gram(normalize=True)
+            Gram_dict = {k: [Gram_dict[_][k] for _ in self.layers] for k in self.used_unit_types}
+            
+            log_Gram_dict = {}
+            
+            for k,v in Gram_dict.items():
+                
+                log_mean = np.zeros(len(self.layers))
+                log_std = log_mean.copy()
+                zero_pct = log_mean.copy()
+                
+                for idx, _ in enumerate(v):
+                    
+                    log_values = np.log(_[_!=0])/np.log(10)
+                    log_mean[idx] = np.mean(log_values)
+                    log_std[idx] = np.std(log_values)
+                    
+                    zero_pct[idx] = np.sum(_==0)/_.size*100
+                
+                log_Gram_dict[k] = {
+                    'log_mean': log_mean,
+                    'log_std': log_std,
+                    'zero_pct': zero_pct
+                    }
+                
+            utils_.dump(log_Gram_dict, save_path)
+            
+        return log_Gram_dict
+    
+
+    def plot_Gram_intensity(self, kernel, **kwargs):
+        """
+            plot the log intensity for different types of units
+        """
+        
+        utils_.make_dir(save_root:=os.path.join(self.dest_Gram, 'Figures'))
+        
+        log_Gram_dict = self.calculation_Gram_intensity(kernel, **kwargs)
+        
+        for k,v in log_Gram_dict.items():
+            
+            fig, ax = plt.subplots(figsize=(10, 3))
+            
+            self.plot_log_Gram_intensity_single(fig, ax, self.layers, k, v)
+            
+            fig.savefig(os.path.join(save_root, f'{self.model_structure} {k}.svg'), bbox_inches='tight')
+            plt.close()
+        
+        ...
+        
+    @staticmethod
+    def plot_log_Gram_intensity_single(fig, ax, layers, used_unit_type, log_Gram_stats, direction='horizontal', text=True, **kwargs):
+        
+        log_mean, log_std, zero_pct = log_Gram_stats['log_mean'], log_Gram_stats['log_std'], log_Gram_stats['zero_pct']
+        
+        x = np.arange(len(layers))
+        
+        if direction == 'horizontal':
+        
+            ax.plot(x, log_mean, color='blue', label='Gram (log)')
+            ax.fill_between(x, log_mean-log_std, log_mean+log_std, color='blue', alpha=0.5)
+            ax.set_ylabel("Gram Values", color='blue')
+            ax.tick_params(axis='y', labelcolor='blue')
+            ax.set_xticks([])
+            
+            ax.hlines(0, 0, len(layers), colors='skyblue', linestyle='--', alpha=0.5)
+            ax.set_xlim([0, len(layers)-1])
+            
+            ax2 = ax.twinx()
+            ax2.plot(x, zero_pct, label='0%', color='red', marker='.')
+            ax2.set_ylim([0, 105])
+            ax2.set_ylabel("%", color='red')
+            ax2.tick_params(axis='y', labelcolor='red')
+            
+            if text:
+                ax.set_title(f"Gram Intensity {used_unit_type}")
+                fig.legend(loc='lower center', bbox_to_anchor=(0.5, 0.1))
+            
+        elif direction == 'vertical':
+            
+            ax.plot(log_mean, x, color='blue')
+            ax.fill_betweenx(x, log_mean-log_std, log_mean+log_std, color='blue', alpha=0.5)
+            ax.set_xlabel("Gram Values", color='blue')
+            ax.tick_params(axis='x', labelcolor='blue')
+            ax.set_yticks([])
+            
+            ax.vlines(0, 0, len(layers), colors='skyblue', linestyle='--', alpha=0.5)
+            ax.set_ylim([0, len(layers)-1])
+            ax.invert_xaxis()
+            
+            ax2 = ax.twiny()
+            ax2.plot(zero_pct, x, color='red', marker='.')
+            
+            ax2.set_xlim([0, 105])
+            ax2.set_xlabel("%", color='red')
+            ax2.tick_params(axis='x', labelcolor='red')
+            ax2.invert_xaxis()
+            
+            
  
 # ======================================================================================================================
 if __name__ == '__main__':
 
-    layers, neurons, shapes = utils_.get_layers_and_units('vgg16', target_layers='act')
-    root_dir = '/home/acxyle-workstation/Downloads/'
+    _, layers, neurons, shapes = utils_.get_layers_and_units('sew_resnet152', 'act')
+    root_dir = '/home/acxyle-workstation/Downloads/FSA'
 
     # -----
     #DR_analyzer = FSA_DR(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
@@ -385,7 +512,9 @@ if __name__ == '__main__':
     #DSM_analyzer = FSA_DSM(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
     #DSM_analyzer.process_DSM(metric='pearson')
     
-    Gram_analyzer = FSA_Gram(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
-    Gram_analyzer.calculation_Gram(kernel='linear', normalize=True)
+    Gram_analyzer = FSA_Gram(root=os.path.join(root_dir, 'Resnet/SEWResnet/FSA SEWResnet152_IF_ATan_T4_C2k_fold_/-_Single Models/FSA SEWResnet152_IF_ATan_T4_C2k_fold_0'), layers=layers, neurons=neurons)
+    #Gram_analyzer.calculation_Gram(kernel='linear', normalize=True)
+    
+    Gram_analyzer.plot_Gram_intensity(kernel='linear')
     #for threshold in [0.5, 1.0, 2.0, 10.0]:
     #    Gram_analyzer.calculation_Gram(kernel='rbf', threshold=threshold)

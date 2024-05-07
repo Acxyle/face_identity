@@ -10,9 +10,8 @@ Created on Mon Feb 13 00:12:41 2023
     This script extracts the feature maps by modifying the forward process of Pytorch. Auto-generate layer names.
     
     pros: automatically scan all layers and assign names
+    cons: can not manually select layers, like hook based method
 
-    cons: need to iter multiple times if RAM is limited
-    
 
 """
 
@@ -74,8 +73,8 @@ def get_args_parser():
     # --- common config
     parser.add_argument("--data_path", type=str, default='/home/acxyle-workstation/Dataset/CelebA50') # collect data from celebA-50
 
-    parser.add_argument("--FSA_dir", type=str, default='VGG/SpikingVGG')
-    parser.add_argument("--FSA_config", type=str, default='SpikingVGG16bn_IF_ATan_T8_C2k_fold_')
+    parser.add_argument("--FSA_dir", type=str, default='Resnet/SEWResnet')
+    parser.add_argument("--FSA_config", type=str, default='SEWResnet152_IF_ATan_T4_C2k_fold_')
     parser.add_argument("--FSA_params_dir", type=str, default=None)
     parser.add_argument("--fold_idx", type=int, default=4)
 
@@ -88,11 +87,11 @@ def get_args_parser():
     
     # --- ANN config
     parser_ANN = sub_parser.add_parser('ANN', help='Train the model')
-    parser_ANN.add_argument("--model", type=str, default='vgg16_bn', help='Model name only')
+    parser_ANN.add_argument("--model", type=str, default='resnet50', help='Model name only')
     
     # --- SNN config
     parser_SNN = sub_parser.add_parser('SNN', help='Test the model')
-    parser_SNN.add_argument("--model", type=str, default='spiking_vgg16_bn', help='Model name only')
+    parser_SNN.add_argument("--model", type=str, default='sew_resnet152', help='Model name only')
     parser_SNN.add_argument("--step_mode", type=str, default='m')
     parser_SNN.add_argument('--neuron', type=str, default='IF')
     parser_SNN.add_argument('--surrogate', type=str, default='ATan')
@@ -206,7 +205,7 @@ class feature_extractor_base():
         if args.FSA_params_dir is None:
             pth_path = os.path.join(self.FSA_folder, f'logs_{config}/checkpoint_max_test_acc1.pth')     # manually modify
         else:
-            pth_path = os.path.join(self.FSA_folder, f'{args.FSA_params_dir}/checkpoint_max_test_acc1.pth')
+            pth_path = os.path.join(self.FSA_folder, f'{args.FSA_params_dir}{args.fold_idx}/checkpoint_max_test_acc1.pth')
 
         model.load_state_dict(torch.load(pth_path, map_location=torch.device(args.device))['model'])     # for spikingjelly model
            
@@ -267,7 +266,7 @@ class feature_extractor_base():
             
             utils_.formatted_print('Feature map generated')
             
-            for idx, _layer in tqdm(enumerate(layers), 'Saving Feature'):
+            for idx, _layer in tqdm(enumerate(layers), 'Saving Feature', total=len(layers)):
                 
                 feature_map = feature_maps[idx]
                 
@@ -289,7 +288,7 @@ class feature_extractor_ANN(feature_extractor_base):
     
     def __call__(self, args, **kwargs):
         
-        self.extractor(args.model, **kwargs)
+        self.extractor(args.model, device=args.device, **kwargs)
     
     
     def process_single_img(self, image, **kwargs):
@@ -306,7 +305,7 @@ class feature_extractor_SNN(feature_extractor_base):
     
     def __call__(self, args, **kwargs):
         
-        self.extractor(args.model, T=args.T, **kwargs)
+        self.extractor(args.model, T=args.T, device=args.device, **kwargs)
     
     
     def process_single_img(self, image, T=4, **kwargs):
@@ -316,7 +315,7 @@ class feature_extractor_SNN(feature_extractor_base):
         
         image = image.unsqueeze(0).repeat(T, 1, 1, 1, 1)    
         feature = self.model(image)
-        functional.reset_net(self.model)
+        functional.reset_net(self.model)     # crucial
         
         return [torch.mean(_, axis=0) for _ in feature]
     

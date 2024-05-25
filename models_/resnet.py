@@ -35,6 +35,7 @@ Created on Wed Feb  8 15:12:39 2023
     Please manually add nn.Softmax(dim)(input) and rewrite the forward() accordingly for normal use
     
 """
+from torchvision.models import resnet
 
 import torch
 import torch.nn as nn
@@ -219,10 +220,13 @@ def resnet101(**kwargs):
 def resnet152(**kwargs):
     return ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
 
-if __name__ == '__main__':
-    
-    model = resnet18()
-    x = torch.randn(1,3,224,224)
-    out = model(x)
-    for idx, layer in enumerate(out):
-        print(idx, layer.shape, layer.numel())
+
+# =============================================================================
+# if __name__ == '__main__':
+#     
+#     model = resnet18()
+#     x = torch.randn(1,3,224,224)
+#     out = model(x)
+#     for idx, layer in enumerate(out):
+#         print(idx, layer.shape, layer.numel())
+# =============================================================================

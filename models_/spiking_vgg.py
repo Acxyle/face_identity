@@ -1,3 +1,10 @@
+"""
+    from Spikingjelly     
+
+    # modified by https://github.com/pytorch/vision/blob/main/torchvision/models/vgg.py
+"""
+
+
 import torch
 import torch.nn as nn
 from copy import deepcopy
@@ -28,20 +35,16 @@ model_urls = {
     "vgg19_bn": "https://download.pytorch.org/models/vgg19_bn-c79401a0.pth",
 }
 
-# modified by https://github.com/pytorch/vision/blob/main/torchvision/models/vgg.py
 
 class SpikingVGG(nn.Module):
 
-    def __init__(self, cfg, batch_norm=False, norm_layer=None, num_classes=1000, init_weights=True,
-                 spiking_neuron: callable = None, **kwargs):
+    def __init__(self, cfg, batch_norm=False, norm_layer=None, num_classes=1000, init_weights=True, spiking_neuron:callable=None, **kwargs):
+        
         super(SpikingVGG, self).__init__()
-        
-        print("------ creating model from SpikingVGG -----")
-        
+
         self.features = self.make_layers(cfg=cfg, batch_norm=batch_norm, norm_layer=norm_layer, neuron=spiking_neuron, **kwargs)
         self.avgpool = layer.AdaptiveAvgPool2d((7, 7))
         
-        # ===== modification for downsize the model
         if len(cfg) == 5:
             self.classifier = nn.Sequential(
             layer.Linear(128 * 7 * 7, 1024),
@@ -60,11 +63,11 @@ class SpikingVGG(nn.Module):
             layer.Linear(4096, num_classes),
         )
         
-        # =====
+        # -----
         if init_weights:
             self._initialize_weights()
 
-    def forward(self, x):     # how about feed a list as input?
+    def forward(self, x):
  
         x_list = self.features([x])
         
@@ -77,8 +80,8 @@ class SpikingVGG(nn.Module):
             
         x_list2 = self.classifier([x01_])
         
-        #x02_ = nn.Softmax(dim=-1)(x_list2[-1])
-        x02_ = nn.ReLU()(x_list2[-1])
+        # ---
+        x02_ = nn.Softmax(dim=-1)(x_list2[-1])
         
         feature = [*x_list[1:], x01_, *x_list2[1:-1], x02_]
         
@@ -98,7 +101,7 @@ class SpikingVGG(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     @staticmethod
-    def make_layers(cfg, batch_norm=False, norm_layer=None, neuron: callable = None, **kwargs):
+    def make_layers(cfg, batch_norm=False, norm_layer=None, neuron:callable=None, **kwargs):
         if norm_layer is None:
             norm_layer = layer.BatchNorm2d
         layers = []
@@ -139,7 +142,7 @@ cfgs = {
 }
 
 
-def _spiking_vgg(arch, cfg, batch_norm, pretrained, progress, norm_layer: callable = None, spiking_neuron: callable = None, **kwargs):
+def _spiking_vgg(arch, cfg, batch_norm, pretrained, progress, norm_layer:callable=None, spiking_neuron:callable=None, **kwargs):
     if pretrained:
         kwargs['init_weights'] = False
     if batch_norm:
@@ -150,8 +153,7 @@ def _spiking_vgg(arch, cfg, batch_norm, pretrained, progress, norm_layer: callab
     
     if pretrained:
         state_dict = load_state_dict_from_url(model_urls[arch], progress=progress)
-        #model.load_state_dict(state_dict, strict=False)
-        # ===== [Warning] this code freeze the parameters
+        model.load_state_dict(state_dict, strict=False)
         features_dict = {k:v for k,v in state_dict.items() if k.split('.')[0] == 'features'}
         state_dict.update(features_dict)
         print('----- Load what weight:')
@@ -160,16 +162,19 @@ def _spiking_vgg(arch, cfg, batch_norm, pretrained, progress, norm_layer: callab
         for name, params in model.named_parameters():
             if name.split('.')[0]=='features':
                 params.requires_grad=False
-        # =====
+
     return model
+
 
 def spiking_vgg5(pretrained=False, progress=True, spiking_neuron: callable = None, **kwargs):
 
     return _spiking_vgg('vgg5', 'O', False, pretrained, progress, None, spiking_neuron, **kwargs)
 
+
 def spiking_vgg5_bn(pretrained=False, progress=True, norm_layer: callable = None, spiking_neuron: callable = None, **kwargs):
 
     return _spiking_vgg('vgg5_bn', 'O', True, pretrained, progress, norm_layer, spiking_neuron, **kwargs)
+
 
 def spiking_vgg11(pretrained=False, progress=True, spiking_neuron: callable = None, **kwargs):
     """
@@ -188,8 +193,6 @@ def spiking_vgg11(pretrained=False, progress=True, spiking_neuron: callable = No
     """
 
     return _spiking_vgg('vgg11', 'A', False, pretrained, progress, None, spiking_neuron, **kwargs)
-
-
 
 
 def spiking_vgg11_bn(pretrained=False, progress=True, norm_layer: callable = None, spiking_neuron: callable = None, **kwargs):
@@ -233,8 +236,6 @@ def spiking_vgg13(pretrained=False, progress=True, spiking_neuron: callable = No
     return _spiking_vgg('vgg13', 'B', False, pretrained, progress, None, spiking_neuron, **kwargs)
 
 
-
-
 def spiking_vgg13_bn(pretrained=False, progress=True, norm_layer: callable = None, spiking_neuron: callable = None, **kwargs):
     """
         :param pretrained: If True, the SNN will load parameters from the ANN pre-trained on ImageNet
@@ -256,8 +257,6 @@ def spiking_vgg13_bn(pretrained=False, progress=True, norm_layer: callable = Non
     return _spiking_vgg('vgg13_bn', 'B', True, pretrained, progress, norm_layer, spiking_neuron, **kwargs)
 
 
-
-
 def spiking_vgg16(pretrained=False, progress=True, spiking_neuron: callable = None, **kwargs):
     """
         :param pretrained: If True, the SNN will load parameters from the ANN pre-trained on ImageNet
@@ -275,7 +274,6 @@ def spiking_vgg16(pretrained=False, progress=True, spiking_neuron: callable = No
     """
 
     return _spiking_vgg('vgg16', 'D', False, pretrained, progress, None, spiking_neuron, **kwargs)
-
 
 
 def spiking_vgg16_bn(pretrained=False, progress=True, norm_layer: callable = None, spiking_neuron: callable = None, **kwargs):
@@ -299,7 +297,6 @@ def spiking_vgg16_bn(pretrained=False, progress=True, norm_layer: callable = Non
     return _spiking_vgg('vgg16_bn', 'D', True, pretrained, progress, norm_layer, spiking_neuron, **kwargs)
 
 
-
 def spiking_vgg19(pretrained=False, progress=True, spiking_neuron: callable = None, **kwargs):
     """
         :param pretrained: If True, the SNN will load parameters from the ANN pre-trained on ImageNet
@@ -317,7 +314,6 @@ def spiking_vgg19(pretrained=False, progress=True, spiking_neuron: callable = No
     """
 
     return _spiking_vgg('vgg19', 'E', False, pretrained, progress, None, spiking_neuron, **kwargs)
-
 
 
 def spiking_vgg19_bn(pretrained=False, progress=True, norm_layer: callable = None, spiking_neuron: callable = None, **kwargs):

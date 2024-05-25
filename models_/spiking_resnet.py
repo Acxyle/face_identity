@@ -140,12 +140,11 @@ class Bottleneck(nn.Module):
 class SpikingResNet(nn.Module):
     def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None, spiking_neuron: callable = None, mode='classification', **kwargs):
+                 norm_layer=None, spiking_neuron: callable = None, **kwargs):
         super(SpikingResNet, self).__init__()
         
         print('---------- Creating model from Spiking Resnet ----------')
-        self.mode = mode
-        
+
         if norm_layer is None:
             norm_layer = layer.BatchNorm2d
         self._norm_layer = norm_layer
@@ -235,11 +234,9 @@ class SpikingResNet(nn.Module):
             
         x06_ = self.fc(x05_)
 
-        if self.mode == 'classification':     
-            return x06_
-        elif self.mode == 'feature':
-            all_feature_map = [x01_, x02_, x03_, x04_, *x_list, x05_, x06_]    
-            return all_feature_map
+        all_feature_map = [x01_, x02_, x03_, x04_, *x_list, x05_, x06_]
+        
+        return all_feature_map
 
     def forward(self, x):
         return self._forward_impl(x)
@@ -430,10 +427,11 @@ def spiking_wide_resnet101_2(pretrained=False, progress=True, spiking_neuron: ca
     kwargs['width_per_group'] = 64 * 2
     return _spiking_resnet('wide_resnet101_2', Bottleneck, [3, 4, 23, 3], pretrained, progress, spiking_neuron, **kwargs)
 
+
 if __name__ == "__main__":
-    model = spiking_resnet18(spiking_neuron=neuron.IFNode, num_classes=50, surrogate_function=surrogate.ATan(), detach_reset=True, mode='feature')
+    model = spiking_resnet18(spiking_neuron=neuron.IFNode, num_classes=50, surrogate_function=surrogate.ATan(), detach_reset=True)
     #print(model)
-    functional.set_step_mode(model, step_mode='m')     # 只要设置了 m ，其会自动抽取 T
+    functional.set_step_mode(model, step_mode='m')
     T = 4
     x = torch.randn(T,1,3,224,224)
     out = model(x)

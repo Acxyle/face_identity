@@ -42,7 +42,6 @@ def sew_function(x: torch.Tensor, y: torch.Tensor, cnf:str):
         raise NotImplementedError
 
 
-
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
     return layer.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
@@ -101,6 +100,7 @@ class BasicBlock(nn.Module):
 
     def extra_repr(self) -> str:      # to print extra module info
         return super().extra_repr() + f'cnf={self.cnf}'
+
 
 class Bottleneck(nn.Module):
     # Bottleneck in torchvision places the stride for downsampling at 3x3 convolution(self.conv2)
@@ -165,11 +165,8 @@ class SEWResNet(nn.Module):
     
     def __init__(self, block, layers, num_classes=196, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None, cnf: str = None, spiking_neuron: callable = None, mode='classification', **kwargs):
+                 norm_layer=None, cnf: str = None, spiking_neuron: callable = None, **kwargs):
         super().__init__()
-        
-        print('---------- Creating model from SEW ----------')
-        self.mode = mode
         
         if norm_layer is None:
             norm_layer = layer.BatchNorm2d
@@ -192,12 +189,9 @@ class SEWResNet(nn.Module):
         self.sn1 = spiking_neuron(**deepcopy(kwargs))
         self.maxpool = layer.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0], cnf=cnf, spiking_neuron=spiking_neuron, **kwargs)
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
-                                       dilate=replace_stride_with_dilation[0], cnf=cnf, spiking_neuron=spiking_neuron, **kwargs)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2,
-                                       dilate=replace_stride_with_dilation[1], cnf=cnf, spiking_neuron=spiking_neuron, **kwargs)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
-                                       dilate=replace_stride_with_dilation[2], cnf=cnf, spiking_neuron=spiking_neuron, **kwargs)
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0], cnf=cnf, spiking_neuron=spiking_neuron, **kwargs)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1], cnf=cnf, spiking_neuron=spiking_neuron, **kwargs)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2], cnf=cnf, spiking_neuron=spiking_neuron, **kwargs)
         self.avgpool = layer.AdaptiveAvgPool2d((1, 1))
         self.fc = layer.Linear(512 * block.expansion, num_classes)
 
@@ -262,11 +256,9 @@ class SEWResNet(nn.Module):
         
         x06_ = self.fc(x05_)
 
-        if self.mode == 'classification':     
-            return x06_
-        elif self.mode == 'feature':
-            all_feature_map = [x01_, x02_, x03_, x04_, *x_list, x05_, x06_]    
-            return all_feature_map
+        all_feature_map = [x01_, x02_, x03_, x04_, *x_list, x05_, x06_]    
+        
+        return all_feature_map
 
     def forward(self, x):
         return self._forward_impl(x)
@@ -481,12 +473,19 @@ def sew_wide_resnet101_2(pretrained=False, progress=True, cnf: str = None, spiki
 
 
 if __name__ == "__main__":
-    model = sew_resnet18(spiking_neuron=neuron.IFNode, num_classes=50, surrogate_function=surrogate.ATan(), detach_reset=True, mode='feature', cnf='ADD')
+    model = sew_resnext50_32x4d(spiking_neuron=neuron.IFNode, num_classes=50, surrogate_function=surrogate.ATan(), detach_reset=True, cnf='ADD')
     #print(model)
-    functional.set_step_mode(model, step_mode='m')     # 只要设置了 m ，其会自动抽取 T
+    functional.set_step_mode(model, step_mode='m')  
     T = 4
     x = torch.randn(T,1,3,224,224)
     out = model(x)
     
+    model = sew_resnet50(spiking_neuron=neuron.IFNode, num_classes=50, surrogate_function=surrogate.ATan(), detach_reset=True, cnf='ADD')
+    #print(model)
+    functional.set_step_mode(model, step_mode='m')  
+    T = 4
+    x = torch.randn(T,1,3,224,224)
+    out2 = model(x)
+    
     for idx, layer_ in enumerate(out):
-        print(idx, layer_.shape)
+        print(idx, layer_.shape, out2[idx].shape)

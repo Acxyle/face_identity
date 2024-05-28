@@ -12,6 +12,7 @@ import os
 import numpy as np
 
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 from tqdm import tqdm
 
@@ -87,12 +88,12 @@ class CKA_Similarity_base():
             
             def _calculation_CKA(layer, **kwargs):    
 
-                corr_coef = cka(self.primate_Gram, self.NN_Gram_dict[layer], **kwargs)
-                corr_coef_perm = np.array([cka(_, self.NN_Gram_dict[layer], **kwargs) for _ in self.primate_Gram_perm])
+                corr_coef = utils_similarity.cka(self.primate_Gram, self.NN_Gram_dict[layer], **kwargs)
+                corr_coef_perm = np.array([utils_similarity.cka(_, self.NN_Gram_dict[layer], **kwargs) for _ in self.primate_Gram_perm])
                 
                 # --- temporal
-                corr_coef_temporal = cka_temporal(self.primate_Gram_temporal, self.NN_Gram_dict[layer], **kwargs)     # (time_steps, )
-                corr_coef_temporal_perm = np.array([cka_temporal( _, self.NN_Gram_dict[layer], **kwargs) for _ in self.primate_Gram_temporal_perm])
+                corr_coef_temporal = utils_similarity.cka_temporal(self.primate_Gram_temporal, self.NN_Gram_dict[layer], **kwargs)     # (time_steps, )
+                corr_coef_temporal_perm = np.array([utils_similarity.cka_temporal( _, self.NN_Gram_dict[layer], **kwargs) for _ in self.primate_Gram_temporal_perm])
                 
                 return {
                     'corr_coef': corr_coef,
@@ -452,7 +453,7 @@ class CKA_Similarity_Human(human_feature_process, FSA_Gram, CKA_Similarity_base)
         CKA_types_dict = self.collect_all_used_unit_results(used_id_num, **kwargs)
         
         # --- static
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(len(self.layers)/2, 4))
         
         self.plot_collect_all_used_unit_results(fig, ax, CKA_types_dict, used_id_num)
 
@@ -468,7 +469,7 @@ class CKA_Similarity_Human(human_feature_process, FSA_Gram, CKA_Similarity_base)
         return CKA_types_dict
     
     
-    def plot_collect_all_used_unit_results(self, fig, ax, CKA_types_dict, used_id_num=50, used_unit_types=None, **kwargs):
+    def plot_collect_all_used_unit_results(self, fig, ax, CKA_types_dict, used_id_num=50, used_unit_types=None, text=False, **kwargs):
         
         for k, v in CKA_types_dict.items():
             
@@ -481,13 +482,24 @@ class CKA_Similarity_Human(human_feature_process, FSA_Gram, CKA_Similarity_base)
             
             plot_CKA(ax, similarity, similarity_std=similarity_std, color=color, linestyle=linestyle, label=label, smooth=True)
         
-        ax.legend()
-        ax.set_title(f'{self.model_structure} used_id_num: {used_id_num}')
+        if text:
+            ax.legend()
+            ax.set_title(f'{self.model_structure} used_id_num: {used_id_num}')
+        
         ax.hlines(0, 0, len(self.layers)-1, color='gray', linestyle='--', alpha=0.25)
         
         ax.set_xticks([0, len(self.layers)-1])
         ax.set_xticklabels([0, 1])
+        ax.set_xlim([0, len(self.layers)-1])
+        #ax.set_ylim([-0.025, 0.4])
         
+        ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
+        
+        #colors = ['#000000', '#0000FF', '#00BFFF', '#FF4500',]
+        #labels = ['All', 'a_hs', 'a_ls', 'a_hm']
+        #legend_patches = [mpatches.Patch(color=colors[i], label=labels[i]) for i in range(len(labels))]
+        #ax.legend(handles=legend_patches, ncol=4, loc='upper left', bbox_to_anchor=(0., -0.075), handletextpad=0.5, columnspacing=1.95)
+
         fig.tight_layout(pad=1)
         fig.savefig(os.path.join(self.dest_CKA, f'{self.model_structure} CKA results types {used_id_num}.svg'), bbox_inches='tight')
         plt.close()
@@ -962,83 +974,16 @@ def plot_CKA_temporal(ax, similarity, similarity_mask=None, mask_type='shadow', 
     return img
 
 
-# ----------------------------------------------------------------------------------------------------------------------
-def gram_linear(x, **kwargs):
-
-  return x.dot(x.T)
-
-
-def gram_rbf(x, threshold=1.0, **kwargs):
-
-  dot_products = x.dot(x.T)
-  sq_norms = np.diag(dot_products)
-  sq_distances = -2 * dot_products + sq_norms[:, None] + sq_norms[None, :]
-  sq_median_distance = np.median(sq_distances)
-  return np.exp(-sq_distances / (2 * threshold ** 2 * sq_median_distance))
-
-
-def center_gram(gram, unbiased=False):
-
-  if not np.allclose(gram, gram.T, rtol=1e-06, atol=1e-05):
-    raise ValueError('Input must be a symmetric matrix.')
-  gram = gram.copy()
-
-  if unbiased:
-    # This formulation of the U-statistic, from Szekely, G. J., & Rizzo, M.
-    # L. (2014). Partial distance correlation with methods for dissimilarities.
-    # The Annals of Statistics, 42(6), 2382-2412, seems to be more numerically
-    # stable than the alternative from Song et al. (2007).
-    n = gram.shape[0]
-    np.fill_diagonal(gram, 0)
-    means = np.sum(gram, 0, dtype=np.float64) / (n - 2)
-    means -= np.sum(means) / (2 * (n - 1))
-    gram -= means[:, None]
-    gram -= means[None, :]
-    np.fill_diagonal(gram, 0)
-  else:
-    means = np.mean(gram, 0, dtype=np.float64)
-    means -= np.mean(means) / 2
-    gram -= means[:, None]
-    gram -= means[None, :]
-
-  return gram
-
-
-def cka(gram_x, gram_y, debiased=True):
-    
-    gram_x = center_gram(gram_x, unbiased=debiased)
-    gram_y = center_gram(gram_y, unbiased=debiased)
-  
-    # Note: To obtain HSIC, this should be divided by (n-1)**2 (biased variant) or
-    # n*(n-3) (unbiased variant), but this cancels for CKA.
-    scaled_hsic = gram_x.ravel().dot(gram_y.ravel())
-  
-    normalization_x = np.linalg.norm(gram_x)
-    normalization_y = np.linalg.norm(gram_y)
-    
-    #FIXME --- is this reasonable to set this cka score as 0?
-    if normalization_x == 0 or normalization_y == 0:
-        return np.float64(0)
-    else:
-        return scaled_hsic / (normalization_x * normalization_y)
-
-
-def cka_temporal(primate_Gram_temporal, NN_Gram, **kwargs):
-    # input shape: Bio - (time_steps, corr_matrix), NN - (corr_matrix,)
-    return np.array([cka(_, NN_Gram, **kwargs) for _ in primate_Gram_temporal])      # (time_steps, )
-
-
-
 # ======================================================================================================================
 # local debug
 if __name__ == '__main__':
     
     FSA_root = '/home/acxyle-workstation/Downloads/FSA'
-    FSA_dir = 'VGG/A2S_VGG'
+    FSA_dir = 'VGG/VGG'
     model_depth = 16
     T = 4
-    FSA_config = f'A2S_Baseline(T64)'
-    FSA_model =  f'spiking_vgg{model_depth}'
+    FSA_config = f'VGG{model_depth}bn_C2k_fold_'
+    FSA_model =  f'vgg{model_depth}_bn'
 
     _, layers, neurons, _ = utils_.get_layers_and_units(FSA_model, 'act')
     
@@ -1054,42 +999,41 @@ if __name__ == '__main__':
 
     # ----- CKA_similarity
     # --- 1.
-    for _ in [1]:
+# =============================================================================
+#     for _ in range(5):
+# 
+#         #root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
+#         root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{_}')
+#         
+#         CKA_Similarity_Monkey(root=root, layers=layers, neurons=neurons)()
+# 
+#         CKA_human = CKA_Similarity_Human(root=root, layers=layers, neurons=neurons)
+#         
+#         for used_unit_type in used_unit_types:
+#             for used_id_num in [50, 10]:
+#                 CKA_human(used_unit_type=used_unit_type, used_id_num=used_id_num)
+#                 
+#         used_unit_types = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 'non_anova']
+#         CKA_human.process_all_used_unit_results(used_id_num=50, used_unit_types=used_unit_types)
+#         CKA_human.process_all_used_unit_results(used_id_num=10, used_unit_types=used_unit_types)
+# =============================================================================
     
-        #root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{_}')
-        root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
-        
-        CKA_Similarity_Monkey(root=root, layers=layers, neurons=neurons)()
-
-        CKA_human = CKA_Similarity_Human(root=root, layers=layers, neurons=neurons)
-        
-        for used_unit_type in used_unit_types:
-            for used_id_num in [50, 10]:
-                CKA_human(used_unit_type=used_unit_type, used_id_num=used_id_num)
-                
-        used_unit_types = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 'non_anova']
-        CKA_human.process_all_used_unit_results(used_id_num=50, used_unit_types=used_unit_types)
-        CKA_human.process_all_used_unit_results(used_id_num=10, used_unit_types=used_unit_types)
-    
-
     # -----
-# =============================================================================
-#     #used_unit_types = ['qualified', 'strong_selective', 'weak_selective', 'non_sensitive', 's_non_encode']
-#     used_unit_types = ['qualified', 's_si', 's_wsi', 's_mi', 's_wmi', 'non_selective']
-#     
-#     root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
-# 
-#     CKA_Similarity_Monkey_folds(num_folds=5, root=root, layers=layers, neurons=neurons)()
-# 
-#     CKA_human_f = CKA_Similarity_Human_folds(num_folds=5, root=root, layers=layers, neurons=neurons)
-# 
-#     for used_unit_type in used_unit_types:
-#         for used_id_num in [50, 10]:
-#             CKA_human_f(used_unit_type=used_unit_type, used_id_num=used_id_num)
-#     
-#     CKA_human_f.process_all_used_unit_results(used_id_num=50, used_unit_types=used_unit_types)
-#     CKA_human_f.process_all_used_unit_results(used_id_num=10, used_unit_types=used_unit_types)
-# =============================================================================
+    #used_unit_types = ['qualified', 'high_selective', 'low_selective', 'a_ne',  'non_anova']
+    used_unit_types = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 'non_anova']
+    
+    root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
+
+    #CKA_Similarity_Monkey_folds(num_folds=5, root=root, layers=layers, neurons=neurons)()
+
+    CKA_human_f = CKA_Similarity_Human_folds(num_folds=5, root=root, layers=layers, neurons=neurons)
+
+    #for used_unit_type in used_unit_types:
+    #    for used_id_num in [50, 10]:
+    #        CKA_human_f(used_unit_type=used_unit_type, used_id_num=used_id_num)
+    
+    CKA_human_f.process_all_used_unit_results(used_id_num=50, used_unit_types=used_unit_types)
+    CKA_human_f.process_all_used_unit_results(used_id_num=10, used_unit_types=used_unit_types)
     
 # =============================================================================
 #     roots_models = [

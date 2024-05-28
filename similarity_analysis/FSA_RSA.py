@@ -72,18 +72,11 @@ class RSA_Base():
         
     def calculation_RSA(self, first_corr='pearson', second_corr='spearman', used_unit_type='qualified', used_id_num=50, primate=None, alpha=0.05, FDR_method='fdr_bh', **kwargs):
         """
-            calculation and save the RSA results for monkey, the function will not save RSA_dict without FDR no matter 
-            what the flag is
-            
-            **[notice]** this version removed all abnormal detections for simplification, check historical versions if encountered
-            
             input:
-                - first_corr: select from 'euclidean', 'pearson', 'spearman', 'mahalanobis', 'concordance', refer to utisl_similarity.py
+                - first_corr: select from 'euclidean', 'pearson', 'spearman', 'mahalanobis', 'concordance'
                 - second_corr: select from 'pearson', 'spearman', 'condordance'
                 - alpha: significant level for FDR based on permutation test
-                - num_perm: number of permutations
-                - FDR_method: preferred FDR method, refer to multipletests
-                
+
             return:
                 ...
         """
@@ -563,7 +556,7 @@ class RSA_Human(human_feature_process, FSA_DSM, RSA_Base):
         RSA_types_dict = self.collect_all_used_unit_results(used_id_num, **kwargs)
         
         # --- static
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(len(self.layers)/2, 4))
         
         self.plot_collect_all_used_unit_results(fig, ax, RSA_types_dict, used_id_num)
         
@@ -578,7 +571,7 @@ class RSA_Human(human_feature_process, FSA_DSM, RSA_Base):
         
         return RSA_types_dict
     
-    def plot_collect_all_used_unit_results(self, fig, ax, RSA_types_dict, used_id_num=50, used_unit_types=None, **kwargs):
+    def plot_collect_all_used_unit_results(self, fig, ax, RSA_types_dict, used_id_num=50, used_unit_types=None, text=False, **kwargs):
         
         for k, v in RSA_types_dict.items():
             
@@ -592,12 +585,17 @@ class RSA_Human(human_feature_process, FSA_DSM, RSA_Base):
             
             plot_RSA(ax, similarity, similarity_std=similarity_std, color=color, linestyle=linestyle, label=label, smooth=True)
         
-        ax.legend()
-        ax.set_title(f'{self.model_structure} used_id_num: {used_id_num}')
+        if text:
+            ax.legend()
+            ax.set_title(f'{self.model_structure} used_id_num: {used_id_num}')
+        
         ax.hlines(0, 0, len(self.layers)-1, color='gray', linestyle='--', alpha=0.25)
         
+        ax.set_xlim([0, len(self.layers)-1])
         ax.set_xticks([0, len(self.layers)-1])
         ax.set_xticklabels([0, 1])
+
+        ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
         
         fig.tight_layout(pad=1)
         fig.savefig(os.path.join(self.dest_RSA, f'{self.model_structure} RSA results types {used_id_num}.svg'), bbox_inches='tight')
@@ -1281,11 +1279,11 @@ class Human_similarity_scores_comparison(RSA_comparison_base):
 if __name__ == "__main__":
     
     FSA_root = '/home/acxyle-workstation/Downloads/FSA'
-    FSA_dir = 'VGG/VGG'
-    model_depth = 16
-    T = 4
-    FSA_config = f'VGG{model_depth}bn_C2k_fold_'
-    FSA_model =  f'vgg{model_depth}_bn'
+    FSA_dir = 'Resnet/SEWResnet'
+    model_depth = 18
+    T = 32
+    FSA_config = f'SEWResnet{model_depth}bn_IF_ATan_T{T}_C2k_fold_'
+    FSA_model =  f'sew_resnet{model_depth}'
 
     _, layers, neurons, _ = utils_.get_layers_and_units(FSA_model, 'act')
     
@@ -1299,62 +1297,44 @@ if __name__ == "__main__":
                        'selective', 'high_selective', 'low_selective', 'non_selective'
                        ]
 
-    # --- 1. Single Model
 # =============================================================================
-#     RSA_Monkey(root=root, layers=layers, neurons=neurons)()
-# 
-#     RSA_human = RSA_Human(root=root, layers=layers, neurons=neurons)
+#     # --- 1. Single Model
+#     # -----
+#     for _ in [0, 1, 2, 3, 4]:
 #     
-#     for used_unit_type in used_unit_types:
-#         for used_id_num in [50, 10]:
-#             RSA_human(used_unit_type=used_unit_type, used_id_num=used_id_num)
-#               
-#     used_unit_types = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 'non_anova']
-#     RSA_human.process_all_used_unit_results(used_id_num=50, used_unit_types=used_unit_types)
-#     RSA_human.process_all_used_unit_results(used_id_num=10, used_unit_types=used_unit_types)
+#         root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{_}')
+#         
+#         # --- 1. Single Model
+#         RSA_Monkey(root=root, layers=layers, neurons=neurons)()
+#     
+#         RSA_human = RSA_Human(root=root, layers=layers, neurons=neurons)
+#         
+#         for used_unit_type in used_unit_types:
+#             for used_id_num in [50, 10]:
+#                 RSA_human(used_unit_type=used_unit_type, used_id_num=used_id_num)
+#                 
+#         used_unit_types_ = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 'non_anova']
+#         RSA_human.process_all_used_unit_results(used_id_num=10, used_unit_types=used_unit_types_)
+#         RSA_human.process_all_used_unit_results(used_id_num=50, used_unit_types=used_unit_types_)
 # =============================================================================
+                
+    # --- 2. Folds
+    root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
+    
+    #RSA_Monkey_folds(num_folds=5, root=root, layers=layers, neurons=neurons)()
+    
+    RSA_human_f = RSA_Human_folds(num_folds=5, root=root, layers=layers, neurons=neurons)
+    #RSA_Human_folds.collect_RSA_Similarity_folds()
+    
+    #used_unit_types = ['qualified', 'high_selective', 'low_selective', 'non_anova', 'a_ne']
+    used_unit_types = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 'non_anova']
 
+    #for used_unit_type in used_unit_types:
+    #    for used_id_num in [50, 10]:
+    #        RSA_human_f(used_unit_type=used_unit_type, used_id_num=used_id_num)
     
-    
-    # -----
-    for _ in [0,1,2,3,4]:
-    
-        root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{_}')
-        
-        # --- 1. Single Model
-        RSA_Monkey(root=root, layers=layers, neurons=neurons)()
-    
-        RSA_human = RSA_Human(root=root, layers=layers, neurons=neurons)
-        
-        for used_unit_type in used_unit_types:
-            for used_id_num in [50, 10]:
-                RSA_human(used_unit_type=used_unit_type, used_id_num=used_id_num)
-                
-        used_unit_types = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 'non_anova']
-        RSA_human.process_all_used_unit_results(used_id_num=10, used_unit_types=used_unit_types)
-        RSA_human.process_all_used_unit_results(used_id_num=50, used_unit_types=used_unit_types)
-                
-# =============================================================================
-#     # --- 2. Folds
-#     root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
-#     
-#     RSA_monkey_f = RSA_Monkey_folds(num_folds=5, root=root, layers=layers, neurons=neurons)
-#     #RSA_monkey_dict = RSA_monkey_f.collect_RSA_Similarity_folds()
-#     RSA_monkey_f()
-#     
-#     RSA_human_f = RSA_Human_folds(num_folds=5, root=root, layers=layers, neurons=neurons)
-#     #RSA_Human_folds.collect_RSA_Similarity_folds()
-#     
-#     #used_unit_types = ['qualified', 'strong_selective', 'weak_selective', 'non_sensitive', 's_non_encode']
-#     used_unit_types = ['qualified', 's_si', 's_wsi', 's_mi', 's_wmi', 'non_selective']
-# 
-#     for used_unit_type in used_unit_types:
-#         for used_id_num in [50, 10]:
-#             RSA_human_f(first_corr='pearson', second_corr='spearman', used_unit_type=used_unit_type, used_id_num=used_id_num)
-#     
-#     RSA_human_f.process_all_used_unit_results(used_id_num=50, used_unit_types=used_unit_types)
-#     RSA_human_f.process_all_used_unit_results(used_id_num=10, used_unit_types=used_unit_types)
-# =============================================================================
+    RSA_human_f.process_all_used_unit_results(used_id_num=50, used_unit_types=used_unit_types)
+    RSA_human_f.process_all_used_unit_results(used_id_num=10, used_unit_types=used_unit_types)
     
 # =============================================================================
 #     ann_RSA_dict = {}

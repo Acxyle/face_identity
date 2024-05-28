@@ -3,7 +3,13 @@
 """
 Created on Fri May 24 15:13:51 2024
 
-@author: acxyle-workstation
+@author: Jinge Wang, Runnan Cao
+
+    refer to: https://github.com/JingeW/ID_selective
+              https://osf.io/824s7/
+    
+@modified: acxyle
+
 """
 
 import os
@@ -32,12 +38,6 @@ from FSA_Encode import FSA_Encode
 class FSA_Responses(FSA_Encode):
     """
         ...
-        
-        Main functions:
-            1) calculate and display responses of a single unit and multiple units
-            2) calculate and display **Percentage** of units of a single layer
-            3) calculate and display the avg responses (intensity) of feature maps
-        
     """
     
     def __init__(self, **kwargs):
@@ -46,6 +46,8 @@ class FSA_Responses(FSA_Encode):
         
         self.dest_Responses = os.path.join(self.dest_Encode, 'Responses')
         utils_.make_dir(self.dest_Responses)
+        
+        self.Sort_dict = self.load_Sort_dict()
         
         ...
     
@@ -169,7 +171,7 @@ class FSA_Responses(FSA_Encode):
         
         if used_unit_types == None:
             
-            used_unit_types = ['qualified', 'sensitive', 'non_sensitive', 'selective', 'strong_selective', 'weak_selective', 'non_selective', 's_non_encode']
+            used_unit_types = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 'non_anova']
         
         self.dest_Intensity = os.path.join(self.dest_Responses, 'Intensity')
         utils_.make_dir(self.dest_Intensity)
@@ -266,7 +268,7 @@ class FSA_Responses(FSA_Encode):
 
     def plot_stacked_responses(self, used_unit_types=None, start_layer_idx=-5, **kwargs):
         """
-            this function is memory consuming
+            RAM consuming
         """
                 
         assert start_layer_idx < 0, f'[Coderror] start_layer_idx {start_layer_idx} must be negative in current design'
@@ -317,7 +319,7 @@ class FSA_Responses(FSA_Encode):
             #print(sys.getrefcount(self.plot_stacked_responses_single_layer))
         
 
-    def plot_responses_PDF(self, used_unit_types:list[str]=['qualified', 'strong_selective', 'weak_selective', 'non_selective'], start_layer_idx=-5, **kwargs):
+    def plot_responses_PDF(self, used_unit_types=['qualified', 'high_selective', 'low_selective', 'non_selective'], start_layer_idx=-5, **kwargs):
         """
             ...
             
@@ -348,7 +350,7 @@ class FSA_Responses(FSA_Encode):
                 plt.close()
         
 
-    def plot_pct_pie_chart(self, used_unit_types=['s_si', 's_wsi', 's_mi', 's_wmi', 'non_selective'], start_layer_idx=-5, **kwargs):
+    def plot_pct_pie_chart(self, used_unit_types=['a_hs', 'a_ls', 'a_hm', 'a_lm', 'non_selective'], start_layer_idx=-5, **kwargs):
         
         utils_.make_dir(save_path:=os.path.join(self.dest_Encode, 'Pie Chart'))
         
@@ -527,7 +529,7 @@ if __name__ == "__main__":
     FSA_config = f'SpikingVGG16bn_IF_ATan_T4_C2k_fold_'
     FSA_model =  f'spiking_vgg16_bn'
     
-    used_unit_types = ['strong_selective', 'weak_selective', 's_non_encode', 'non_sensitive']
+    used_unit_types = ['high_selective', 'low_selective', 'a_ne', 'non_anova']
     
     _, layers, neurons, shapes = utils_.get_layers_and_units(FSA_model, 'act')
     

@@ -74,10 +74,10 @@ def get_args_parser(fold_idx=0):
     parser.add_argument("--data_path", type=str, default='/home/acxyle-workstation/Dataset/CelebA50') # collect data from celebA-50
 
     parser.add_argument("--FSA_dir", type=str, default='Resnet/SEWResnet')
-    parser.add_argument("--FSA_config", type=str, default='SEWResnet101_IF_ATan_T4_C2k_fold_')
-    parser.add_argument("--FSA_params_dir", type=str, default='logs_ft_CelebA50_sewresnet101_IF_T4_CelebA2622_fold_')
+    parser.add_argument("--FSA_config", type=str, default='SEWResnet50_LIF_ATan_T4_C2k_fold_')
+    parser.add_argument("--FSA_params_dir", type=str, default=None)
     parser.add_argument("--fold_idx", type=int, default=f'{fold_idx}')
-    parser.add_argument("--num_classes", type=int, default=50)
+    parser.add_argument("--num_classes", type=int, default=2622)
 
     parser.add_argument("--device", type=str, default='cuda:0')
     parser.add_argument("--workers", default=12, help="data loading workers")
@@ -91,9 +91,9 @@ def get_args_parser(fold_idx=0):
     
     # --- SNN config
     parser_SNN = sub_parser.add_parser('SNN', help='Test the model')
-    parser_SNN.add_argument("--model", type=str, default='sew_resnet101', help='Model name only')
+    parser_SNN.add_argument("--model", type=str, default='sew_resnet50', help='Model name only')
     parser_SNN.add_argument("--step_mode", type=str, default='m')
-    parser_SNN.add_argument('--neuron', type=str, default='IF')
+    parser_SNN.add_argument('--neuron', type=str, default='LIF')
     parser_SNN.add_argument('--surrogate', type=str, default='ATan')
     parser_SNN.add_argument("--T", type=int, default=4)
 

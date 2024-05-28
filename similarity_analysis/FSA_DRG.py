@@ -518,11 +518,11 @@ class FSA_Gram(FSA_Encode):
 if __name__ == '__main__':
 
     FSA_root = '/home/acxyle-workstation/Downloads/FSA'
-    FSA_dir = 'VGG/VGG'
+    FSA_dir = 'VGG/SpikingVGG'
     model_depth = 16
     T = 8
-    FSA_config = f'VGG{model_depth}bn_C2k_fold_'
-    FSA_model =  f'vgg{model_depth}_bn'
+    FSA_config = f'SpikingVGG{model_depth}bn_IF_ATan_T4_C2k_fold_'
+    FSA_model =  f'spiking_vgg{model_depth}_bn'
     
     _, layers, neurons, _ = utils_.get_layers_and_units(FSA_model, 'act')
     
@@ -530,7 +530,7 @@ if __name__ == '__main__':
     #DR_analyzer = FSA_DR(root=os.path.join(root_dir, 'Face Identity Baseline'), layers=layers, neurons=neurons)
     #DR_analyzer.DR_TSNE()
     
-    for _ in range(5):
+    for _ in range(4,5):
         
         root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{_}')
         #root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')

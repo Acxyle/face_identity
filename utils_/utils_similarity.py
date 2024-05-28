@@ -205,10 +205,6 @@ def _size_and_mask_check(input):
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-"""
-    below functions from the CKA colab tutorial
-"""
-
 def gram_linear(x, **kwargs):
 
     return x.dot(x.T)
@@ -221,6 +217,23 @@ def gram_rbf(x, threshold=1.0, **kwargs):
     sq_distances = -2 * dot_products + sq_norms[:, None] + sq_norms[None, :]
     sq_median_distance = np.median(sq_distances)
     return np.exp(-sq_distances / (2 * threshold ** 2 * sq_median_distance))
+
+
+def cka(gram_x, gram_y, debiased=True):
+
+    gram_x = center_gram(gram_x, unbiased=debiased)
+    gram_y = center_gram(gram_y, unbiased=debiased)
+
+    scaled_hsic = gram_x.ravel().dot(gram_y.ravel())
+    
+    normalization_x = np.linalg.norm(gram_x)
+    normalization_y = np.linalg.norm(gram_y)
+    
+    if normalization_x == 0 or normalization_y == 0:
+        return np.float64(0)
+    else:
+        cka_score = scaled_hsic / (normalization_x * normalization_y)
+        return max(0, min(1, cka_score))
 
 
 def center_gram(gram, unbiased=True):
@@ -247,18 +260,12 @@ def center_gram(gram, unbiased=True):
     return gram
 
 
-def cka(gram_x, gram_y, debiased=True):
-
-    gram_x = center_gram(gram_x, unbiased=debiased)
-    gram_y = center_gram(gram_y, unbiased=debiased)
-
-    scaled_hsic = gram_x.ravel().dot(gram_y.ravel())
-    
-    normalization_x = np.linalg.norm(gram_x)
-    normalization_y = np.linalg.norm(gram_y)
-    return scaled_hsic / (normalization_x * normalization_y)
+def cka_temporal(primate_Gram_temporal, NN_Gram, **kwargs):
+    # input shape: Bio - (time_steps, corr_matrix), NN - (corr_matrix,)
+    return np.array([cka(_, NN_Gram, **kwargs) for _ in primate_Gram_temporal])      # (time_steps, )
 
 
+# ----------------------------------------------------------------------------------------------------------------------
 def describe_numpy(input:np.array=None):
     """
         this function uses a dict format to print the information of a numpy array like Pandas describe

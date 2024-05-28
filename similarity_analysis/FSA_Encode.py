@@ -66,7 +66,7 @@ class FSA_Encode():
 
         self.model_structure = root.split('/')[-1].split(' ')[-1]
      
-        #self.bahsc_types = ['a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 
+        #self.basic_types = ['a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 
         #                    'na_hs', 'na_ls', 'na_hm', 'na_lm', 'na_ne']   
      
         
@@ -152,15 +152,15 @@ class FSA_Encode():
     
     def calculation_Sort_dict(self, used_unit_types, **kwargs):
         
-        self.bahsc_types = ['a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 
+        self.basic_types = ['a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 
                             'na_hs', 'na_ls', 'na_hm', 'na_lm', 'na_ne']   
             
-        bahsc_types = [_ for _ in used_unit_types if _ in self.bahsc_types]
-        advanced_types = [_ for _ in used_unit_types if _ not in bahsc_types]
+        basic_types = [_ for _ in used_unit_types if _ in self.basic_types]
+        advanced_types = [_ for _ in used_unit_types if _ not in basic_types]
         
         advanced_Sort_dict = self.calculation_Sort_dict_advanced(advanced_types, **kwargs)
         
-        Sort_dict = {k: {_:v[_] for _ in bahsc_types} for k,v in self.Sort_dict.items()}
+        Sort_dict = {k: {_:v[_] for _ in basic_types} for k,v in self.Sort_dict.items()}
         Sort_dict = {layer: {k: advanced_Sort_dict[layer][k] if k in advanced_Sort_dict[layer] else Sort_dict[layer][k] for k in used_unit_types} for layer in self.layers}
 
         return {layer: {type_: v.astype(int) for type_, v in dict_.items()} for layer, dict_ in Sort_dict.items()}
@@ -237,7 +237,7 @@ class FSA_Encode():
                                 ],
                         
                         'label': [
-                            'qualified(all)',
+                            'qualified',
                             'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne',
                             'na_hs', 'na_ls', 'na_hm', 'na_lm', 'na_ne',
 
@@ -334,7 +334,7 @@ class FSA_Encode():
         
         if used_unit_types is None:
             #used_unit_types = ['anova', 'non_anova', 'selective', 'high_selective', 'low_selective', 'non_selective']
-            used_unit_types = ['a_hs', 'a_ls', 'a_hm', 'a_lm', 'non_selective']
+            used_unit_types = ['a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 'non_anova']
 
         # --- init
         if units_pct is None:
@@ -350,7 +350,7 @@ class FSA_Encode():
         
         x = np.arange(len(self.layers))
         bottoms = np.zeros(len(self.layers))
-        fig, ax = plt.subplots(figsize=(len(self.layers), 6))
+        fig, ax = plt.subplots(figsize=(len(self.layers)/2, 4))
 
         for _ in used_unit_types:
             
@@ -361,8 +361,19 @@ class FSA_Encode():
             ax.bar(x, units_pct[_], bottom=bottoms, alpha=0.5, color=color, label=label)
             bottoms += units_pct[_]
         
-        ax.legend(ncol=6, bbox_to_anchor=(1, -0.05))
-        ax.set_title(f'Pcts of subsets@{self.model_structure}')
+        #ax.legend(ncol=1, bbox_to_anchor=(1, 0.75))
+        #ax.set_title(f'Pcts of subsets@{self.model_structure}')
+
+        ax.set_xticks(np.arange(15))
+        ax.set_xticklabels(['C1-1', 'C1-2', 
+                            'C2-1', 'C2-2', 
+                            'C3-1', 'C3-2', 'C3-3', 
+                            'C4-1', 'C4-2', 'C4-3', 
+                            'C5-1', 'C5-2', 'C5-3', 
+                            'FC-1', 'FC-2'
+                            ], rotation='vertical')
+        
+        ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
 
         fig.savefig(os.path.join(fig_folder, f'{self.model_structure} pcts of subsets {used_unit_types}.svg'), bbox_inches='tight')    
         plt.close()
@@ -447,7 +458,7 @@ class FSA_Encode():
             self.Sort_dict = self.load_Sort_dict()
             self.Encode_dict = self.load_Encode_dict()
             
-            used_unit_type = used_unit_type + self.bahsc_types
+            used_unit_type = used_unit_type + self.basic_types
             
             Sort_dict = self.calculation_Sort_dict(used_unit_type)
             
@@ -796,21 +807,6 @@ class FSA_Encode_folds(FSA_Encode):
         
         curve_dict_folds = self.calculation_curve_dict_folds(used_unit_types=used_unit_types, **kwargs)
         
-        # ---
-# =============================================================================
-#         fig, ax = plt.subplots(figsize=(10,6))
-#         
-#         self.plot_units_pct_folds(fig, ax, curve_dict_folds, used_unit_types=used_unit_types, **kwargs)
-#         
-#         ax.set_title(title:=f"{self.model_structure.replace('_ATan', '').replace('_fold_', '')} {''.join([_[0] for _ in used_unit_types])}")
-#         
-#         fig.tight_layout()
-#         fig.savefig(os.path.join(self.dest_Encode, f'Encode pct {title}.svg'), bbox_inches='tight')
-#         plt.close()
-#         ...
-# =============================================================================
-        
-        
         curve_dict_folds = {k: v['values'] for k,v in curve_dict_folds.items()}
         
         self.plot_Encode_pct_bar_chart(curve_dict_folds, used_unit_types)
@@ -1022,24 +1018,26 @@ def calculation_unit_responses(input, num_classes=50, num_samples=10, n=2, **kwa
 if __name__ == "__main__":
     
     FSA_root = '/home/acxyle-workstation/Downloads/FSA'
-    FSA_dir = 'VGG/SpikingVGG'
+    FSA_dir = 'VGG/VGG'
     model_depth = 16
     T = 4
-    FSA_config = f'SpikingVGG{model_depth}bn_IF_ATan_T4_C2k_fold_'
-    FSA_model =  f'spiking_vgg{model_depth}_bn'
+    FSA_config = f'VGG{model_depth}bn_C2k_fold_'
+    FSA_model =  f'vgg{model_depth}_bn'
     
     # ----- (1). Encode
     _, layers, neurons, shapes = utils_.get_layers_and_units(FSA_model, 'act')
     
-    for _ in range(5):
-        
-        root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{_}')
-        #root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
-        
-        selectivity_analyzer = FSA_Encode(root=root, layers=layers, neurons=neurons)
-        selectivity_analyzer.calculation_Encode()
-        selectivity_analyzer.plot_Encode_pct_bar_chart()
-        selectivity_analyzer.plot_Encode_freq()
+# =============================================================================
+#     for _ in range(5):
+#         
+#         root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{_}')
+#         #root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
+#         
+#         selectivity_analyzer = FSA_Encode(root=root, layers=layers, neurons=neurons)
+#         selectivity_analyzer.calculation_Encode()
+#         selectivity_analyzer.plot_Encode_pct_bar_chart()
+#         selectivity_analyzer.plot_Encode_freq()
+# =============================================================================
     
     # --- 2. Folds
     root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')

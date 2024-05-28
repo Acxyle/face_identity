@@ -98,8 +98,8 @@ class FSA_SVM(FSA_Encode):
         # --- init
         SVM_type_conifg = self.plot_Encode_config
         
-        types_to_plot = ['qualified', 'high_selective', 'low_selective', 'a_ne', 'non_anova']
-        #types_to_plot = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'non_selective']
+        #types_to_plot = ['qualified', 'high_selective', 'low_selective', 'a_ne', 'non_anova']
+        types_to_plot = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'non_selective']
         
         
         if layer_SVM == None:
@@ -168,11 +168,12 @@ class FSA_SVM_folds(FSA_SVM):
         SVM_folds = self.calculation_SVM_folds(**kwargs)
         
         # ---
-        fig, ax = plt.subplots(figsize=(10,6))
+        fig, ax = plt.subplots(figsize=(len(self.layers)/2, 4))
         
         self.plot_SVM_folds(fig, ax, SVM_folds, **kwargs)
         
-        ax.set_title(title:=f"SVM {self.model_structure.replace('_fold_', '')}")
+        title = f"SVM {self.model_structure.replace('_fold_', '')}"
+        #ax.set_title(title=title)
         fig.savefig(os.path.join(self.dest_SVM, f'{title}.svg'), bbox_inches='tight')
         
         plt.close()
@@ -181,7 +182,7 @@ class FSA_SVM_folds(FSA_SVM):
     def calculation_SVM_folds(self, used_unit_types=None, SVM_path=None, **kwargs):
         
         if used_unit_types == None:
-            used_unit_types = ['qualified', 'sensitive', 'non_sensitive', 'selective', 'strong_selective', 'weak_selective', 'non_selective', 's_non_encode']
+            used_unit_types = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 'non_anova']
  
         SVM_folds_path = os.path.join(self.dest_SVM, f'SVM_folds {used_unit_types}.pkl') if SVM_path == None else SVM_path              
         
@@ -218,7 +219,7 @@ class FSA_SVM_folds(FSA_SVM):
         
         SVM_type_conifg = self.plot_Encode_config
         #types_to_plot = ['qualified', 'strong_selective', 'weak_selective', 's_non_encode', 'non_sensitive']
-        types_to_plot = ['s_si', 's_wsi', 's_mi', 's_wmi', 'non_selective', 'qualified']
+        types_to_plot = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 'non_anova']
         
         for k, v in SVM_folds['mean'].items():
             
@@ -253,8 +254,10 @@ class FSA_SVM_folds(FSA_SVM):
         ax.set_yticks(np.arange(0, 109, 10))
         ax.set_yticklabels(np.arange(0, 109, 10))
         
+        ax.set_xlim([0, len(self.layers)-1])
+        
         ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
-        ax.legend(ncol=ncol, framealpha=0.5)
+        #ax.legend(ncol=ncol, framealpha=0.5)
         
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -334,18 +337,19 @@ class FSA_SVM_Comparison(FSA_SVM_folds):
 if __name__ == "__main__":
     
     FSA_root = '/home/acxyle-workstation/Downloads/FSA'
-    FSA_dir = 'VGG/A2S_VGG'
+    FSA_dir = 'VGG/SpikingVGG'
     model_depth = 16
     T = 4
-    FSA_config = f'A2S_Baseline(T64)'
-    FSA_model =  f'spiking_vgg{model_depth}'
+    FSA_config = f'SpikingVGG{model_depth}bn_IF_ATan_T4_C2k_fold_'
+    FSA_model =  f'spiking_vgg{model_depth}_bn'
     
     used_unit_types1 = ['qualified', 'sensitive', 'non_sensitive', 'selective', 'strong_selective', 'weak_selective', 'non_selective', 's_non_encode']
     used_unit_types2 = ['s_si', 's_wsi', 's_mi', 's_wmi', 'non_selective']
     used_unit_types = used_unit_types1 + used_unit_types2
     
-    ttk1 = ['qualified', 'anova', 'non_anova', 'selective', 'high_selective', 'low_selective', 'non_selective', 'a_ne', ]
+    ttk1 = ['qualified', 'anova', 'non_anova', 'selective', 'high_selective', 'low_selective', 'non_selective', 'a_ne']
     ttk2 = ['a_hs', 'a_ls', 'a_hm', 'a_lm', 'non_selective']
+    ttk = ttk1 + ttk2
     
     # ----- (1). Encode
     _, layers, neurons, shapes = utils_.get_layers_and_units(FSA_model, 'act')
@@ -354,32 +358,33 @@ if __name__ == "__main__":
     #selectivity_analyzer = FSA_SVM(root=root, layers=layers, neurons=neurons)
     #selectivity_analyzer.process_SVM(used_unit_types=used_unit_types)
     
-    for fold_idx in range(1):
-        
-        #root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{fold_idx}')
-        root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
-        
-        tmp1 = utils_.load(os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/Analysis/SVM/SVM {used_unit_types1}.pkl'))
-        
-        #tmp2 = utils_.load(os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{fold_idx}/Analysis/SVM/SVM {used_unit_types2}.pkl'))
-        #tmp3 = {**tmp1, **tmp2}
-        
-        tmp3 = {}
-        for _ in range(8):
-            tmp3[ttk1[_]] = tmp1[used_unit_types1[_]]
-        
-        utils_.dump(tmp3, os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/Analysis/SVM/SVM {ttk1}.pkl'))
-        
-        #os.remove(os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{fold_idx}/Analysis/SVM/SVM {used_unit_types1}.pkl'))
-        #os.remove(os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{fold_idx}/Analysis/SVM/SVM {used_unit_types2}.pkl'))
-        
-        selectivity_analyzer = FSA_SVM(root=root, layers=layers, neurons=neurons)
-        selectivity_analyzer.process_SVM(used_unit_types=ttk1)
+# =============================================================================
+#     for fold_idx in range(5):
+#         
+#         root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{fold_idx}')
+#         #root = os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
+#         
+#         tmp1 = utils_.load(os.path.join(root, f'Analysis/SVM/SVM {used_unit_types}.pkl'))
+#         #tmp2 = utils_.load(os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/Analysis/SVM/SVM {ttk2}.pkl'))
+#         #tmp3 = {**tmp1, **tmp2}
+#         
+#         tmp3 = {}
+#         for _ in range(len(ttk)):
+#             tmp3[ttk[_]] = tmp1[used_unit_types[_]]
+#         
+#         utils_.dump(tmp3, os.path.join(root, f'Analysis/SVM/SVM {ttk}.pkl'))
+#         
+#         #os.remove(os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{fold_idx}/Analysis/SVM/SVM {ttk1}.pkl'))
+#         #os.remove(os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}/-_Single Models/FSA {FSA_config}{fold_idx}/Analysis/SVM/SVM {ttk2}.pkl'))
+#         
+#         selectivity_analyzer = FSA_SVM(root=root, layers=layers, neurons=neurons)
+#         selectivity_analyzer.process_SVM(used_unit_types=ttk)
+# =============================================================================
         
     # ----- (3). SVM
     # --- 1. Folds
-    #root=os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
-    #FSA_SVM_folds(num_folds=5, root=root, layers=layers, neurons=neurons)(used_unit_types=used_unit_types)
+    root=os.path.join(FSA_root, FSA_dir, f'FSA {FSA_config}')
+    FSA_SVM_folds(num_folds=5, root=root, layers=layers, neurons=neurons)(used_unit_types=ttk)
     
     # --- 2. Multi Models Comparison
     #FSA_SVM_Comparison()(roots_and_models)

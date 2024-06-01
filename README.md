@@ -1,6 +1,6 @@
 # Abstract
 
-Face Identity Analysis (FSA)
+Face-identity Selectivity Analysis (FSA)
 
 Spiking Neural Network (SNN)
 

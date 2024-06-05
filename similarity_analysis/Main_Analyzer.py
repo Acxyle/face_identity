@@ -27,17 +27,17 @@ import utils_
 def get_args_parser(fold_idx=0):
     parser = argparse.ArgumentParser(description="FSA Ver 5.1", add_help=True)
     
-    parser.add_argument("--num_classes", type=int, default=50, help="[Codelp] set the number of classes")
-    parser.add_argument("--num_samples", type=int, default=10, help="[Codelp] set the sample number of each class")
-    parser.add_argument("--alpha", type=float, default=0.01, help='[Codelp] assign the alpha value for ANOVA')
+    parser.add_argument("--num_classes", type=int, default=50, help="set the number of classes")
+    parser.add_argument("--num_samples", type=int, default=10, help="set the sample number of each class")
+    parser.add_argument("--alpha", type=float, default=0.01, help='assign the alpha value for ANOVA')
     
-    parser.add_argument("--FSA_root", type=str, default="/home/acxyle-workstation/Downloads/FSA", help="[Codelp] root directory for features and neurons")
+    parser.add_argument("--FSA_root", type=str, default="/home/acxyle-workstation/Downloads/FSA", help="root directory for features and neurons")
     
-    parser.add_argument("--FSA_dir", type=str, default='VGG/SpikingVGG')
-    parser.add_argument("--FSA_config", type=str, default='SpikingVGG16bn_IF_ATan_T8_C2k_fold_')
+    parser.add_argument("--FSA_dir", type=str, default='Resnet/Resnet')
+    parser.add_argument("--FSA_config", type=str, default='Resnet34_C2k_fold_')
     parser.add_argument("--fold_idx", type=int, default=f'{fold_idx}')
 
-    parser.add_argument("--model", type=str, default='spiking_vgg16_bn')     
+    parser.add_argument("--model", type=str, default='resnet34')     
     
     return parser.parse_args()
     
@@ -122,6 +122,7 @@ class Multi_Model_Analysis():
         
         FSA_SVM.FSA_SVM_folds(**self._configs)(used_unit_types=used_unit_types)
 
+
 # ----------------------------------------------------------------------------------------------------------------------
 def single_model_analysis(args):
     """
@@ -139,7 +140,8 @@ def single_model_analysis(args):
                        'non_anova', 
                        'selective', 'high_selective', 'low_selective', 'non_selective'
                        ]
-
+    
+    used_unit_types_ = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 'non_anova']
     
     if 'fold' in args.FSA_config:
         FSA_folder = os.path.join(args.FSA_root, args.FSA_dir, f'FSA {args.FSA_config}/-_Single Models/FSA {config}')
@@ -167,7 +169,7 @@ def single_model_analysis(args):
     Responses_analyzer = FSA_Responses.FSA_Responses(root=FSA_folder, layers=layers, neurons=neurons)
 
     Responses_analyzer.plot_unit_responses()
-    Responses_analyzer.plot_stacked_responses(used_unit_types)
+    Responses_analyzer.plot_stacked_responses(used_unit_types_)
     Responses_analyzer.plot_responses_PDF()
     Responses_analyzer.plot_pct_pie_chart()
     Responses_analyzer.plot_Feature_Intensity()
@@ -189,7 +191,7 @@ def single_model_analysis(args):
     del Gram_analyzer
 
     # ----- 4. RSA
-    used_unit_types_ = ['qualified', 'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne', 'non_anova']
+    
     
     FSA_RSA.RSA_Monkey(root=FSA_folder, layers=layers, neurons=neurons)() 
             
@@ -237,12 +239,10 @@ if __name__ == "__main__":
     
     utils_.formatted_print('Face Selectivity Analysis Experiment...')
     
-# =============================================================================
-#     for fold_idx in range(5):
-#         args = get_args_parser(fold_idx)
-#         print(args)
-#         single_model_analysis(args)
-# =============================================================================
+    for fold_idx in [0,1,2,3,4]:
+        args = get_args_parser(fold_idx)
+        print(args)
+        single_model_analysis(args)
     
     args = get_args_parser()
     Multi_Model_Analysis(args)

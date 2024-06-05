@@ -2,17 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 Created on Mon Feb 13 00:12:41 2023
-    
-    Function:
-        (1) model validation
-        (2) generate featuremap
-    
-    This script extracts the feature maps by modifying the forward process of Pytorch. Auto-generate layer names.
-    
-    pros: automatically scan all layers and assign names
-    cons: can not manually select layers, like hook based method
 
-
+@author: acxyle-workstation
 """
 
 import os
@@ -73,8 +64,8 @@ def get_args_parser(fold_idx=0):
     # --- common config
     parser.add_argument("--data_path", type=str, default='/home/acxyle-workstation/Dataset/CelebA50') # collect data from celebA-50
 
-    parser.add_argument("--FSA_dir", type=str, default='Resnet/SEWResnet')
-    parser.add_argument("--FSA_config", type=str, default='SEWResnet50_LIF_ATan_T4_C2k_fold_')
+    parser.add_argument("--FSA_dir", type=str, default='Resnet/Resnet')
+    parser.add_argument("--FSA_config", type=str, default='Resnet34_C2k_fold_')
     parser.add_argument("--FSA_params_dir", type=str, default=None)
     parser.add_argument("--fold_idx", type=int, default=f'{fold_idx}')
     parser.add_argument("--num_classes", type=int, default=2622)
@@ -87,13 +78,13 @@ def get_args_parser(fold_idx=0):
     
     # --- ANN config
     parser_ANN = sub_parser.add_parser('ANN', help='Train the model')
-    parser_ANN.add_argument("--model", type=str, default='resnet18', help='Model name only')
+    parser_ANN.add_argument("--model", type=str, default='resnet34', help='Model name only')
     
     # --- SNN config
     parser_SNN = sub_parser.add_parser('SNN', help='Test the model')
-    parser_SNN.add_argument("--model", type=str, default='sew_resnet50', help='Model name only')
+    parser_SNN.add_argument("--model", type=str, default='sew_resnet152', help='Model name only')
     parser_SNN.add_argument("--step_mode", type=str, default='m')
-    parser_SNN.add_argument('--neuron', type=str, default='LIF')
+    parser_SNN.add_argument('--neuron', type=str, default='IF')
     parser_SNN.add_argument('--surrogate', type=str, default='ATan')
     parser_SNN.add_argument("--T", type=int, default=4)
 
@@ -182,7 +173,7 @@ class feature_extractor_base():
             if 'spiking_resnet' in args.model:
                 model_base = models_.spiking_resnet
                 common_opts['zero_init_residual'] = True
-            elif 'sew_resnet' in args.model:
+            elif args.model in models_.sew_resnet.__all__:
                 model_base = models_.sew_resnet
                 common_opts['cnf'] = 'ADD'
             elif 'spiking_vgg' in args.model:
@@ -198,9 +189,17 @@ class feature_extractor_base():
 
     def load_weight(self, model, args, **kwargs):
         
-        config = f'{args.FSA_config}{args.fold_idx}'
+        if 'fold' in args.FSA_config:
         
-        self.FSA_folder = os.path.join(FSA_root, f'{args.FSA_dir}/FSA {args.FSA_config}/-_Single Models/FSA {config}')
+            config = f'{args.FSA_config}{args.fold_idx}'
+            
+            self.FSA_folder = os.path.join(FSA_root, f'{args.FSA_dir}/FSA {args.FSA_config}/-_Single Models/FSA {config}')
+        
+        else:
+            
+            config = f'{args.FSA_config}'
+            
+            self.FSA_folder = os.path.join(FSA_root, f'{args.FSA_dir}/FSA {args.FSA_config}')
         
         if args.FSA_params_dir is None:
             pth_path = os.path.join(self.FSA_folder, f'logs_{config}/checkpoint_max_test_acc1.pth')     # manually modify
@@ -328,7 +327,7 @@ if __name__ =="__main__":
     FSA_root =  "/home/acxyle-workstation/Downloads/FSA"
     
     
-    for fold_idx in range(1):
+    for fold_idx in range(5):
         args = get_args_parser(fold_idx)
         
         print(args)

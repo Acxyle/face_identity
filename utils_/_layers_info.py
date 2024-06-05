@@ -22,6 +22,7 @@ def get_generator(model_name:str, **kwargs):
     generators = {
         'vgg': VGG_layers_generator,
         'resnet': Resnet_layers_generator,
+        'resnext': Resnet_layers_generator,
                  }
     
     for key in generators:
@@ -153,7 +154,12 @@ def Resnet_layers_generator(model_name, T=4, num_classes=50, feature_shape=(3,22
         'resnet34': [3, 4, 6, 3], 
         'resnet50': [3, 4, 6, 3], 
         'resnet101': [3, 4, 23, 3], 
-        'resnet152': [3, 8, 36, 3]
+        'resnet152': [3, 8, 36, 3],
+        
+        'resnext50_32x4d': [3, 4, 6, 3], 
+        'resnext50_32x8d': [3, 4, 6, 3], 
+        'resnext50_32x16d': [3, 4, 6, 3], 
+        'resnext50_32x32d': [3, 4, 6, 3], 
     }
 
     model_dict = {}

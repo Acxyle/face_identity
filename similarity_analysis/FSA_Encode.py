@@ -364,14 +364,16 @@ class FSA_Encode():
         #ax.legend(ncol=1, bbox_to_anchor=(1, 0.75))
         #ax.set_title(f'Pcts of subsets@{self.model_structure}')
 
-        ax.set_xticks(np.arange(15))
-        ax.set_xticklabels(['C1-1', 'C1-2', 
-                            'C2-1', 'C2-2', 
-                            'C3-1', 'C3-2', 'C3-3', 
-                            'C4-1', 'C4-2', 'C4-3', 
-                            'C5-1', 'C5-2', 'C5-3', 
-                            'FC-1', 'FC-2'
-                            ], rotation='vertical')
+# =============================================================================
+#         ax.set_xticks(np.arange(15))
+#         ax.set_xticklabels(['C1-1', 'C1-2', 
+#                             'C2-1', 'C2-2', 
+#                             'C3-1', 'C3-2', 'C3-3', 
+#                             'C4-1', 'C4-2', 'C4-3', 
+#                             'C5-1', 'C5-2', 'C5-3', 
+#                             'FC-1', 'FC-2'
+#                             ], rotation='vertical')
+# =============================================================================
         
         ax.grid(True, axis='y', linestyle='--', linewidth=0.5)
 

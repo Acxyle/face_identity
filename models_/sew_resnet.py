@@ -14,7 +14,12 @@ except ImportError:
 """
     
 __all__ = ['SEWResNet', 'sew_resnet18', 'sew_resnet34', 'sew_resnet50', 'sew_resnet101',
-           'sew_resnet152', 'sew_resnext50_32x4d', 'sew_resnext101_32x8d',
+           'sew_resnet152', 
+           
+           'sew_resnext50_32x4d', 'sew_resnext50_32x8d', 
+           'sew_resnext50_32x16d', 'sew_resnext50_32x32d', 
+           
+           'sew_resnext101_32x8d',
            'sew_wide_resnet50_2', 'sew_wide_resnet101_2']
 
 model_urls = {
@@ -274,200 +279,66 @@ def _sew_resnet(arch, block, layers, pretrained, progress, cnf, spiking_neuron, 
 
 
 def sew_resnet18(pretrained=False, progress=True, cnf: str = None, spiking_neuron: callable=None, **kwargs):
-    """
-    :param pretrained: If True, the SNN will load parameters from the ANN pre-trained on ImageNet
-    :type pretrained: bool
-    :param progress: If True, displays a progress bar of the download to stderr
-    :type progress: bool
-    :param cnf: the name of spike-element-wise function
-    :type cnf: str
-    :param spiking_neuron: a spiking neuron layer
-    :type spiking_neuron: callable
-    :param kwargs: kwargs for `spiking_neuron`
-    :type kwargs: dict
-    :return: Spiking ResNet-18
-    :rtype: torch.nn.Module
-
-    The spike-element-wise ResNet-18 `"Deep Residual Learning in Spiking Neural Networks" <https://arxiv.org/abs/2102.04159>`_ modified by the ResNet-18 model from `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
-    """
 
     return _sew_resnet('resnet18', BasicBlock, [2, 2, 2, 2], pretrained, progress, cnf, spiking_neuron, **kwargs)
 
 
 def sew_resnet34(pretrained=False, progress=True, cnf: str = None, spiking_neuron: callable=None, **kwargs):
-    """
-    :param pretrained: If True, the SNN will load parameters from the ANN pre-trained on ImageNet
-    :type pretrained: bool
-    :param progress: If True, displays a progress bar of the download to stderr
-    :type progress: bool
-    :param cnf: the name of spike-element-wise function
-    :type cnf: str
-    :param spiking_neuron: a spiking neuron layer
-    :type spiking_neuron: callable
-    :param kwargs: kwargs for `spiking_neuron`
-    :type kwargs: dict
-    :return: Spiking ResNet-34
-    :rtype: torch.nn.Module
 
-    The spike-element-wise ResNet-34 `"Deep Residual Learning in Spiking Neural Networks" <https://arxiv.org/abs/2102.04159>`_
-    modified by the ResNet-34 model from `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
-    """
     return _sew_resnet('resnet34', BasicBlock, [3, 4, 6, 3], pretrained, progress, cnf, spiking_neuron, **kwargs)
 
 def sew_resnet50(pretrained=False, progress=True, cnf: str = None, spiking_neuron: callable=None, **kwargs):
-    """
-    :param pretrained: If True, the SNN will load parameters from the ANN pre-trained on ImageNet
-    :type pretrained: bool
-    :param progress: If True, displays a progress bar of the download to stderr
-    :type progress: bool
-    :param cnf: the name of spike-element-wise function
-    :type cnf: str
-    :param spiking_neuron: a spiking neuron layer
-    :type spiking_neuron: callable
-    :param kwargs: kwargs for `spiking_neuron`
-    :type kwargs: dict
-    :return: Spiking ResNet-50
-    :rtype: torch.nn.Module
 
-    The spike-element-wise ResNet-50 `"Deep Residual Learning in Spiking Neural Networks" <https://arxiv.org/abs/2102.04159>`_
-    modified by the ResNet-50 model from `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
-    """
     return _sew_resnet('resnet50', Bottleneck, [3, 4, 6, 3], pretrained, progress, cnf, spiking_neuron, **kwargs)
 
 def sew_resnet101(pretrained=False, progress=True, cnf: str = None, spiking_neuron: callable=None, **kwargs):
-    """
-    :param pretrained: If True, the SNN will load parameters from the ANN pre-trained on ImageNet
-    :type pretrained: bool
-    :param progress: If True, displays a progress bar of the download to stderr
-    :type progress: bool
-    :param cnf: the name of spike-element-wise function
-    :type cnf: str
-    :param spiking_neuron: a spiking neuron layer
-    :type spiking_neuron: callable
-    :param kwargs: kwargs for `spiking_neuron`
-    :type kwargs: dict
-    :return: Spiking ResNet-101
-    :rtype: torch.nn.Module
 
-    The spike-element-wise ResNet-101 `"Deep Residual Learning in Spiking Neural Networks" <https://arxiv.org/abs/2102.04159>`_
-    modified by the ResNet-101 model from `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
-    """
     return _sew_resnet('resnet101', Bottleneck, [3, 4, 23, 3], pretrained, progress, cnf, spiking_neuron, **kwargs)
 
 def sew_resnet152(pretrained=False, progress=True, cnf: str = None, spiking_neuron: callable=None, **kwargs):
-    """
-    :param pretrained: If True, the SNN will load parameters from the ANN pre-trained on ImageNet
-    :type pretrained: bool
-    :param progress: If True, displays a progress bar of the download to stderr
-    :type progress: bool
-    :param cnf: the name of spike-element-wise function
-    :type cnf: str
-    :param spiking_neuron: a single step neuron
-    :type spiking_neuron: callable
-    :param kwargs: kwargs for `spiking_neuron`
-    :type kwargs: dict
-    :return: Spiking ResNet-152
-    :rtype: torch.nn.Module
 
-    The spike-element-wise ResNet-152 `"Deep Residual Learning in Spiking Neural Networks" <https://arxiv.org/abs/2102.04159>`_
-    modified by the ResNet-152 model from `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
-    """
     return _sew_resnet('resnet152', Bottleneck, [3, 8, 36, 3], pretrained, progress, cnf, spiking_neuron, **kwargs)
 
-def sew_resnext50_32x4d(pretrained=False, progress=True, cnf: str = None, spiking_neuron: callable=None, **kwargs):
-    """
-    :param pretrained: If True, the SNN will load parameters from the ANN pre-trained on ImageNet
-    :type pretrained: bool
-    :param progress: If True, displays a progress bar of the download to stderr
-    :type progress: bool
-    :param cnf: the name of spike-element-wise function
-    :type cnf: str
-    :param spiking_neuron: a single step neuron
-    :type spiking_neuron: callable
-    :param kwargs: kwargs for `spiking_neuron`
-    :type kwargs: dict
-    :return: Spiking ResNeXt-50 32x4d
-    :rtype: torch.nn.Module
 
-    The spike-element-wise ResNeXt-50 32x4d `"Deep Residual Learning in Spiking Neural Networks" <https://arxiv.org/abs/2102.04159>`_
-    modified by the ResNeXt-50 32x4d model from `"Aggregated Residual Transformation for Deep Neural Networks" <https://arxiv.org/pdf/1611.05431.pdf>`_
-    """
+def sew_resnext50_32x4d(pretrained=False, progress=True, cnf: str = None, spiking_neuron: callable=None, **kwargs):
+
     kwargs['groups'] = 32
     kwargs['width_per_group'] = 4
     return _sew_resnet('resnext50_32x4d', Bottleneck, [3, 4, 6, 3], pretrained, progress, cnf, spiking_neuron, **kwargs)
 
+def sew_resnext50_32x8d(pretrained=False, progress=True, cnf: str = None, spiking_neuron: callable=None, **kwargs):
+
+    kwargs['groups'] = 32
+    kwargs['width_per_group'] = 8
+    return _sew_resnet(None, Bottleneck, [3, 4, 6, 3], pretrained, progress, cnf, spiking_neuron, **kwargs)
+
+def sew_resnext50_32x16d(pretrained=False, progress=True, cnf: str = None, spiking_neuron: callable=None, **kwargs):
+
+    kwargs['groups'] = 32
+    kwargs['width_per_group'] = 16
+    return _sew_resnet(None, Bottleneck, [3, 4, 6, 3], pretrained, progress, cnf, spiking_neuron, **kwargs)
+
+def sew_resnext50_32x32d(pretrained=False, progress=True, cnf: str = None, spiking_neuron: callable=None, **kwargs):
+
+    kwargs['groups'] = 32
+    kwargs['width_per_group'] = 32
+    return _sew_resnet(None, Bottleneck, [3, 4, 6, 3], pretrained, progress, cnf, spiking_neuron, **kwargs)
+
 
 def sew_resnext101_32x8d(pretrained=False, progress=True, cnf: str = None, spiking_neuron: callable=None, **kwargs):
-    """
-    :param pretrained: If True, the SNN will load parameters from the ANN pre-trained on ImageNet
-    :type pretrained: bool
-    :param progress: If True, displays a progress bar of the download to stderr
-    :type progress: bool
-    :param cnf: the name of spike-element-wise function
-    :type cnf: str
-    :param spiking_neuron: a single step neuron
-    :type spiking_neuron: callable
-    :param kwargs: kwargs for `spiking_neuron`
-    :type kwargs: dict
-    :return: Spiking ResNeXt-101 32x8d
-    :rtype: torch.nn.Module
 
-    The spike-element-wise ResNeXt-101 32x8d `"Deep Residual Learning in Spiking Neural Networks" <https://arxiv.org/abs/2102.04159>`_ modified by the ResNeXt-101 32x8d model from `"Aggregated Residual Transformation for Deep Neural Networks" <https://arxiv.org/pdf/1611.05431.pdf>`_
-    """
     kwargs['groups'] = 32
     kwargs['width_per_group'] = 8
     return _sew_resnet('resnext101_32x8d', Bottleneck, [3, 4, 23, 3], pretrained, progress, cnf, spiking_neuron, **kwargs)
 
 
 def sew_wide_resnet50_2(pretrained=False, progress=True, cnf: str = None, spiking_neuron: callable=None, **kwargs):
-    """
-    :param pretrained: If True, the SNN will load parameters from the ANN pre-trained on ImageNet
-    :type pretrained: bool
-    :param progress: If True, displays a progress bar of the download to stderr
-    :type progress: bool
-    :param cnf: the name of spike-element-wise function
-    :type cnf: str
-    :param spiking_neuron: a single step neuron
-    :type spiking_neuron: callable
-    :param kwargs: kwargs for `spiking_neuron`
-    :type kwargs: dict
-    :return: Spiking Wide ResNet-50-2
-    :rtype: torch.nn.Module
 
-    The spike-element-wise Wide ResNet-50-2 `"Deep Residual Learning in Spiking Neural Networks" <https://arxiv.org/abs/2102.04159>`_
-    modified by the Wide ResNet-50-2 model from `"Wide Residual Networks" <https://arxiv.org/pdf/1605.07146.pdf>`_
-
-    The model is the same as ResNet except for the bottleneck number of channels
-    which is twice larger in every block. The number of channels in outer 1x1
-    convolutions is the same, e.g. last block in ResNet-50 has 2048-512-2048
-    channels, and in Wide ResNet-50-2 has 2048-1024-2048.
-    """
     kwargs['width_per_group'] = 64 * 2
     return _sew_resnet('wide_resnet50_2', Bottleneck, [3, 4, 6, 3], pretrained, progress, cnf, spiking_neuron, **kwargs)
 
 def sew_wide_resnet101_2(pretrained=False, progress=True, cnf: str = None, spiking_neuron: callable=None, **kwargs):
-    """
-    :param pretrained: If True, the SNN will load parameters from the ANN pre-trained on ImageNet
-    :type pretrained: bool
-    :param progress: If True, displays a progress bar of the download to stderr
-    :type progress: bool
-    :param cnf: the name of spike-element-wise function
-    :type cnf: str
-    :param spiking_neuron: a single step neuron
-    :type spiking_neuron: callable
-    :param kwargs: kwargs for `spiking_neuron`
-    :type kwargs: dict
-    :return: Spiking Wide ResNet-101-2
-    :rtype: torch.nn.Module
 
-    The spike-element-wise Wide ResNet-101-2 `"Deep Residual Learning in Spiking Neural Networks" <https://arxiv.org/abs/2102.04159>`_
-    modified by the Wide ResNet-101-2 model from `"Wide Residual Networks" <https://arxiv.org/pdf/1605.07146.pdf>`_
-
-    The model is the same as ResNet except for the bottleneck number of channels
-    which is twice larger in every block. The number of channels in outer 1x1
-    convolutions is the same, e.g. last block in ResNet-50 has 2048-512-2048
-    channels, and in Wide ResNet-50-2 has 2048-1024-2048.
-    """
     kwargs['width_per_group'] = 64 * 2
     return _sew_resnet('wide_resnet101_2', Bottleneck, [3, 4, 23, 3], pretrained, progress, cnf, spiking_neuron, **kwargs)
 

@@ -77,8 +77,4 @@ class Sequential(Module):
        else:
            raise ValueError
        return input
-<<<<<<< HEAD
-=======
-
->>>>>>> 8990718 (update name and metric)
     #...

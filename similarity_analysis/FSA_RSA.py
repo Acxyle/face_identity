@@ -576,7 +576,6 @@ class RSA_Human(human_feature_process, FSA_DSM, RSA_Base):
         for k, v in RSA_types_dict.items():
             
             similarity = np.nan_to_num(v['similarity'])
-            
             similarity_std = np.nan_to_num(v['similarity_std']) if 'similarity_std' in v else None
             
             color = self.plot_Encode_config.loc[k]['color']
@@ -705,19 +704,24 @@ def merge_RSA_dict_folds(RSA_dict_folds, layers, num_folds, alpha=0.05, FDR_meth
     
     # --- static
     similarity_folds = np.array([RSA_dict_folds[fold_idx]['similarity'] for fold_idx in range(num_folds)])
-    similarity_mean = np.nanmean(similarity_folds, axis=0)
-    similarity_std = np.nanstd(similarity_folds, axis=0)
+    similarity_mean = np.nan_to_num(np.nanmean(similarity_folds, axis=0))
+    similarity_std = np.nan_to_num(np.nanstd(similarity_folds, axis=0))
     
+    similarity_mask = np.isnan(np.nanmean(similarity_folds, axis=0)).astype(float)
     similarity_p_folds = np.nanmean([RSA_dict_folds[fold_idx]['similarity_p'] for fold_idx in range(num_folds)], axis=0)
+    similarity_p_folds = np.maximum(similarity_p_folds, similarity_mask)
+    
     (sig_FDR, p_FDR, alpha_Sadik, alpha_Bonf) = multipletests(similarity_p_folds, alpha=alpha, method=FDR_method)    
     
     # --- temporal
     similarity_temporal_folds = np.array([RSA_dict_folds[fold_idx]['similarity_temporal'] for fold_idx in range(num_folds)])
-    similarity_temporal_mean = np.nanmean(similarity_temporal_folds, axis=0)
-    similarity_temporal_std = np.nanstd(similarity_temporal_folds, axis=0)
+    similarity_temporal_mean = np.nan_to_num(np.nanmean(similarity_temporal_folds, axis=0))
+    similarity_temporal_std = np.nan_to_num(np.nanstd(similarity_temporal_folds, axis=0))
     
+    similarity_temporal_mask = np.isnan(np.nanmean(similarity_temporal_folds, axis=0)).astype(float)
     similarity_temporal_p = np.nanmean([RSA_dict_folds[fold_idx]['similarity_temporal_p'] for fold_idx in range(num_folds)], axis=0)  
-
+    similarity_temporal_p = np.maximum(similarity_temporal_p, similarity_temporal_mask)
+    
     # --- init
     p_temporal_FDR = np.zeros((len(layers), similarity_temporal_folds.shape[-1]))     # (num_layers, num_time_steps)
     sig_temporal_FDR =  p_temporal_FDR.copy()

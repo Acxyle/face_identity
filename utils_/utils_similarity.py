@@ -220,6 +220,9 @@ def gram_rbf(x, threshold=1.0, **kwargs):
 
 
 def cka(gram_x, gram_y, debiased=True):
+    
+    if (gram_x.size == 1 and gram_x == 0) or (gram_y.size == 1 and gram_y == 0):     # if feature is empty
+        return np.nan
 
     gram_x = center_gram(gram_x, unbiased=debiased)
     gram_y = center_gram(gram_y, unbiased=debiased)
@@ -229,11 +232,16 @@ def cka(gram_x, gram_y, debiased=True):
     normalization_x = np.linalg.norm(gram_x)
     normalization_y = np.linalg.norm(gram_y)
     
-    if normalization_x == 0 or normalization_y == 0:
-        return np.float64(0)
-    else:
+    if normalization_x == 0 or normalization_y == 0:     # if feature is all zero
+        return np.nan
+    else:     
         cka_score = scaled_hsic / (normalization_x * normalization_y)
-        return max(0, min(1, cka_score))
+        
+        if cka_score  > 0.:
+            return np.min([1., cka_score])
+        else:     # if score < 0 when unbiased == True
+            #return np.nan
+            return 0.
 
 
 def center_gram(gram, unbiased=True):

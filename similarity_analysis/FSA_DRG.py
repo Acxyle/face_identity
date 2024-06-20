@@ -336,7 +336,8 @@ class FSA_Gram(FSA_Encode):
         super().__init__(**kwargs)
         
         if used_unit_types is None:
-            self.used_unit_types = ['a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne',
+            self.used_unit_types = [
+                               'a_hs', 'a_ls', 'a_hm', 'a_lm', 'a_ne',
                                'a_s', 'a_m',
                                'qualified', 
                                'non_anova', 

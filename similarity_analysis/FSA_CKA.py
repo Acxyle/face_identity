@@ -91,19 +91,30 @@ class CKA_Similarity_base():
                 corr_coef = utils_similarity.cka(self.primate_Gram, self.NN_Gram_dict[layer], **kwargs)
                 corr_coef_perm = np.array([utils_similarity.cka(_, self.NN_Gram_dict[layer], **kwargs) for _ in self.primate_Gram_perm])
                 
+                if np.isnan(corr_coef):
+                    p_perm = np.nan
+                else:
+                    p_perm = np.mean(corr_coef_perm > corr_coef)     # equal to: np.sum(corr_coef_perm > corr_coef)/num_perm,
+                
                 # --- temporal
                 corr_coef_temporal = utils_similarity.cka_temporal(self.primate_Gram_temporal, self.NN_Gram_dict[layer], **kwargs)     # (time_steps, )
                 corr_coef_temporal_perm = np.array([utils_similarity.cka_temporal( _, self.NN_Gram_dict[layer], **kwargs) for _ in self.primate_Gram_temporal_perm])
                 
+                p_perm_temporal = np.array([np.mean(corr_coef_temporal_perm[:, _] > corr_coef_temporal[_]) if not np.isnan(corr_coef_temporal[_]) else np.nan for _ in range(len(corr_coef_temporal))])
+                
+                # ---
                 return {
                     'corr_coef': corr_coef,
                     'corr_coef_perm': corr_coef_perm,
-                    'p_perm': np.mean(corr_coef_perm > corr_coef),     # equal to: np.sum(corr_coef_perm > corr_coef)/num_perm,
+                    'p_perm': p_perm,     
                     
                     'corr_coef_temporal': corr_coef_temporal,
                     'corr_coef_temporal_perm': corr_coef_temporal_perm,
-                    'p_perm_temporal': np.array([np.mean(corr_coef_temporal_perm[:, _] > corr_coef_temporal[_]) for _ in range(len(corr_coef_temporal))])
+                    'p_perm_temporal': p_perm_temporal
                     }
+            
+            #for layer in self.layers[-2:]:
+            #    _calculation_CKA(layer, **kwargs)
             
             pl = Parallel(n_jobs=int(os.cpu_count()/2))(delayed(_calculation_CKA)(layer, **kwargs) for layer in tqdm(self.layers, desc=f'CKA {primate}'))
             
@@ -328,7 +339,7 @@ class CKA_Similarity_Monkey_folds(CKA_Similarity_Monkey):
             CKA_dict_folds = self.collect_CKA_Similarity_folds(kernel, **kwargs)
             
             # ---
-            CKA_dict_folds = merge_CKA_dict_folds(CKA_dict_folds, self.layers, self.num_folds, route='p', **kwargs)
+            CKA_dict_folds = merge_CKA_dict_folds(CKA_dict_folds, self.layers, self.num_folds, **kwargs)
             
             # ---
             utils_.dump(CKA_dict_folds, save_path, verbose=False)
@@ -548,7 +559,7 @@ class CKA_Similarity_Human_folds(CKA_Similarity_Human):
             CKA_dict_folds = self.collect_CKA_Similarity_folds(kernel, used_unit_type, used_id_num)
             
             # ---
-            CKA_dict_folds = merge_CKA_dict_folds(CKA_dict_folds, self.layers, self.num_folds, route='p', **kwargs)
+            CKA_dict_folds = merge_CKA_dict_folds(CKA_dict_folds, self.layers, self.num_folds, **kwargs)
             
             # ---
             utils_.dump(CKA_dict_folds, save_path, verbose=False)
@@ -576,51 +587,49 @@ class CKA_Similarity_Human_folds(CKA_Similarity_Human):
             
         
 # ----------------------------------------------------------------------------------------------------------------------
-def merge_CKA_dict_folds(CKA_dict_folds, layers, num_folds, route='p', alpha=0.05, FDR_method='fdr_bh', **kwargs):
+def merge_CKA_dict_folds(CKA_dict_folds, layers, num_folds, alpha=0.05, FDR_method='fdr_bh', **kwargs):
     
-    similarity_folds = [CKA_dict_folds[fold_idx]['similarity'] for fold_idx in range(num_folds)]
-    similarity_mean = np.mean(similarity_folds, axis=0)
-    similarity_std = np.std(similarity_folds, axis=0)
+    similarity_folds = np.array([CKA_dict_folds[fold_idx]['similarity'] for fold_idx in range(num_folds)])
+    similarity_mean = np.nan_to_num(np.nanmean(similarity_folds, axis=0))
+    similarity_std = np.nan_to_num(np.nanstd(similarity_folds, axis=0))
     
-    similarity_p_folds = np.mean([CKA_dict_folds[fold_idx]['similarity_p'] for fold_idx in range(num_folds)], axis=0)
+    similarity_mask = np.isnan(np.nanmean(similarity_folds, axis=0)).astype(float)
+    similarity_p_folds = np.nanmean([CKA_dict_folds[fold_idx]['similarity_p'] for fold_idx in range(num_folds)], axis=0)
+    similarity_p_folds = np.maximum(similarity_p_folds, similarity_mask)
+    
     (sig_FDR, p_FDR, alpha_Sadik, alpha_Bonf) = multipletests(similarity_p_folds, alpha=alpha, method=FDR_method)    
     
     # --- temporal
     similarity_temporal_folds = np.array([CKA_dict_folds[fold_idx]['similarity_temporal'] for fold_idx in range(num_folds)])
-    similarity_temporal_mean = np.mean(similarity_temporal_folds, axis=0)
-    similarity_temporal_std = np.std(similarity_temporal_folds, axis=0)
+    similarity_temporal_mean = np.nan_to_num(np.nanmean(similarity_temporal_folds, axis=0))
+    similarity_temporal_std = np.nan_to_num(np.nanstd(similarity_temporal_folds, axis=0))
     
-    similarity_temporal_p = np.mean([CKA_dict_folds[fold_idx]['similarity_temporal_p'] for fold_idx in range(num_folds)], axis=0)  
+    similarity_temporal_mask = np.isnan(np.nanmean(similarity_temporal_folds, axis=0)).astype(float)
+    similarity_temporal_p = np.nanmean([CKA_dict_folds[fold_idx]['similarity_temporal_p'] for fold_idx in range(num_folds)], axis=0)  
+    similarity_temporal_p = np.maximum(similarity_temporal_p, similarity_temporal_mask)
+
+    # --- init
+    p_temporal_FDR = np.zeros((len(layers), similarity_temporal_folds.shape[-1]))     # (num_layers, num_time_steps)
+    sig_temporal_FDR =  p_temporal_FDR.copy()
+    sig_temporal_Bonf = p_temporal_FDR.copy()
     
-    if route == 'p':
-        
-        # --- init
-        p_temporal_FDR = np.zeros((len(layers), similarity_temporal_folds.shape[-1]))     # (num_layers, num_time_steps)
-        sig_temporal_FDR =  p_temporal_FDR.copy()
-        sig_temporal_Bonf = p_temporal_FDR.copy()
-        
-        for _ in range(len(layers)):
-            (sig_temporal_FDR[_, :], p_temporal_FDR[_, :], alpha_Sadik_temporal, alpha_Bonf_temporal) = multipletests(similarity_temporal_p[_, :], alpha=alpha, method=FDR_method)      # FDR
-            sig_temporal_Bonf[_, :] = p_temporal_FDR[_, :]<alpha_Bonf_temporal     # Bonf correction
+    for _ in range(len(layers)):
+        (sig_temporal_FDR[_, :], p_temporal_FDR[_, :], alpha_Sadik_temporal, alpha_Bonf_temporal) = multipletests(similarity_temporal_p[_, :], alpha=alpha, method=FDR_method)      # FDR
+        sig_temporal_Bonf[_, :] = p_temporal_FDR[_, :]<alpha_Bonf_temporal     # Bonf correction
     
-    elif route == 'sig':
-        
-        sig_temporal_FDR = np.mean([scipy.ndimage.gaussian_filter(CKA_dict_folds[fold_idx]['sig_temporal_FDR'], sigma=1) for fold_idx in range(num_folds)], axis=0)
-        sig_temporal_Bonf = np.mean([scipy.ndimage.gaussian_filter(CKA_dict_folds[fold_idx]['sig_temporal_Bonf'], sigma=1) for fold_idx in range(num_folds)], axis=0)
-        p_temporal_FDR =  np.mean([CKA_dict_folds[fold_idx]['p_temporal_FDR'] for fold_idx in range(num_folds)], axis=0)
-    
+
     # ---
     CKA_dict_folds = {
         'similarity': similarity_mean,
         'similarity_std': similarity_std,
         
-        'similarity_perm': np.max([CKA_dict_folds[fold_idx]['similarity_perm'] for fold_idx in range(num_folds)], axis=0),
+        'similarity_perm': np.nanmax([CKA_dict_folds[fold_idx]['similarity_perm'] for fold_idx in range(num_folds)], axis=0),
         'similarity_p': similarity_p_folds,
         
         'similarity_temporal': similarity_temporal_mean,
         'similarity_temporal_std': similarity_temporal_std,
         
-        'similarity_temporal_perm': np.max([CKA_dict_folds[fold_idx]['similarity_temporal_perm'] for fold_idx in range(num_folds)], axis=0),
+        'similarity_temporal_perm': np.nanmax([CKA_dict_folds[fold_idx]['similarity_temporal_perm'] for fold_idx in range(num_folds)], axis=0),
         'similarity_temporal_p': similarity_temporal_p,
         
         'p_FDR': p_FDR,
